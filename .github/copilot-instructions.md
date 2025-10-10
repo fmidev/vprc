@@ -12,12 +12,10 @@ This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Pro
 
 1. **Input**: IRIS VVP (Vertical Velocity Profile) prodx files from radar stations
    - Format: Text files with header + tabular vertical profile data
-   - Example: `tests/data/202508241100_KAN.VVP_40.txt` (KANKAANPAA radar)
+   - Example: `tests/data/202508241100_KAN.VVP_40.txt` (Kankaanpää radar)
 
 2. **Parsing** (`src/vprc/io.py`):
-   - `parse_vvp_file()` → Returns `(VVPHeader, DataFrame)`
-   - `parse_vvp_to_xarray()` → Returns `(VVPHeader, xarray.Dataset)` (preferred for processing)
-   - DataFrames use snake_case columns: `height`, `lin_dbz`, `log_dbz`, `wind_speed`, etc.
+   - `read_vvp()` → Returns `xarray.Dataset`
 
 3. **Processing** (not yet implemented):
    - Bright band detection and correction
@@ -30,13 +28,13 @@ This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Pro
 
 ### Radar-Specific Metadata
 
-Each radar station has unique characteristics (antenna height, beam angles, horizon obstructions). Pass this metadata via `radar_metadata` dict to `parse_vvp_to_xarray()`:
+Each radar station has unique characteristics (antenna height, beam angles, horizon obstructions). Pass this metadata via `radar_metadata` dict to `read_vvp()`:
 
 ```python
 radar_meta = {
     'antenna_height_km': 0.174,      # Antenna elevation above sea level
     'lowest_level_offset_m': 126,    # Offset from nearest profile level
-    'freezing_level_m': 2000,        # From HIRLAM/sounding data
+    'freezing_level_m': 2000,        # From MEPS/sounding data
 }
 ```
 
@@ -52,8 +50,8 @@ Ship a `radar_defaults.toml` with the package containing canonical radar configu
 This reimplementation prioritizes:
 
 1. **Modern tools and standards**: Use industry-standard Python packages and formats
-2. **Code readability and maintainability**: Write clear, pythonic code over literal translations
-3. **Reuse over reimplementation**: Leverage `numpy`, `wradlib`, and other established libraries for mathematical and radar-specific operations instead of reimplementing algorithms
+2. **Code readability and maintainability**: Write clear, PEP 8 style, pythonic code over literal translations
+3. **Reuse over reimplementation**: Leverage `numpy`, `xarray`, `wradlib`, and other established libraries for mathematical and radar-specific operations instead of reimplementing algorithms
 
 **Do it the pythonic way.** The Perl code defines *what* to compute, but Python implementation should use idiomatic patterns and existing library functions where applicable.
 
@@ -177,4 +175,4 @@ def detect_bright_band(ds: xr.Dataset) -> xr.Dataset:
 - `tests/test_*.py` - Test modules (mirror `src/vprc/` structure)
 - `tests/data/` - Sample VVP files and expected Perl outputs for validation
 - `*.pl` - Legacy Perl scripts (read-only algorithm reference, do not modify)
-- `*.tcsh` - Legacy workflow scripts (reference only, shows operational context)
+- `*.tcsh` - Legacy workflow scripts (reference only, shows legacy operational context)

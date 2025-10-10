@@ -12,10 +12,10 @@ import pytest
 
 from vprc.io import (
     VVPHeader,
-    parse_vvp_header,
-    parse_vvp_file,
-    vvp_dataframe_to_xarray,
-    parse_vvp_to_xarray,
+    _parse_vvp_header,
+    _parse_vvp_file,
+    _vvp_dataframe_to_xarray,
+    read_vvp,
 )
 
 
@@ -30,7 +30,7 @@ class TestParseVVPHeader:
     def test_parse_valid_header(self):
         """Test parsing a valid VVP header line."""
         header_line = "KANKAANPAA VVP_40 PPI1_A 2025 08 24 11 00 ELEVS:  0.7 1.5 3.0"
-        header = parse_vvp_header(header_line)
+        header = _parse_vvp_header(header_line)
 
         assert header.radar == "KANKAANPAA"
         assert header.product == "VVP_40"
@@ -41,7 +41,7 @@ class TestParseVVPHeader:
     def test_parse_header_single_elevation(self):
         """Test parsing header with single elevation angle."""
         header_line = "RADAR1 VVP_10 SCAN_A 2025 01 15 12 30 ELEVS: 1.0"
-        header = parse_vvp_header(header_line)
+        header = _parse_vvp_header(header_line)
 
         assert header.elevation_angles == [1.0]
 
@@ -49,7 +49,7 @@ class TestParseVVPHeader:
         """Test that short invalid header raises ValueError."""
         header_line = "RADAR VVP_40 2025"
         with pytest.raises(ValueError, match="Invalid header"):
-            parse_vvp_header(header_line)
+            _parse_vvp_header(header_line)
 
 
 class TestParseVVPFile:
@@ -60,7 +60,7 @@ class TestParseVVPFile:
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
-        header, df = parse_vvp_file(SAMPLE_VVP_FILE)
+        header, df = _parse_vvp_file(SAMPLE_VVP_FILE)
 
         # Check header
         assert header.radar == "KANKAANPAA"
@@ -79,7 +79,7 @@ class TestParseVVPFile:
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
-        _, df = parse_vvp_file(SAMPLE_VVP_FILE)
+        _, df = _parse_vvp_file(SAMPLE_VVP_FILE)
 
         expected_cols = [
             'height', 'count', 'zcount',
@@ -100,7 +100,7 @@ class TestParseVVPFile:
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
-        _, df = parse_vvp_file(SAMPLE_VVP_FILE)
+        _, df = _parse_vvp_file(SAMPLE_VVP_FILE)
 
         # Check that heights are monotonically increasing
         assert df['height'].is_monotonic_increasing
@@ -110,7 +110,7 @@ class TestParseVVPFile:
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
-        _, df = parse_vvp_file(SAMPLE_VVP_FILE)
+        _, df = _parse_vvp_file(SAMPLE_VVP_FILE)
 
         assert df['height'].dtype == int
 
@@ -119,7 +119,7 @@ class TestParseVVPFile:
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
-        _, df = parse_vvp_file(SAMPLE_VVP_FILE)
+        _, df = _parse_vvp_file(SAMPLE_VVP_FILE)
 
         # Check first row (height=100 in sorted data)
         row_100 = df[df['height'] == 100].iloc[0]
@@ -138,7 +138,7 @@ class TestParseVVPFile:
         """Test that parsing nonexistent file raises FileNotFoundError."""
         nonexistent = TEST_DATA_DIR / "nonexistent_file.txt"
         with pytest.raises(FileNotFoundError):
-            parse_vvp_file(nonexistent)
+            _parse_vvp_file(nonexistent)
 
     def test_parse_file_too_short(self, tmp_path: Path):
         """Test that file with too few lines raises ValueError."""
@@ -146,7 +146,7 @@ class TestParseVVPFile:
         short_file.write_text("RADAR VVP_40 PPI1_A 2025 08 24 11 00\n\n")
 
         with pytest.raises(ValueError, match="File too short"):
-            parse_vvp_file(short_file)
+            _parse_vvp_file(short_file)
 
 
 class TestVVPDataframeToXarray:
@@ -157,12 +157,12 @@ class TestVVPDataframeToXarray:
         """Fixture providing sample parsed data."""
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
-        return parse_vvp_file(SAMPLE_VVP_FILE)
+        return _parse_vvp_file(SAMPLE_VVP_FILE)
 
     def test_convert_to_xarray(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test conversion to xarray Dataset."""
         header, df = sample_data
-        ds = vvp_dataframe_to_xarray(df, header)
+        ds = _vvp_dataframe_to_xarray(df, header)
 
         # Check that it's an xarray Dataset
         import xarray as xr
@@ -171,7 +171,7 @@ class TestVVPDataframeToXarray:
     def test_xarray_dimensions(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has correct dimensions."""
         header, df = sample_data
-        ds = vvp_dataframe_to_xarray(df, header)
+        ds = _vvp_dataframe_to_xarray(df, header)
 
         assert 'height' in ds.dims
         assert ds.dims['height'] == len(df)
@@ -179,7 +179,7 @@ class TestVVPDataframeToXarray:
     def test_xarray_coordinates(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has correct coordinates."""
         header, df = sample_data
-        ds = vvp_dataframe_to_xarray(df, header)
+        ds = _vvp_dataframe_to_xarray(df, header)
 
         assert 'height' in ds.coords
         assert len(ds.coords['height']) == len(df)
@@ -189,7 +189,7 @@ class TestVVPDataframeToXarray:
     def test_xarray_variables(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has expected data variables."""
         header, df = sample_data
-        ds = vvp_dataframe_to_xarray(df, header)
+        ds = _vvp_dataframe_to_xarray(df, header)
 
         expected_vars = [
             'count', 'zcount',
@@ -210,7 +210,7 @@ class TestVVPDataframeToXarray:
     def test_xarray_corrected_dbz(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test that corrected_dbz is initialized as copy of lin_dbz."""
         header, df = sample_data
-        ds = vvp_dataframe_to_xarray(df, header)
+        ds = _vvp_dataframe_to_xarray(df, header)
 
         # Should be equal initially
         assert (ds['corrected_dbz'] == ds['lin_dbz']).all()
@@ -222,7 +222,7 @@ class TestVVPDataframeToXarray:
             'antenna_height_km': 0.174,
             'lowest_level_offset_m': 126,
         }
-        ds = vvp_dataframe_to_xarray(df, header, radar_meta, SAMPLE_VVP_FILE)
+        ds = _vvp_dataframe_to_xarray(df, header, radar_meta, SAMPLE_VVP_FILE)
 
         assert ds.attrs['radar'] == 'KANKAANPAA'
         assert ds.attrs['product'] == 'VVP_40'
@@ -236,7 +236,7 @@ class TestVVPDataframeToXarray:
     def test_xarray_data_access(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test accessing data from xarray Dataset."""
         header, df = sample_data
-        ds = vvp_dataframe_to_xarray(df, header)
+        ds = _vvp_dataframe_to_xarray(df, header)
 
         # Test selection by height
         data_at_1500 = ds.sel(height=1500)
@@ -252,11 +252,7 @@ class TestParseVVPToXarray:
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
-        header, ds = parse_vvp_to_xarray(SAMPLE_VVP_FILE)
-
-        # Check header
-        assert isinstance(header, VVPHeader)
-        assert header.radar == "KANKAANPAA"
+        ds = read_vvp(SAMPLE_VVP_FILE)
 
         # Check dataset
         import xarray as xr
@@ -274,7 +270,7 @@ class TestParseVVPToXarray:
             'lowest_level_offset_m': 126,
             'freezing_level_m': 2000,
         }
-        header, ds = parse_vvp_to_xarray(SAMPLE_VVP_FILE, radar_meta)
+        ds = read_vvp(SAMPLE_VVP_FILE, radar_meta)
 
         assert ds.attrs['antenna_height_km'] == 0.174
         assert ds.attrs['freezing_level_m'] == 2000
@@ -285,15 +281,11 @@ class TestParseVVPToXarray:
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
         # Method 1: Step by step
-        header1, df1 = parse_vvp_file(SAMPLE_VVP_FILE)
-        ds1 = vvp_dataframe_to_xarray(df1, header1)
+        header1, df1 = _parse_vvp_file(SAMPLE_VVP_FILE)
+        ds1 = _vvp_dataframe_to_xarray(df1, header1)
 
         # Method 2: High-level wrapper
-        header2, ds2 = parse_vvp_to_xarray(SAMPLE_VVP_FILE)
-
-        # Headers should be identical
-        assert header1.radar == header2.radar
-        assert header1.timestamp == header2.timestamp
+        ds2 = read_vvp(SAMPLE_VVP_FILE)
 
         # Data should be identical
         assert (ds1['lin_dbz'] == ds2['lin_dbz']).all()
@@ -315,10 +307,10 @@ class TestEdgeCases:
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
         # Test with Path object
-        header1, df1 = parse_vvp_file(SAMPLE_VVP_FILE)
+        header1, df1 = _parse_vvp_file(SAMPLE_VVP_FILE)
 
         # Test with string
-        header2, df2 = parse_vvp_file(str(SAMPLE_VVP_FILE))
+        header2, df2 = _parse_vvp_file(str(SAMPLE_VVP_FILE))
 
         assert header1.radar == header2.radar
         assert len(df1) == len(df2)

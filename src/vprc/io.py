@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 import pandas as pd
+import xarray as xr
 
 
 @dataclass
@@ -21,7 +22,7 @@ class VVPHeader:
     elevation_angles: List[float]
 
 
-def parse_vvp_header(header_line: str) -> VVPHeader:
+def _parse_vvp_header(header_line: str) -> VVPHeader:
     """
     Parse the first line of a VVP file.
 
@@ -69,7 +70,7 @@ def parse_vvp_header(header_line: str) -> VVPHeader:
     )
 
 
-def parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
+def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
     """
     Parse a VVP vertical profile file.
 
@@ -103,7 +104,7 @@ def parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
         raise ValueError(f"File too short: expected at least 4 lines, got {len(lines)}")
 
     # Parse header (line 0)
-    header = parse_vvp_header(lines[0])
+    header = _parse_vvp_header(lines[0])
 
     # The file has a multi-level header structure where each major column
     # (Wind-Speed, Linear-dBZ, etc.) has 2 sub-values (mean and std deviation)
@@ -154,9 +155,9 @@ def parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
     return header, df
 
 
-def vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
-                           radar_metadata: dict | None = None,
-                           source_file: Path | str | None = None):
+def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
+                             radar_metadata: dict | None = None,
+                             source_file: Path | str | None = None) -> xr.Dataset:
     """
     Convert parsed VVP DataFrame to xarray Dataset.
 
@@ -197,8 +198,8 @@ def vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     return ds
 
 
-def parse_vvp_to_xarray(filepath: Path | str,
-                       radar_metadata: dict | None = None) -> tuple:
+def read_vvp(filepath: Path | str,
+             radar_metadata: dict | None = None) -> xr.Dataset:
     """
     Parse VVP file directly to xarray Dataset (high-level wrapper).
 
@@ -218,7 +219,7 @@ def parse_vvp_to_xarray(filepath: Path | str,
         <xarray.DataArray ...>
     """
     filepath = Path(filepath)
-    header, df = parse_vvp_file(filepath)
-    ds = vvp_dataframe_to_xarray(df, header, radar_metadata, source_file=filepath)
-    return header, ds
+    header, df = _parse_vvp_file(filepath)
+    ds = _vvp_dataframe_to_xarray(df, header, radar_metadata, source_file=filepath)
+    return ds
 
