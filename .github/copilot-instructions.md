@@ -6,6 +6,8 @@ This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Pro
 
 **Key insight**: This is a reference implementation project. The legacy Perl scripts (`allprof_prodx2.pl`, `pystycappi.pl`, `pystycappi_ka.pl`) remain in the repository as the authoritative algorithm specification. Do not modify or delete these files.
 
+**Core values**: Modern tools and standards, code readability and maintainability, PEP 8, reuse over reimplementation. Leverage `numpy`, `xarray`, `wradlib`, and other established libraries for mathematical and radar-specific operations instead of reimplementing algorithms. **Do it the pythonic way.**
+
 ## Architecture
 
 ### Data Flow Pipeline
@@ -44,16 +46,6 @@ radar_meta = {
 3. Default values from reference implementation (see `allprof_prodx2.pl` lines 32-50)
 
 Ship a `radar_defaults.toml` with the package containing canonical radar configurations.
-
-## Core Values
-
-This reimplementation prioritizes:
-
-1. **Modern tools and standards**: Use industry-standard Python packages and formats
-2. **Code readability and maintainability**: Write clear, PEP 8 style, pythonic code over literal translations
-3. **Reuse over reimplementation**: Leverage `numpy`, `xarray`, `wradlib`, and other established libraries for mathematical and radar-specific operations instead of reimplementing algorithms
-
-**Do it the pythonic way.** The Perl code defines *what* to compute, but Python implementation should use idiomatic patterns and existing library functions where applicable.
 
 ## Airflow Integration
 
@@ -113,7 +105,7 @@ MK_THRESHOLD = -0.005  # Gradient threshold: -1 dBZ/200m
 DBZ_KYNNYS1 = 4        # Spike detection thresholds
 ```
 
-**Profile classification categories**: `Prec.` (precipitation), `As` (altostratus), `CAE` (clear air echo), `Clutter`
+**Profile classification**: `Prec.` (precipitation), `As` (altostratus), `CAE` (clear air echo), `Clutter`
 
 ### Dependencies
 
@@ -135,29 +127,12 @@ When implementing algorithm components (e.g., bright band detection):
 4. **Write tests**: Add to `tests/test_<module>.py` with validation against Perl output
 5. **Document traceability**: Reference Perl line numbers in docstrings
 
-### Example Processing Function
-
+Example function signature:
 ```python
 def detect_bright_band(ds: xr.Dataset) -> xr.Dataset:
-    """
-    Detect bright band (melting layer) in vertical profile.
-
-    Based on algorithm from allprof_prodx2.pl lines 897-1166.
-    Uses gradient analysis and profile shape to identify melting layer.
-
-    Args:
-        ds: xarray Dataset with 'corrected_dbz' and 'height' variables
-
-    Returns:
-        Dataset with added 'bright_band_height' and 'bright_band_detected' variables
-
-    Note:
-        Leverages numpy gradient operations instead of explicit loops.
-        See Perl lines 900-950 for original logic.
-    """
-    # Use numpy/xarray operations for gradient analysis
+    """Based on algorithm from allprof_prodx2.pl lines 897-1166."""
     dbz_gradient = ds['corrected_dbz'].differentiate('height')
-    # ... pythonic implementation
+    # ... pythonic implementation using numpy/xarray operations
 ```
 
 ## Common Pitfalls
