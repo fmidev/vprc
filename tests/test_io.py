@@ -314,3 +314,35 @@ class TestEdgeCases:
 
         assert header1.radar == header2.radar
         assert len(df1) == len(df2)
+
+    def test_missing_freezing_level(self):
+        """Test handling when freezing_level_m is not provided or invalid.
+
+        Three cases:
+        1. Unknown (None/not provided): Keep as None
+        2. No freezing layer (0 or negative): Normalize to 0
+        3. Valid (positive): Store as-is
+        """
+        if not SAMPLE_VVP_FILE.exists():
+            pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
+
+        # Case 1: Unknown - No metadata provided
+        ds1 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'antenna_height_km': 0.174})
+        assert ds1.attrs.get('freezing_level_m') is None
+
+        # Case 1: Unknown - freezing_level_m is None
+        ds2 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': None})
+        assert ds2.attrs.get('freezing_level_m') is None
+
+        # Case 2: No freezing layer - negative (below antenna)
+        ds3 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': -100})
+        assert ds3.attrs.get('freezing_level_m') == 0
+
+        # Case 2: No freezing layer - zero (at antenna level)
+        ds4 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': 0})
+        assert ds4.attrs.get('freezing_level_m') == 0
+
+        # Case 3: Valid freezing layer - positive value
+        ds5 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': 2000})
+        assert ds5.attrs['freezing_level_m'] == 2000
+

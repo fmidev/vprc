@@ -164,7 +164,11 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     Args:
         df: DataFrame from parse_vvp_file
         header: VVPHeader metadata
-        radar_metadata: Optional dict with antenna_height_km, lowest_level_m, etc.
+        radar_metadata: Optional dict with antenna_height_km, lowest_level_m,
+                       freezing_level_m, etc. For freezing_level_m:
+                       - None or not provided: Unknown (not retrieved from NWP)
+                       - 0 or negative: No freezing layer (or below antenna) → normalized to 0
+                       - Positive: Valid freezing level in meters above antenna
 
     Returns:
         xarray.Dataset with dimensions (height,) and rich metadata
@@ -191,7 +195,19 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
 
     # Add radar-specific metadata if provided
     if radar_metadata:
-        attrs.update(radar_metadata)
+        # Handle freezing_level_m specially with three cases:
+        # 1. None or not provided: Unknown (not yet retrieved from NWP) → keep as None
+        # 2. Zero or negative: Known to be absent/below antenna → set to 0
+        # 3. Positive: Valid freezing level → use as-is
+        # (following Perl logic from allprof_prodx2.pl lines 359-362)
+        meta_copy = radar_metadata.copy()
+        if 'freezing_level_m' in meta_copy:
+            fl = meta_copy['freezing_level_m']
+            if fl is not None and isinstance(fl, (int, float)) and fl <= 0:
+                # Explicitly no freezing layer (or below antenna)
+                meta_copy['freezing_level_m'] = 0
+            # else: None stays None (unknown), positive stays positive
+        attrs.update(meta_copy)
 
     ds.attrs.update(attrs)
 
@@ -208,13 +224,18 @@ def read_vvp(filepath: Path | str,
     Args:
         filepath: Path to VVP prodx file
         radar_metadata: Optional dict with antenna_height_km, lowest_level_m,
-                       freezing_level_m, etc.
+                       freezing_level_m, etc. For freezing_level_m:
+                       - None or not provided: Unknown (not yet retrieved from NWP data)
+                       - 0 or negative: No freezing layer present (or below antenna) → normalized to 0
+                       - Positive: Valid freezing level in meters above antenna
+
+                       Following Perl reference implementation logic (allprof_prodx2.pl lines 359-362).
 
     Returns:
-        Tuple of (VVPHeader, xarray.Dataset)
+        xarray.Dataset with profile data and metadata
 
     Example:
-        >>> header, ds = parse_vvp_to_xarray('202508241100_KAN.VVP_40.txt')
+        >>> ds = read_vvp('202508241100_KAN.VVP_40.txt')
         >>> ds['corrected_dbz'].sel(height=1500)
         <xarray.DataArray ...>
     """
