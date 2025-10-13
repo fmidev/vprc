@@ -1,0 +1,74 @@
+# Radar station default configurations
+# Based on allprof_prodx2.pl lines 32-50
+#
+# Each radar section contains:
+# - antenna_height_m: Antenna elevation above sea level (meters)
+# - lowest_level_offset_m: Offset from nearest profile level (meters)
+#   Profile levels are at 100, 300, 500, ... meters above antenna
+#   This offset accounts for the difference between antenna height and nearest level
+#
+# Note: freezing_level_m should be provided at runtime from MEPS/sounding data
+
+[VAN]  # Vantaa
+antenna_height_m = 83
+lowest_level_offset_m = 17
+
+[KER]  # Kerava
+antenna_height_m = 83
+lowest_level_offset_m = 5
+
+[IKA]  # Ikaalinen
+antenna_height_m = 154
+lowest_level_offset_m = 146
+
+[KAN]  # Kankaanpää
+antenna_height_m = 174
+lowest_level_offset_m = 126
+
+[KES]  # Kesälahti
+antenna_height_m = 174
+lowest_level_offset_m = 126
+
+[PET]  # Petäjävesi
+antenna_height_m = 271
+lowest_level_offset_m = 29
+
+[ANJ]  # Anjalankoski
+antenna_height_m = 139
+lowest_level_offset_m = 161
+
+[KUO]  # Kuopio
+antenna_height_m = 268
+lowest_level_offset_m = 32
+
+[KOR]  # Korpo
+antenna_height_m = 61
+lowest_level_offset_m = 39
+
+[UTA]  # Utajärvi
+antenna_height_m = 118
+lowest_level_offset_m = 182
+
+[LUO]  # Luosto
+antenna_height_m = 530
+lowest_level_offset_m = 170
+
+[VIM]  # Vimpeli
+antenna_height_m = 198
+lowest_level_offset_m = 102
+
+[NUR]  # Nurmes
+antenna_height_m = 323
+lowest_level_offset_m = 177
+
+[VIH]  # Vihti
+antenna_height_m = 181
+lowest_level_offset_m = 119
+
+[KAU]  # Kaunispää
+antenna_height_m = 489
+lowest_level_offset_m = 11
+
+[other]  # Default/Other (used when radar code is not recognized)
+antenna_height_m = 198
+lowest_level_offset_m = 102
