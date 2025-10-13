@@ -3,6 +3,7 @@
 Tests for VVP file parsing functionality.
 """
 
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Tuple
@@ -15,6 +16,8 @@ from vprc.io import (
     _parse_vvp_header,
     _parse_vvp_file,
     _vvp_dataframe_to_xarray,
+    _load_radar_defaults,
+    _get_radar_metadata,
     read_vvp,
 )
 
@@ -346,3 +349,153 @@ class TestEdgeCases:
         ds5 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': 2000})
         assert ds5.attrs['freezing_level_m'] == 2000
 
+
+class TestRadarConfiguration:
+    """Tests for radar configuration loading and precedence."""
+
+    def test_load_radar_defaults(self):
+        """Test loading the package default radar configuration."""
+        config = _load_radar_defaults()
+
+        # Check that all expected radar codes are present
+        assert 'KAN' in config
+        assert 'VAN' in config
+        assert 'other' in config
+
+        # Check structure of a known radar
+        assert 'antenna_height_m' in config['KAN']
+        assert 'lowest_level_offset_m' in config['KAN']
+
+        # Verify known values from Perl reference
+        assert config['KAN']['antenna_height_m'] == 174
+        assert config['KAN']['lowest_level_offset_m'] == 126
+
+    def test_get_radar_metadata_known_radar(self):
+        """Test retrieving metadata for a known radar code."""
+        meta = _get_radar_metadata('KAN')
+
+        assert meta['antenna_height_m'] == 174
+        assert meta['lowest_level_offset_m'] == 126
+
+    def test_get_radar_metadata_unknown_radar(self):
+        """Test fallback to 'other' for unknown radar code."""
+        meta = _get_radar_metadata('UNKNOWN')
+
+        # Should get 'other' defaults
+        assert 'antenna_height_m' in meta
+        assert 'lowest_level_offset_m' in meta
+
+    def test_get_radar_metadata_with_override(self):
+        """Test that override metadata takes precedence."""
+        meta = _get_radar_metadata('KAN', {'antenna_height_m': 999})
+
+        # Overridden field
+        assert meta['antenna_height_m'] == 999
+        # Original field from TOML
+        assert meta['lowest_level_offset_m'] == 126
+
+    def test_get_radar_metadata_with_additional_fields(self):
+        """Test adding additional fields via override."""
+        meta = _get_radar_metadata('KAN', {'freezing_level_m': 2000})
+
+        # Original fields from TOML
+        assert meta['antenna_height_m'] == 174
+        assert meta['lowest_level_offset_m'] == 126
+        # New field from override
+        assert meta['freezing_level_m'] == 2000
+
+    def test_read_vvp_with_defaults(self):
+        """Test that read_vvp loads TOML defaults automatically."""
+        if not SAMPLE_VVP_FILE.exists():
+            pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
+
+        ds = read_vvp(SAMPLE_VVP_FILE)
+
+        # Should have loaded KAN radar defaults
+        assert ds.attrs['radar_code'] == 'KAN'
+        assert ds.attrs['antenna_height_m'] == 174
+        assert ds.attrs['lowest_level_offset_m'] == 126
+
+    def test_read_vvp_with_override(self):
+        """Test precedence: function parameter > TOML defaults."""
+        if not SAMPLE_VVP_FILE.exists():
+            pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
+
+        ds = read_vvp(SAMPLE_VVP_FILE, {'antenna_height_m': 200, 'freezing_level_m': 2500})
+
+        # Overridden value
+        assert ds.attrs['antenna_height_m'] == 200
+        # TOML default
+        assert ds.attrs['lowest_level_offset_m'] == 126
+        # New field from override
+        assert ds.attrs['freezing_level_m'] == 2500
+
+    def test_custom_config_via_env_var(self, tmp_path):
+        """Test loading custom TOML via VPRC_RADAR_CONFIG environment variable."""
+        # Create a custom config file
+        custom_config = tmp_path / "custom_radars.toml"
+        custom_config.write_text("""
+[KAN]
+antenna_height_m = 999
+lowest_level_offset_m = 888
+
+[other]
+antenna_height_m = 100
+lowest_level_offset_m = 50
+""")
+
+        # Set environment variable and clear cache
+        old_env = os.environ.get('VPRC_RADAR_CONFIG')
+        try:
+            os.environ['VPRC_RADAR_CONFIG'] = str(custom_config)
+            # Clear the cache to force reload
+            _load_radar_defaults.cache_clear()
+
+            # Test that custom config is loaded
+            config = _load_radar_defaults()
+            assert config['KAN']['antenna_height_m'] == 999
+            assert config['KAN']['lowest_level_offset_m'] == 888
+
+        finally:
+            # Restore environment
+            if old_env is not None:
+                os.environ['VPRC_RADAR_CONFIG'] = old_env
+            else:
+                os.environ.pop('VPRC_RADAR_CONFIG', None)
+            # Clear cache again to restore default
+            _load_radar_defaults.cache_clear()
+
+    def test_precedence_order(self, tmp_path):
+        """Test full precedence: function param > env var TOML > package default."""
+        if not SAMPLE_VVP_FILE.exists():
+            pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
+
+        # Create custom config
+        custom_config = tmp_path / "test_radars.toml"
+        custom_config.write_text("""
+[KAN]
+antenna_height_m = 500
+lowest_level_offset_m = 400
+custom_field = 123
+""")
+
+        old_env = os.environ.get('VPRC_RADAR_CONFIG')
+        try:
+            os.environ['VPRC_RADAR_CONFIG'] = str(custom_config)
+            _load_radar_defaults.cache_clear()
+
+            # Load with function override
+            ds = read_vvp(SAMPLE_VVP_FILE, {'antenna_height_m': 300})
+
+            # Function parameter wins
+            assert ds.attrs['antenna_height_m'] == 300
+            # Custom TOML provides these
+            assert ds.attrs['lowest_level_offset_m'] == 400
+            assert ds.attrs['custom_field'] == 123
+
+        finally:
+            if old_env is not None:
+                os.environ['VPRC_RADAR_CONFIG'] = old_env
+            else:
+                os.environ.pop('VPRC_RADAR_CONFIG', None)
+            _load_radar_defaults.cache_clear()
