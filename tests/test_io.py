@@ -17,6 +17,8 @@ from vprc.io import (
     _parse_vvp_file,
     _vvp_dataframe_to_xarray,
     _load_radar_defaults,
+    _build_radar_name_to_code_map,
+    _radar_name_to_code,
     _get_radar_metadata,
     read_vvp,
 )
@@ -499,3 +501,142 @@ custom_field = 123
             else:
                 os.environ.pop('VPRC_RADAR_CONFIG', None)
             _load_radar_defaults.cache_clear()
+
+
+class TestRadarNameMapping:
+    """Tests for radar name to code mapping from TOML configuration."""
+
+    def test_build_radar_name_to_code_map(self):
+        """Test building the name-to-code mapping from TOML."""
+        name_map = _build_radar_name_to_code_map()
+
+        # Check that all known radars are present
+        assert 'KANKAANPAA' in name_map
+        assert 'VANTAA' in name_map
+        assert 'LUOSTO' in name_map
+
+        # Verify correct mappings based on Perl reference
+        assert name_map['KANKAANPAA'] == 'KAN'
+        assert name_map['VANTAA'] == 'VAN'
+        assert name_map['IKAALINEN'] == 'IKA'
+        assert name_map['KESALAHTI'] == 'KES'
+        assert name_map['PETAJAVESI'] == 'PET'
+        assert name_map['ANJALANKOSKI'] == 'ANJ'
+        assert name_map['KUOPIO'] == 'KUO'
+        assert name_map['UTAJARVI'] == 'UTA'
+        assert name_map['LUOSTO'] == 'LUO'
+        assert name_map['KAUNISPAA'] == 'KAU'
+        assert name_map['VIMPELI'] == 'VIM'
+        assert name_map['NURMES'] == 'NUR'
+        assert name_map['VIHTI'] == 'VIH'
+        assert name_map['KOR'] == 'KOR'  # Korpo uses code as name
+        assert name_map['KERAVA'] == 'KER'
+
+        # Check count (15 radars, excluding 'other')
+        assert len(name_map) == 15
+
+    def test_build_radar_name_to_code_map_excludes_other(self):
+        """Test that 'other' section is not included in name mapping."""
+        name_map = _build_radar_name_to_code_map()
+        assert 'other' not in name_map.values()
+
+    def test_radar_name_to_code_known_radar(self):
+        """Test converting known radar names to codes."""
+        assert _radar_name_to_code('KANKAANPAA') == 'KAN'
+        assert _radar_name_to_code('VANTAA') == 'VAN'
+        assert _radar_name_to_code('LUOSTO') == 'LUO'
+
+    def test_radar_name_to_code_case_insensitive(self):
+        """Test that name matching is case-insensitive."""
+        assert _radar_name_to_code('kankaanpaa') == 'KAN'
+        assert _radar_name_to_code('Kankaanpaa') == 'KAN'
+        assert _radar_name_to_code('KANKAANPAA') == 'KAN'
+
+    def test_radar_name_to_code_unknown_radar(self):
+        """Test that unknown radar names are returned unchanged."""
+        unknown_name = 'UNKNOWN_RADAR'
+        assert _radar_name_to_code(unknown_name) == unknown_name
+
+    def test_radar_name_to_code_with_custom_toml(self, tmp_path):
+        """Test name mapping with custom TOML configuration."""
+        # Create custom config with new radar
+        custom_config = tmp_path / "custom_radars.toml"
+        custom_config.write_text("""
+[TST]
+name = "TESTDAR"
+antenna_height_m = 100
+lowest_level_offset_m = 50
+
+[other]
+antenna_height_m = 200
+lowest_level_offset_m = 100
+""")
+
+        old_env = os.environ.get('VPRC_RADAR_CONFIG')
+        try:
+            os.environ['VPRC_RADAR_CONFIG'] = str(custom_config)
+            _load_radar_defaults.cache_clear()
+            _build_radar_name_to_code_map.cache_clear()
+
+            # Test that custom radar is in mapping
+            assert _radar_name_to_code('TESTDAR') == 'TST'
+
+        finally:
+            if old_env is not None:
+                os.environ['VPRC_RADAR_CONFIG'] = old_env
+            else:
+                os.environ.pop('VPRC_RADAR_CONFIG', None)
+            _load_radar_defaults.cache_clear()
+            _build_radar_name_to_code_map.cache_clear()
+
+    def test_read_vvp_uses_name_mapping(self):
+        """Test that read_vvp correctly uses TOML-based name mapping."""
+        if not SAMPLE_VVP_FILE.exists():
+            pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
+
+        ds = read_vvp(SAMPLE_VVP_FILE)
+
+        # File contains "KANKAANPAA", should map to "KAN"
+        assert ds.attrs['radar'] == 'KANKAANPAA'
+        assert ds.attrs['radar_code'] == 'KAN'
+
+        # And should load KAN's configuration
+        assert ds.attrs['antenna_height_m'] == 174
+        assert ds.attrs['lowest_level_offset_m'] == 126
+
+    def test_name_field_required_in_toml(self):
+        """Test that TOML entries without 'name' field are skipped in mapping."""
+        # This tests the robustness of the mapping builder
+        name_map = _build_radar_name_to_code_map()
+
+        # 'other' doesn't have a 'name' field and should not be in mapping
+        # (checked implicitly - if it was there, it would fail with KeyError)
+        assert len(name_map) == 15  # Only the 15 named radars
+
+    def test_toml_name_matches_perl_reference(self):
+        """Test that TOML names exactly match Perl reference implementation."""
+        # Based on allprof_prodx2.pl lines 75-135
+        expected_mappings = {
+            'VANTAA': 'VAN',
+            'KERAVA': 'KER',
+            'IKAALINEN': 'IKA',
+            'KANKAANPAA': 'KAN',
+            'KESALAHTI': 'KES',
+            'PETAJAVESI': 'PET',
+            'ANJALANKOSKI': 'ANJ',
+            'KUOPIO': 'KUO',
+            'KOR': 'KOR',
+            'UTAJARVI': 'UTA',
+            'LUOSTO': 'LUO',
+            'KAUNISPAA': 'KAU',
+            'VIMPELI': 'VIM',
+            'NURMES': 'NUR',
+            'VIHTI': 'VIH',
+        }
+
+        name_map = _build_radar_name_to_code_map()
+
+        for name, expected_code in expected_mappings.items():
+            assert name in name_map, f"Missing radar name: {name}"
+            assert name_map[name] == expected_code, \
+                f"Wrong code for {name}: expected {expected_code}, got {name_map[name]}"

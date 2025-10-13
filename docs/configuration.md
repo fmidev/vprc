@@ -1,113 +1,19 @@
 # Configuration Guide
 
-## Radar Station Configuration
+## Overview
 
-The `vprc` package uses radar-specific metadata (antenna height, profile offsets, etc.) for VPR correction calculations. Configuration follows a clear precedence order to balance operational flexibility with sensible defaults.
+The `vprc` package uses TOML-based configuration for radar station metadata. All radar name-to-code mappings come from the configuration file, with no hardcoded values in Python code.
 
-## Configuration Precedence
-
-Configuration is resolved in this order (highest to lowest priority):
-
-1. **Function parameters** - Values passed directly to `read_vvp()`
-2. **Environment variable TOML** - Custom config via `VPRC_RADAR_CONFIG`
-3. **Package defaults** - Built-in `radar_defaults.toml`
-4. **Fallback** - `[other]` section if radar code not found
-
-## Usage Examples
-
-### Basic Usage (Package Defaults)
-
-The simplest approach - uses built-in radar configurations:
-
-```python
-from vprc import read_vvp
-
-# Automatically loads KAN radar defaults from radar_defaults.toml
-ds = read_vvp('202508241100_KAN.VVP_40.txt')
-
-print(ds.attrs['antenna_height_m'])        # 174 (from TOML)
-print(ds.attrs['lowest_level_offset_m'])   # 126 (from TOML)
-```
-
-### Override Specific Fields
-
-Common in operational workflows where you need to inject runtime data (e.g., freezing level from NWP):
-
-```python
-from vprc import read_vvp
-
-# Override freezing level from MEPS data, keep other defaults
-ds = read_vvp('202508241100_KAN.VVP_40.txt', {
-    'freezing_level_m': 2000  # From NWP model
-})
-
-print(ds.attrs['antenna_height_m'])        # 174 (from TOML)
-print(ds.attrs['freezing_level_m'])        # 2000 (from parameter)
-```
-
-### Custom Configuration File
-
-For testing or alternative radar networks:
-
-```python
-import os
-from vprc import read_vvp
-
-# Point to custom radar configuration
-os.environ['VPRC_RADAR_CONFIG'] = '/path/to/test_radars.toml'
-
-ds = read_vvp('202508241100_KAN.VVP_40.txt')
-# Now loads from custom TOML instead of package default
-```
-
-### Full Override Example
-
-Combining all precedence levels:
-
-```python
-import os
-from vprc import read_vvp
-
-# Custom TOML provides base config
-os.environ['VPRC_RADAR_CONFIG'] = '/opt/fmi/radars.toml'
-
-# Function parameter overrides specific field
-ds = read_vvp('202508241100_KAN.VVP_40.txt', {
-    'antenna_height_m': 180,      # Overrides TOML value
-    'freezing_level_m': 2100      # New field not in TOML
-})
-
-# Result:
-# - antenna_height_m: 180 (function param)
-# - freezing_level_m: 2100 (function param)
-# - lowest_level_offset_m: from VPRC_RADAR_CONFIG file
-# - other fields: from VPRC_RADAR_CONFIG file
-```
-
-## Configuration Fields
-
-### Required Fields (in TOML)
-
-- `antenna_height_m` (int): Antenna elevation above sea level (meters)
-- `lowest_level_offset_m` (int): Offset from nearest profile level (meters)
-
-### Optional Runtime Fields
-
-- `freezing_level_m` (int | None):
-  - `None`: Unknown (not yet retrieved from NWP)
-  - `0` or negative: No freezing layer → normalized to 0
-  - Positive: Valid freezing level in meters above antenna
-
-## TOML File Format
-
-Example `radar_defaults.toml` structure:
+## TOML File Structure
 
 ```toml
-[KAN]  # Kankaanpää radar
+[KAN]  # Three-letter code (section key)
+name = "KANKAANPAA"  # Full radar name from VVP file headers
 antenna_height_m = 174
 lowest_level_offset_m = 126
 
-[VAN]  # Vantaa radar
+[VAN]
+name = "VANTAA"
 antenna_height_m = 83
 lowest_level_offset_m = 17
 
@@ -116,55 +22,185 @@ antenna_height_m = 198
 lowest_level_offset_m = 102
 ```
 
-## Airflow Integration Pattern
+### Fields
 
-Typical operational deployment:
+**Required (in TOML):**
+- `name` (string): Full radar name for VVP header matching (case-insensitive)
+- `antenna_height_m` (int): Antenna elevation above sea level (meters)
+- `lowest_level_offset_m` (int): Offset from nearest profile level (meters)
+
+**Optional (runtime):**
+- `freezing_level_m` (int | None): Freezing level from NWP data
+  - `None`: Unknown (not retrieved)
+  - `0` or negative: No freezing layer → normalized to 0
+  - Positive: Valid freezing level in meters above antenna
+
+## Configuration Precedence
+
+Values are resolved in this order (highest to lowest):
+
+1. **Function parameters** - `read_vvp(radar_metadata={...})`
+2. **Environment variable** - `VPRC_RADAR_CONFIG` points to custom TOML
+3. **Package default** - `src/vprc/radar_defaults.toml`
+4. **Fallback** - `[other]` section if radar code not found
+
+## Usage Examples
+
+### Basic Usage
+
+```python
+from vprc import read_vvp
+
+# Uses package defaults
+ds = read_vvp('202508241100_KAN.VVP_40.txt')
+print(ds.attrs['antenna_height_m'])  # 174
+```
+
+### Override Specific Fields
+
+```python
+# Override freezing level from NWP data
+ds = read_vvp('202508241100_KAN.VVP_40.txt', {
+    'freezing_level_m': 2000
+})
+```
+
+### Custom Configuration File
+
+```python
+import os
+
+os.environ['VPRC_RADAR_CONFIG'] = '/path/to/custom_radars.toml'
+ds = read_vvp('202508241100_KAN.VVP_40.txt')
+```
+
+### Full Precedence Example
+
+```python
+import os
+
+# Custom TOML: [KAN] antenna_height_m = 500
+os.environ['VPRC_RADAR_CONFIG'] = '/opt/fmi/radars.toml'
+
+# Function param wins
+ds = read_vvp('202508241100_KAN.VVP_40.txt', {
+    'antenna_height_m': 300,      # Overrides TOML
+    'freezing_level_m': 2000      # New field
+})
+# Result: antenna_height_m=300, freezing_level_m=2000, lowest_level_offset_m from TOML
+```
+
+## Environment Variables
+
+**`VPRC_RADAR_CONFIG`**: Path to custom TOML configuration file
+- If not set, uses package default `radar_defaults.toml`
+- Raises `FileNotFoundError` if path doesn't exist
+
+```bash
+export VPRC_RADAR_CONFIG=/path/to/custom_radars.toml
+python your_script.py
+```
+
+## Data Flow
+
+```
+VVP file "KANKAANPAA" → TOML name lookup → "KAN" → load metadata
+                              ↓
+                    radar_defaults.toml
+                    (or VPRC_RADAR_CONFIG)
+```
+
+## API Functions
+
+### Public API
+
+```python
+from vprc import read_vvp
+
+ds = read_vvp(filepath, radar_metadata=None)
+```
+
+### Internal Functions (for testing)
+
+```python
+from vprc.io import (
+    _load_radar_defaults,           # Load TOML config (cached)
+    _build_radar_name_to_code_map,  # Build name→code mapping (cached)
+    _radar_name_to_code,            # Convert "KANKAANPAA" → "KAN"
+    _get_radar_metadata,            # Get metadata with overrides
+)
+
+# Clear cache (needed when changing VPRC_RADAR_CONFIG)
+_load_radar_defaults.cache_clear()
+_build_radar_name_to_code_map.cache_clear()
+```
+
+## Radar Stations (Package Default)
+
+Based on `allprof_prodx2.pl` lines 32-50, 75-135:
+
+| Code | Name         | Height (m) | Offset (m) |
+|------|--------------|------------|------------|
+| VAN  | VANTAA       | 83         | 17         |
+| KER  | KERAVA       | 83         | 5          |
+| IKA  | IKAALINEN    | 154        | 146        |
+| KAN  | KANKAANPAA   | 174        | 126        |
+| KES  | KESALAHTI    | 174        | 126        |
+| PET  | PETAJAVESI   | 271        | 29         |
+| ANJ  | ANJALANKOSKI | 139        | 161        |
+| KUO  | KUOPIO       | 268        | 32         |
+| KOR  | KOR          | 61         | 39         |
+| UTA  | UTAJARVI     | 118        | 182        |
+| LUO  | LUOSTO       | 530        | 170        |
+| VIM  | VIMPELI      | 198        | 102        |
+| NUR  | NURMES       | 323        | 177        |
+| VIH  | VIHTI        | 181        | 119        |
+| KAU  | KAUNISPAA    | 489        | 11         |
+
+## Adding New Radars
+
+1. Add section to TOML:
+   ```toml
+   [NEW]
+   name = "NEWRADAR"
+   antenna_height_m = 250
+   lowest_level_offset_m = 50
+   ```
+
+2. Clear cache (if needed):
+   ```python
+   _load_radar_defaults.cache_clear()
+   _build_radar_name_to_code_map.cache_clear()
+   ```
+
+3. Use immediately - no Python code changes required.
+
+## Common Patterns
+
+### Airflow Deployment
 
 ```python
 from airflow.decorators import task
 
 @task.docker(image="fmi/vprc:latest")
-def correct_vpr(vvp_file: str, nwp_data: dict) -> str:
-    """
-    VPR correction task.
-
-    - Base radar config from package TOML
-    - Freezing level from NWP forecast
-    - Other runtime params from Airflow
-    """
+def process_vpr(vvp_file: str, nwp_freezing_level: int):
     from vprc import read_vvp
 
     ds = read_vvp(vvp_file, {
-        'freezing_level_m': nwp_data['freezing_level'],
+        'freezing_level_m': nwp_freezing_level
     })
-
-    # ... processing logic
-    return output_path
+    # ... processing ...
 ```
 
-## Environment Variables
+### Testing
 
-- `VPRC_RADAR_CONFIG`: Path to custom TOML configuration file
-  - If set, loads this file instead of package default
-  - Useful for testing or alternative radar networks
-  - File must exist or `FileNotFoundError` is raised
+```python
+import os
+from vprc.io import _load_radar_defaults, _build_radar_name_to_code_map
 
-## Radar Name Mapping
+os.environ['VPRC_RADAR_CONFIG'] = 'tests/data/test_radars.toml'
+_load_radar_defaults.cache_clear()
+_build_radar_name_to_code_map.cache_clear()
 
-The parser automatically maps full radar names to three-letter codes:
-
-- `KANKAANPAA` → `KAN`
-- `VANTAA` → `VAN`
-- `IKAALINEN` → `IKA`
-- etc.
-
-If the full name is not recognized, uses the first 3 characters as the code.
-
-## Design Rationale
-
-This three-tier precedence system provides:
-
-1. **Development flexibility**: Override any field for testing
-2. **Operational deployment**: Static config in container + dynamic NWP data
-3. **Sensible defaults**: Works out-of-the-box for FMI radar network
-4. **Traceability**: Package-shipped TOML matches Perl reference implementation
+ds = read_vvp('tests/data/test_file.txt')
+```

@@ -48,6 +48,57 @@ def _load_radar_defaults() -> dict:
         return tomllib.load(f)
 
 
+@lru_cache(maxsize=1)
+def _build_radar_name_to_code_map() -> dict[str, str]:
+    """
+    Build reverse mapping from full radar names to three-letter codes.
+
+    This mapping is derived from the TOML configuration file, avoiding
+    hardcoded name-to-code relationships in Python code.
+
+    Returns:
+        Dictionary mapping full radar names (uppercase) to codes.
+        Example: {"KANKAANPAA": "KAN", "VANTAA": "VAN", ...}
+
+    Note:
+        Results are cached. Only built once per process.
+        Reuses the cached TOML data from _load_radar_defaults().
+    """
+    radar_defaults = _load_radar_defaults()
+    name_to_code = {}
+
+    for code, config in radar_defaults.items():
+        if code == 'other':
+            continue
+        # Get the 'name' field from config
+        if 'name' in config:
+            name_to_code[config['name'].upper()] = code
+
+    return name_to_code
+
+
+def _radar_name_to_code(radar_name: str) -> str:
+    """
+    Convert full radar name to three-letter code.
+
+    Args:
+        radar_name: Full radar name from VVP file header (e.g., "KANKAANPAA")
+
+    Returns:
+        Three-letter radar code (e.g., "KAN")
+        If not found in mapping, returns the radar_name unchanged
+        (will fallback to 'other' in _get_radar_metadata).
+
+    Example:
+        >>> _radar_name_to_code("KANKAANPAA")
+        'KAN'
+        >>> _radar_name_to_code("UNKNOWN_RADAR")
+        'UNKNOWN_RADAR'
+    """
+    name_map = _build_radar_name_to_code_map()
+    return name_map.get(radar_name.upper(), radar_name)
+
+
 def _get_radar_metadata(radar_code: str,
                        override_metadata: dict | None = None) -> dict:
     """
@@ -265,29 +316,9 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
         to have dimensions (height, profile_idx).
     """
     # Resolve metadata with proper precedence
-    # Extract radar code from header (handle full names like "KANKAANPAA" → "KAN")
+    # Extract radar code from header using TOML-based mapping
     radar_name = header.radar.upper()
-
-    # Map full radar names to codes (based on Perl reference)
-    radar_name_to_code = {
-        'VANTAA': 'VAN',
-        'KERAVA': 'KER',
-        'IKAALINEN': 'IKA',
-        'KANKAANPAA': 'KAN',
-        'KESALAHTI': 'KES',
-        'PETAJAVESI': 'PET',
-        'ANJALANKOSKI': 'ANJ',
-        'KUOPIO': 'KUO',
-        'KORPO': 'KOR',
-        'UTAJARVI': 'UTA',
-        'LUOSTO': 'LUO',
-        'KAUNISPAA': 'KAU',
-        'VIMPELI': 'VIM',
-        'NURMES': 'NUR',
-        'VIHTI': 'VIH',
-    }
-
-    radar_code = radar_name_to_code.get(radar_name, radar_name[:3] if len(radar_name) >= 3 else radar_name)
+    radar_code = _radar_name_to_code(radar_name)
 
     # Get merged metadata (TOML defaults + overrides)
     metadata = _get_radar_metadata(radar_code, radar_metadata)
