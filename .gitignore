@@ -219,6 +219,5 @@ __marimo__/
 *~
 *.swp
 .DS_Store
-*.pl
 .vscode/
-*.tcsh
+legacy/
