@@ -4,9 +4,9 @@
 
 This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Profile Reflectivity) correction algorithm** for weather radar data. The original Perl codebase (circa 2003) is being modernized for use in Apache Airflow workflows at FMI (Finnish Meteorological Institute).
 
-**Key insight**: This is a reference implementation project. The legacy Perl scripts (`allprof_prodx2.pl`, `pystycappi.pl`, `pystycappi_ka.pl`) remain in the repository as the authoritative algorithm specification. Do not modify or delete these files.
+**Key insight**: This is a modernization project. The legacy Perl scripts (`allprof_prodx2.pl`, `pystycappi.pl`, `pystycappi_ka.pl`) remain in the `legacy/` subdirectory as the authoritative algorithm specification. In the directory, there is also an input IRIS prodx VVP profile and output files. Do not modify or delete any of these files.
 
-**Core values**: Modern tools and standards, code readability and maintainability, PEP 8, reuse over reimplementation. Leverage `numpy`, `xarray`, `wradlib`, and other established libraries for mathematical and radar-specific operations instead of reimplementing algorithms. **Do it the pythonic way.**
+**Core values**: Modern tools and standards, code readability and maintainability, PEP 8, reuse over reimplementation. Where applicable, leverage `scipy`, `xarray`, `wradlib`, and other established libraries for mathematical and radar-specific operations instead of reimplementing algorithms. **Do it the pythonic way.**
 
 ## Architecture
 
@@ -34,7 +34,7 @@ Each radar station has unique characteristics (antenna height, beam angles, hori
 
 ```python
 radar_meta = {
-    'antenna_height_km': 0.174,      # Antenna elevation above sea level
+    'antenna_height_m': 174,      # Antenna elevation above sea level
     'lowest_level_offset_m': 126,    # Offset from nearest profile level
     'freezing_level_m': 2000,        # From MEPS/sounding data
 }
@@ -111,7 +111,6 @@ DBZ_KYNNYS1 = 4        # Spike detection thresholds
 
 - **Core data**: `pandas`, `xarray`, `numpy` - array operations and data structures
 - **Radar domain**: `wradlib` - radar-specific algorithms and transformations
-- **Config**: `tomllib` - TOML configuration parsing (stdlib in Python 3.11+)
 - **Build system**: `hatch` with `hatch-vcs` for versioning
 - **Python support**: 3.12+
 
