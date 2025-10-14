@@ -96,6 +96,7 @@ def correct_vpr(vvp_file: str, radar_config: dict) -> str:
 2. **Implement pythonically**: Use numpy operations, xarray methods, and wradlib functions instead of literal translation
 3. **Match numerical results**: Validate against Perl output, but code structure can differ significantly
 4. **Document mapping**: Reference Perl line numbers in docstrings for traceability
+5. **No hardcoding**: Use configuration files and input parameters. The radar network will evolve over time.
 
 **Key algorithm constants** (from `allprof_prodx2.pl`):
 ```python
