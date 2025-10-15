@@ -6,7 +6,7 @@ This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Pro
 
 **Key insight**: This is a modernization project. The legacy Perl scripts (`allprof_prodx2.pl`, `pystycappi.pl`, `pystycappi_ka.pl`) remain in the `legacy/` subdirectory as the authoritative algorithm specification. In the directory, there is also an input IRIS prodx VVP profile and output files. Do not modify or delete any of these files.
 
-**Core values**: Modern tools and standards, code readability and maintainability, PEP 8, reuse over reimplementation. Where applicable, leverage `scipy`, `xarray`, `wradlib`, and other established libraries for mathematical and radar-specific operations instead of reimplementing algorithms. **Do it the pythonic way.**
+**Core values**: Modern tools and standards, code readability and maintainability, reuse over reimplementation. Where applicable, leverage `scipy`, `xarray`, `wradlib`, and other established libraries for mathematical and radar-specific operations instead of reimplementing algorithms. **Do it the pythonic way.**
 
 ## Architecture
 
@@ -80,6 +80,15 @@ def correct_vpr(vvp_file: str, radar_config: dict) -> str:
 - **Use fixtures**: Test data files should be in `tests/data/` and checked into git
 - **Validation approach**: Compare against legacy Perl output when implementing algorithms
 
+### Style
+- Follow Black formatting
+- Naming, comments, etc. in English
+- Mention corresponding Perl names for key variables in comments/docstrings if helpful
+- Use `logging` module for debug/info messages
+- Type hinting for all functions
+- Succinct, to the point documentation
+- Avoid repeating bad practices from legacy code
+
 ### Algorithm Implementation Strategy
 
 **Development sequence** (logical order for testing against Perl reference):
@@ -100,10 +109,9 @@ def correct_vpr(vvp_file: str, radar_config: dict) -> str:
 
 **Key algorithm constants** (from `allprof_prodx2.pl`):
 ```python
-MDS = -45              # Minimum detectable signal (dBZ)
-STEP = 200             # Vertical resolution (m)
-MK_THRESHOLD = -0.005  # Gradient threshold: -1 dBZ/200m
-DBZ_KYNNYS1 = 4        # Spike detection thresholds
+MDS = -45              # Minimum detectable signal [dBZ]
+STEP = 200             # Vertical resolution [m]
+MK_THRESHOLD = -0.005  # Gradient threshold: -1 dBZ/200m (Perl $mkkynnys)
 ```
 
 **Profile classification**: `Prec.` (precipitation), `As` (altostratus), `CAE` (clear air echo), `Clutter`
@@ -138,7 +146,7 @@ def detect_bright_band(ds: xr.Dataset) -> xr.Dataset:
 ## Common Pitfalls
 
 - **Don't assume sea level heights**: Input files use heights relative to antenna
-- **Column name confusion**: Perl uses `$dbz`, Python uses `lin_dbz` (avoid `log_dbz` unless logarithmic)
+- **Column name confusion**: Perl uses `$dbz`, Python uses `lin_dbz` (avoid `log_dbz` unless logarithmic). `lin_dbz` is not to be confused with linear reflectivity Z (in mm^6/m^3).
 - **Zero vs. missing**: Legacy code uses `-45` for missing, not `NaN` or `0`
 - **Radar codes**: Three-letter codes (KAN, VAN, IKA) map to full names (see `allprof_prodx2.pl` line 32+)
 
