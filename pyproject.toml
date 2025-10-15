@@ -33,6 +33,20 @@ dependencies = [
 [tool.hatch.version]
 source = "vcs"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/vprc"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/vprc/radar_defaults.toml" = "vprc/radar_defaults.toml"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/README.md",
+  "/LICENSE.txt",
+]
+
 [tool.hatch.envs.types]
 extra-dependencies = [
   "mypy>=1.0.0",
