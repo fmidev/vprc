@@ -8,7 +8,7 @@ Based on allprof_prodx2.pl lines 370-488 (gradient calculation and clutter remov
 import numpy as np
 import xarray as xr
 
-from .constants import MDS, GMDS, MKKYNNYS, MIN_SAMPLES, FREEZING_LEVEL_MIN, STEP
+from .constants import MDS, GROUND_CLUTTER_GRADIENT_THRESHOLD, MIN_SAMPLES, FREEZING_LEVEL_MIN
 
 
 def compute_gradient(ds: xr.Dataset, min_samples: int = MIN_SAMPLES) -> xr.DataArray:
@@ -36,15 +36,10 @@ def compute_gradient(ds: xr.Dataset, min_samples: int = MIN_SAMPLES) -> xr.DataA
     heights = ds['height']
 
     # Compute forward difference: (dbz[i+1] - dbz[i]) / (height[i+1] - height[i])
-    dbz_diff = dbz.diff('height')  # dbz[i+1] - dbz[i]
-    height_diff = heights.diff('height')  # height[i+1] - height[i]
+    # Using label='lower' assigns the difference to the lower coordinate (i, not i+1)
+    dbz_diff = dbz.diff('height', label='lower')  # dbz[i+1] - dbz[i], labeled at i
+    height_diff = heights.diff('height', label='lower')  # height[i+1] - height[i]
     gradient = dbz_diff / height_diff
-
-    # The diff operation shifts the index, so gradient[i] now represents
-    # the gradient FROM height[i] TO height[i+1]
-    # We need to align this back to the original height coordinate
-    # After diff, the coordinate is the upper bound, but we want lower bound
-    gradient = gradient.assign_coords(height=heights[:-1].values)
 
     # Reindex to match original height coordinate, filling missing with NaN
     gradient = gradient.reindex(height=heights, fill_value=float('nan'))
@@ -137,7 +132,7 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
             return False
         dbz = ds['corrected_dbz'].sel(height=height)
         grad = gradient.sel(height=height)
-        result = (dbz > MDS) & ~np.isnan(grad) & (grad < MKKYNNYS)
+        result = (dbz > MDS) & ~np.isnan(grad) & (grad < GROUND_CLUTTER_GRADIENT_THRESHOLD)
         # Extract the scalar boolean value from the DataArray
         return bool(result.values)
 
@@ -155,7 +150,7 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
     # Case 1: Clutter only at h0 (lines 397-404)
     if clutter_h0 and h1 in heights:
         dbz_ref = ds['corrected_dbz'].sel(height=h1)
-        corrected = dbz_ref - MKKYNNYS * 200
+        corrected = dbz_ref - GROUND_CLUTTER_GRADIENT_THRESHOLD * 200
         original = ds['corrected_dbz'].sel(height=h0)
         ds['corrected_dbz'].loc[dict(height=h0)] = xr.where(
             corrected < original, corrected, original
@@ -167,13 +162,13 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
 
         # Correct h1
         if h1 in heights:
-            corrected_h1 = dbz_ref - MKKYNNYS * 200
+            corrected_h1 = dbz_ref - GROUND_CLUTTER_GRADIENT_THRESHOLD * 200
             original_h1 = ds['corrected_dbz'].sel(height=h1)
             ds['corrected_dbz'].loc[dict(height=h1)] = corrected_h1
 
         # Correct h0
         if h0 in heights:
-            corrected_h0 = dbz_ref - 2 * MKKYNNYS * 200
+            corrected_h0 = dbz_ref - 2 * GROUND_CLUTTER_GRADIENT_THRESHOLD * 200
             original_h0 = ds['corrected_dbz'].sel(height=h0)
             # Protection: don't increase value
             ds['corrected_dbz'].loc[dict(height=h0)] = xr.where(
@@ -186,12 +181,12 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
 
         # Correct h2
         if h2 in heights:
-            corrected_h2 = dbz_ref - MKKYNNYS * 200
+            corrected_h2 = dbz_ref - GROUND_CLUTTER_GRADIENT_THRESHOLD * 200
             ds['corrected_dbz'].loc[dict(height=h2)] = corrected_h2
 
         # Correct h1 (note: Perl has typo setting h1 twice, line 444-445)
         if h1 in heights:
-            corrected_h1 = dbz_ref - 2 * MKKYNNYS * 200
+            corrected_h1 = dbz_ref - 2 * GROUND_CLUTTER_GRADIENT_THRESHOLD * 200
             original_h1 = ds['corrected_dbz'].sel(height=h1)
             # Protection: don't increase value (lines 450-457)
             if not gradient_missing(h1):
@@ -201,7 +196,7 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
 
         # Correct h0
         if h0 in heights:
-            corrected_h0 = dbz_ref - 3 * MKKYNNYS * 200
+            corrected_h0 = dbz_ref - 3 * GROUND_CLUTTER_GRADIENT_THRESHOLD * 200
             original_h0 = ds['corrected_dbz'].sel(height=h0)
             # Protection: don't increase value (lines 460-465)
             if not gradient_missing(h0):

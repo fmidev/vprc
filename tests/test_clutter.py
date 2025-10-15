@@ -8,7 +8,7 @@ import pytest
 import xarray as xr
 
 from vprc.clutter import compute_gradient, remove_ground_clutter
-from vprc.constants import MDS, MKKYNNYS, STEP, MIN_SAMPLES
+from vprc.constants import MDS, GROUND_CLUTTER_GRADIENT_THRESHOLD, STEP, MIN_SAMPLES
 
 
 class TestComputeGradient:
