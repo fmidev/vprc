@@ -36,7 +36,7 @@ Each radar station has unique characteristics (antenna height, beam angles, hori
 radar_meta = {
     'antenna_height_m': 174,      # Antenna elevation above sea level
     'lowest_level_offset_m': 126,    # Offset from nearest profile level
-    'freezing_level_m': 2000,        # From MEPS/sounding data
+    'freezing_level_m': 2000,        # From NWP data
 }
 ```
 
@@ -93,10 +93,10 @@ def correct_vpr(vvp_file: str, radar_config: dict) -> str:
 
 **Development sequence** (logical order for testing against Perl reference):
 
-1. **Ground clutter removal** (`allprof_prodx2.pl` lines 393-488) - Simplest, enables early validation
-2. **Spike smoothing** (lines 490-686) - Independent preprocessing step
-3. **Profile quality weighting** (lines 1250+) - Needed for correction calculation
-4. **Bright band detection** (lines 897-1166) - Complex but well-defined
+1. **Ground clutter removal** (`allprof_prodx2.pl` "maakaikujen poisto") - Simplest, enables early validation
+2. **Spike smoothing** (`allprof_prodx2.pl` "piikkien tasoitus") - Independent preprocessing step
+3. **Profile quality weighting** (`allprof_prodx2.pl`) - Needed for correction calculation
+4. **Bright band detection** (`allprof_prodx2.pl`) - Complex but well-defined
 5. **VPR correction calculation** (`pystycappi.pl`) - Final integration
 
 **Implementation guidelines**:
