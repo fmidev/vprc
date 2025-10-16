@@ -385,9 +385,6 @@ def read_vvp(filepath: Path | str,
                          * 0 or negative: No freezing layer → normalized to 0
                          * Positive: Valid freezing level in meters
 
-                       Following Perl reference implementation logic
-                       (allprof_prodx2.pl lines 32-50, 359-362).
-
     Returns:
         xarray.Dataset with profile data and metadata
 

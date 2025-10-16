@@ -43,7 +43,7 @@ radar_meta = {
 **Configuration sources** (in priority order):
 1. Runtime parameters from Airflow (operational deployment)
 2. Static TOML files (development/testing)
-3. Default values from reference implementation (see `allprof_prodx2.pl` lines 32-50)
+3. Default values from reference implementation (see beginning of `allprof_prodx2.pl`)
 
 Ship a `radar_defaults.toml` with the package containing canonical radar configurations.
 
@@ -104,8 +104,7 @@ def correct_vpr(vvp_file: str, radar_config: dict) -> str:
 1. **Consult Perl for algorithm logic**: Understand *what* to compute from heavily-commented Finnish code
 2. **Implement pythonically**: Use numpy operations, xarray methods, and wradlib functions instead of literal translation
 3. **Match numerical results**: Validate against Perl output, but code structure can differ significantly
-4. **Document mapping**: Reference Perl line numbers in docstrings for traceability
-5. **No hardcoding**: Use configuration files and input parameters. The radar network will evolve over time.
+4. **No hardcoding**: Use configuration files and input parameters. The radar network will evolve over time.
 
 **Key algorithm constants** (from `allprof_prodx2.pl`):
 ```python
@@ -133,12 +132,11 @@ When implementing algorithm components (e.g., bright band detection):
 2. **Research existing solutions**: Check if `wradlib`, `numpy`, or other packages provide relevant functions
 3. **Create module**: Add to `src/vprc/` (e.g., `bright_band.py`) using pythonic patterns
 4. **Write tests**: Add to `tests/test_<module>.py` with validation against Perl output
-5. **Document traceability**: Reference Perl line numbers in docstrings
 
 Example function signature:
 ```python
 def detect_bright_band(ds: xr.Dataset) -> xr.Dataset:
-    """Based on algorithm from allprof_prodx2.pl lines 897-1166."""
+    """Based on algorithm from allprof_prodx2.pl titled 'Bright Band'"""
     dbz_gradient = ds['corrected_dbz'].differentiate('height')
     # ... pythonic implementation using numpy/xarray operations
 ```

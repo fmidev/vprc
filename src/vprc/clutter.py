@@ -2,7 +2,7 @@
 """
 Ground clutter detection and removal for VPR correction.
 
-Based on allprof_prodx2.pl lines 370-488 (gradient calculation and clutter removal).
+Based on allprof_prodx2.pl.
 """
 
 import numpy as np
@@ -15,7 +15,7 @@ def compute_gradient(ds: xr.Dataset, min_samples: int = MIN_SAMPLES) -> xr.DataA
     """
     Compute vertical gradient of corrected_dbz with quality checking.
 
-    Based on allprof_prodx2.pl lines 370-382.
+    Based on allprof_prodx2.pl.
 
     The Perl implementation calculates forward differences: gradient[i] = (dbz[i+200] - dbz[i]) / 200
     This is critical for ground clutter detection logic.
@@ -28,9 +28,6 @@ def compute_gradient(ds: xr.Dataset, min_samples: int = MIN_SAMPLES) -> xr.DataA
         DataArray with vertical gradient in dBZ/m.
         Invalid gradients (insufficient samples) are marked as NaN.
         Gradient[i] represents the slope from height[i] to height[i+1].
-
-    Note:
-        Uses forward differences, not centered differences, to match Perl logic.
     """
     dbz = ds['corrected_dbz']
     heights = ds['height']
@@ -60,7 +57,7 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
     """
     Remove ground clutter contamination from vertical profiles.
 
-    Based on allprof_prodx2.pl lines 393-488.
+    Based on allprof_prodx2.pl, section titled 'maakaikujen poisto'.
 
     Algorithm:
         Ground clutter creates artificially high reflectivity near the surface
@@ -75,7 +72,7 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
     Detection criteria (all must be met):
         - Echo present: dBZ > MDS (-45)
         - Valid gradient: not NaN
-        - Steep negative gradient: gradient < MKKYNNYS (-0.005 dBZ/m = -1 dBZ/200m)
+        - Steep negative gradient: gradient < GROUND_CLUTTER_GRADIENT_THRESHOLD
 
     Args:
         ds: xarray Dataset with 'corrected_dbz', 'count', and metadata
@@ -98,9 +95,6 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
     # (but proceed if FL is None, 0, or > 1000m)
     if freezing_level is not None and 0 < freezing_level < FREEZING_LEVEL_MIN:
         return ds
-
-    # Get lowest level from metadata
-    lowest_level = ds.attrs.get('lowest_level_offset_m', 100)
 
     # Compute gradient with quality checks
     gradient = compute_gradient(ds)
