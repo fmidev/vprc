@@ -26,3 +26,16 @@ MIN_SAMPLES = 30
 # Ground clutter correction is skipped if freezing level is between 0-1000m
 # (allprof_prodx2.pl line 392)
 FREEZING_LEVEL_MIN = 1000
+
+# Spike smoothing thresholds (dBZ)
+# Amplitude threshold for detecting spikes
+# Perl: hardcoded as 3 in spike detection conditions
+SPIKE_AMPLITUDE_THRESHOLD = 3.0
+
+# Threshold for large positive spikes - use 2-point average instead of 3-point
+# Perl variable: $dbzkynnys1
+LARGE_POSITIVE_SPIKE_THRESHOLD = 4.0
+
+# Threshold for large negative spikes - use 2-point average instead of 3-point
+# Perl variable: $dbzkynnys2
+LARGE_NEGATIVE_SPIKE_THRESHOLD = -10.0
