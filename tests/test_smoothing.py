@@ -7,6 +7,7 @@ from vprc.smoothing import (
     correct_lower_boundary_spike,
     correct_upper_boundary_spike,
     smooth_positive_spikes,
+    smooth_negative_spikes,
     smooth_spikes,
 )
 from vprc.constants import MDS
@@ -512,6 +513,205 @@ def test_smooth_positive_spikes_asymmetric_spike(sample_profile):
 
     # Should not be modified (doesn't exceed upper neighbor by >3 dBZ)
     xr.testing.assert_identical(ds_smoothed['corrected_dbz'], original)
+
+
+def test_smooth_negative_spikes_no_spikes(sample_profile):
+    """Test that no correction is applied when there are no negative spikes."""
+    ds = sample_profile.copy(deep=True)
+
+    # Set up smooth profile with no spikes
+    ds['sample_count'].loc[{'height': slice(500, 1100)}] = 50
+    ds['corrected_dbz'].loc[{'height': 500}] = 18.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 20.0
+    ds['corrected_dbz'].loc[{'height': 900}] = 22.0
+
+    original = ds['corrected_dbz'].copy()
+    ds_smoothed = smooth_negative_spikes(ds)
+
+    # Should not change anything
+    xr.testing.assert_identical(ds_smoothed['corrected_dbz'], original)
+
+
+def test_smooth_negative_spikes_small_spike_3point_average(sample_profile):
+    """Test that small negative spikes are smoothed with 3-point average."""
+    ds = sample_profile.copy(deep=True)
+
+    # Set up a moderate negative spike at 700m
+    ds['sample_count'].loc[{'height': slice(500, 1100)}] = 50
+    ds['corrected_dbz'].loc[{'height': 500}] = 20.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 16.0  # 4 dBZ below neighbors
+    ds['corrected_dbz'].loc[{'height': 900}] = 20.0
+
+    ds_smoothed = smooth_negative_spikes(ds)
+
+    # 3-point average: (20 + 16 + 20) / 3 = 18.667
+    # Difference: 16 - 18.667 = -2.667, which is NOT < -10 dBZ threshold
+    # So should use 3-point average
+    expected = (20.0 + 16.0 + 20.0) / 3
+    result = ds_smoothed['corrected_dbz'].sel(height=700).values
+
+    np.testing.assert_allclose(result, expected, rtol=1e-5)
+
+
+def test_smooth_negative_spikes_large_spike_2point_average(sample_profile):
+    """Test that large negative spikes are smoothed with 2-point average."""
+    ds = sample_profile.copy(deep=True)
+
+    # Set up a large negative spike at 700m
+    ds['sample_count'].loc[{'height': slice(500, 1100)}] = 50
+    ds['corrected_dbz'].loc[{'height': 500}] = 25.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 5.0   # 20 dBZ below neighbors
+    ds['corrected_dbz'].loc[{'height': 900}] = 25.0
+
+    ds_smoothed = smooth_negative_spikes(ds)
+
+    # 3-point average would be (25 + 5 + 25) / 3 = 18.333
+    # Difference: 5 - 18.333 = -13.333 dBZ, which is < -10 dBZ threshold
+    # So should use 2-point average: (25 + 25) / 2 = 25
+    expected = 25.0
+    result = ds_smoothed['corrected_dbz'].sel(height=700).values
+
+    np.testing.assert_allclose(result, expected, rtol=1e-5)
+
+
+def test_smooth_negative_spikes_exactly_at_threshold(sample_profile):
+    """Test negative spike exactly at the 3 dBZ detection threshold."""
+    ds = sample_profile.copy(deep=True)
+
+    # Spike that just barely qualifies (<-3 dBZ below neighbors)
+    ds['sample_count'].loc[{'height': slice(500, 1100)}] = 50
+    ds['corrected_dbz'].loc[{'height': 500}] = 20.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 16.9  # 3.1 dBZ below
+    ds['corrected_dbz'].loc[{'height': 900}] = 20.0
+
+    ds_smoothed = smooth_negative_spikes(ds)
+
+    # Should be smoothed with 3-point average
+    expected = (20.0 + 16.9 + 20.0) / 3
+    result = ds_smoothed['corrected_dbz'].sel(height=700).values
+
+    np.testing.assert_allclose(result, expected, rtol=1e-5)
+
+
+def test_smooth_negative_spikes_below_threshold(sample_profile):
+    """Test that negative dips below 3 dBZ threshold are not smoothed."""
+    ds = sample_profile.copy(deep=True)
+
+    # Small dip that doesn't qualify as spike
+    ds['sample_count'].loc[{'height': slice(500, 1100)}] = 50
+    ds['corrected_dbz'].loc[{'height': 500}] = 20.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 17.1  # 2.9 dBZ below (above threshold)
+    ds['corrected_dbz'].loc[{'height': 900}] = 20.0
+
+    original = ds['corrected_dbz'].copy()
+    ds_smoothed = smooth_negative_spikes(ds)
+
+    # Should not be modified
+    xr.testing.assert_identical(ds_smoothed['corrected_dbz'], original)
+
+
+def test_smooth_negative_spikes_multiple_spikes(sample_profile):
+    """Test smoothing multiple negative spikes at different heights."""
+    ds = sample_profile.copy(deep=True)
+
+    # Set up multiple spikes
+    ds['sample_count'].loc[{'height': slice(500, 1700)}] = 50
+
+    # Spike 1 at 700m (moderate - will use 3-point)
+    ds['corrected_dbz'].loc[{'height': 500}] = 20.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 16.0  # 4 dBZ dip
+    ds['corrected_dbz'].loc[{'height': 900}] = 20.0
+
+    # Spike 2 at 1300m (large - will use 2-point)
+    ds['corrected_dbz'].loc[{'height': 1100}] = 25.0
+    ds['corrected_dbz'].loc[{'height': 1300}] = 5.0   # 20 dBZ dip
+    ds['corrected_dbz'].loc[{'height': 1500}] = 25.0
+
+    ds_smoothed = smooth_negative_spikes(ds)
+
+    # Spike 1: 3-point avg = (20+16+20)/3 = 18.667, diff = 16-18.667 = -2.667 > -10
+    # Should use 3-point average
+    expected_1 = (20.0 + 16.0 + 20.0) / 3
+    result_1 = ds_smoothed['corrected_dbz'].sel(height=700).values
+    np.testing.assert_allclose(result_1, expected_1, rtol=1e-5)
+
+    # Spike 2: 3-point avg = (25+5+25)/3 = 18.333, diff = 5-18.333 = -13.333 < -10
+    # Should use 2-point average
+    expected_2 = (25.0 + 25.0) / 2
+    result_2 = ds_smoothed['corrected_dbz'].sel(height=1300).values
+    np.testing.assert_allclose(result_2, expected_2, rtol=1e-5)
+
+
+def test_smooth_negative_spikes_invalid_data_ignored(sample_profile):
+    """Test that negative spikes in invalid data (low sample count) are ignored."""
+    ds = sample_profile.copy(deep=True)
+
+    # Set up spike but with low sample count at middle level
+    ds['sample_count'].loc[{'height': 500}] = 50
+    ds['sample_count'].loc[{'height': 700}] = 10  # Below threshold!
+    ds['sample_count'].loc[{'height': 900}] = 50
+    ds['corrected_dbz'].loc[{'height': 500}] = 25.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 10.0  # Would be a spike
+    ds['corrected_dbz'].loc[{'height': 900}] = 25.0
+
+    original = ds['corrected_dbz'].copy()
+    ds_smoothed = smooth_negative_spikes(ds)
+
+    # Should not be modified because middle point has insufficient samples
+    xr.testing.assert_identical(ds_smoothed['corrected_dbz'], original)
+
+
+def test_smooth_negative_spikes_asymmetric_dip(sample_profile):
+    """Test that asymmetric dips are not smoothed (must be below BOTH neighbors)."""
+    ds = sample_profile.copy(deep=True)
+
+    # Dip that is only below one neighbor
+    ds['sample_count'].loc[{'height': slice(500, 1100)}] = 50
+    ds['corrected_dbz'].loc[{'height': 500}] = 25.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 18.0  # 7 below lower, but only 2 below upper
+    ds['corrected_dbz'].loc[{'height': 900}] = 20.0
+
+    original = ds['corrected_dbz'].copy()
+    ds_smoothed = smooth_negative_spikes(ds)
+
+    # Should not be modified (doesn't exceed lower neighbor by <-3 dBZ)
+    xr.testing.assert_identical(ds_smoothed['corrected_dbz'], original)
+
+
+def test_both_positive_and_negative_spikes_together(sample_profile):
+    """Test that both positive and negative spike smoothing work together."""
+    ds = sample_profile.copy(deep=True)
+
+    ds['sample_count'].loc[{'height': slice(500, 2100)}] = 50
+
+    # Positive spike at 700m
+    ds['corrected_dbz'].loc[{'height': 500}] = 16.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 20.0  # 4 dBZ spike
+    ds['corrected_dbz'].loc[{'height': 900}] = 16.0
+
+    # Smooth transition region (no spikes)
+    ds['corrected_dbz'].loc[{'height': 1100}] = 18.0
+    ds['corrected_dbz'].loc[{'height': 1300}] = 20.0
+    ds['corrected_dbz'].loc[{'height': 1500}] = 22.0
+
+    # Negative spike at 1900m (well separated)
+    ds['corrected_dbz'].loc[{'height': 1700}] = 24.0
+    ds['corrected_dbz'].loc[{'height': 1900}] = 20.0  # 4 dBZ dip
+    ds['corrected_dbz'].loc[{'height': 2100}] = 24.0
+
+    # Apply both smoothing operations
+    ds_smoothed = smooth_positive_spikes(ds)
+    ds_smoothed = smooth_negative_spikes(ds_smoothed)
+
+    # Positive spike: 3-point avg = (16+20+16)/3 = 17.333...
+    expected_pos = (16.0 + 20.0 + 16.0) / 3
+    result_pos = ds_smoothed['corrected_dbz'].sel(height=700).values
+    np.testing.assert_allclose(result_pos, expected_pos, rtol=1e-5)
+
+    # Negative spike: 3-point avg = (24+20+24)/3 = 22.666...
+    expected_neg = (24.0 + 20.0 + 24.0) / 3
+    result_neg = ds_smoothed['corrected_dbz'].sel(height=1900).values
+    np.testing.assert_allclose(result_neg, expected_neg, rtol=1e-5)
 
 
 def test_smooth_spikes_runs_without_error(sample_profile):

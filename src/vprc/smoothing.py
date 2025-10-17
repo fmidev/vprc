@@ -10,6 +10,7 @@ import numpy as np
 from .constants import (
     SPIKE_AMPLITUDE_THRESHOLD,
     LARGE_POSITIVE_SPIKE_THRESHOLD,
+    LARGE_NEGATIVE_SPIKE_THRESHOLD,
 )
 
 
@@ -229,6 +230,100 @@ def correct_upper_boundary_spike(
     return ds
 
 
+def _smooth_spikes_rolling(
+    ds: xr.Dataset,
+    spike_type: str,
+    sample_threshold: int = 30,
+    spike_threshold: float = SPIKE_AMPLITUDE_THRESHOLD,
+    large_spike_threshold: float | None = None,
+) -> xr.Dataset:
+    """Internal function to smooth positive or negative spikes using rolling windows.
+
+    This is a unified implementation for operations 3 and 4, which differ only in:
+    - Detection direction (> for positive, < for negative)
+    - Large spike threshold (4 for positive, -10 for negative)
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        VVP dataset with corrected_dbz and sample_count variables
+    spike_type : str
+        Either 'positive' or 'negative'
+    sample_threshold : int
+        Minimum samples for valid data
+    spike_threshold : float
+        Amplitude threshold for spike detection (3.0 dBZ in Perl)
+    large_spike_threshold : float, optional
+        Threshold for 2-point vs 3-point average
+        If None, uses LARGE_POSITIVE_SPIKE_THRESHOLD or LARGE_NEGATIVE_SPIKE_THRESHOLD
+
+    Returns
+    -------
+    xr.Dataset
+        Dataset with smoothed spikes
+    """
+    if spike_type not in ('positive', 'negative'):
+        raise ValueError(f"spike_type must be 'positive' or 'negative', got {spike_type}")
+
+    if large_spike_threshold is None:
+        large_spike_threshold = (
+            LARGE_POSITIVE_SPIKE_THRESHOLD if spike_type == 'positive'
+            else LARGE_NEGATIVE_SPIKE_THRESHOLD
+        )
+
+    result = ds.copy(deep=True)
+
+    # Identify valid data
+    is_valid = result['sample_count'] >= sample_threshold
+
+    # Check if we have 3 consecutive valid levels
+    valid_window = is_valid.rolling(height=3, center=True).sum() == 3
+
+    corrected = result['corrected_dbz']
+
+    # Calculate 3-point rolling mean
+    smoothed = corrected.rolling(height=3, center=True, min_periods=3).mean()
+
+    # Get values at neighbors for spike detection
+    val_below = corrected.shift(height=-1)
+    val_current = corrected
+    val_above = corrected.shift(height=1)
+
+    # Detect spikes based on type
+    if spike_type == 'positive':
+        # Positive spike: middle point is > threshold above both neighbors
+        spike_above_below = (val_current - val_below > spike_threshold)
+        spike_above_above = (val_current - val_above > spike_threshold)
+        is_spike = valid_window & spike_above_below & spike_above_above
+
+        # Large positive spike: residual after smoothing is still > threshold
+        diff_from_smoothed = val_current - smoothed
+        is_large_spike = diff_from_smoothed > large_spike_threshold
+    else:  # negative
+        # Negative spike: middle point is < threshold below both neighbors
+        spike_below_below = (val_current - val_below < -spike_threshold)
+        spike_below_above = (val_current - val_above < -spike_threshold)
+        is_spike = valid_window & spike_below_below & spike_below_above
+
+        # Large negative spike: residual after smoothing is still < threshold
+        diff_from_smoothed = val_current - smoothed
+        is_large_spike = diff_from_smoothed < large_spike_threshold
+
+    # Two-point average (neighbors only, exclude center)
+    two_point_avg = (val_below + val_above) / 2
+
+    # Choose correction based on spike magnitude
+    correction = xr.where(is_large_spike, two_point_avg, smoothed)
+
+    result['corrected_dbz'] = xr.where(
+        is_spike,
+        correction,
+        result['corrected_dbz']
+    )
+
+    return result
+
+
 def smooth_positive_spikes(
     ds: xr.Dataset,
     sample_threshold: int = 30,
@@ -280,50 +375,73 @@ def smooth_positive_spikes(
     The Perl code uses lin_dbz (original) for spike detection but modifies
     corrected_dbz (working values), so we follow the same approach.
     """
-    result = ds.copy(deep=True)
-
-    # Identify valid data
-    is_valid = result['sample_count'] >= sample_threshold
-
-    # Check if we have 3 consecutive valid levels (centered window)
-    # rolling(height=3, center=True) creates a window of 3 heights centered on each point
-    valid_window = is_valid.rolling(height=3, center=True).sum() == 3
-
-    corrected = result['corrected_dbz']
-
-    # Calculate 3-point rolling mean
-    smoothed = corrected.rolling(height=3, center=True, min_periods=3).mean()
-
-    # Detect positive spikes: middle point is > 3 dBZ above both neighbors
-    # Get values at i-1, i, i+1
-    val_below = corrected.shift(height=-1)
-    val_current = corrected
-    val_above = corrected.shift(height=1)
-
-    # Spike conditions
-    spike_above_below = (val_current - val_below > spike_threshold)
-    spike_above_above = (val_current - val_above > spike_threshold)
-    is_positive_spike = valid_window & spike_above_below & spike_above_above
-
-    # For large spikes (difference from smoothed > threshold), use 2-point average
-    diff_from_smoothed = corrected - smoothed
-    is_large_spike = diff_from_smoothed > large_spike_threshold
-
-    # Two-point average (neighbors only, exclude center)
-    two_point_avg = (val_below + val_above) / 2
-
-    # Apply corrections
-    # Small spikes: use 3-point average (smoothed)
-    # Large spikes: use 2-point average
-    correction = xr.where(is_large_spike, two_point_avg, smoothed)
-
-    result['corrected_dbz'] = xr.where(
-        is_positive_spike,
-        correction,
-        result['corrected_dbz']
+    return _smooth_spikes_rolling(
+        ds,
+        spike_type='positive',
+        sample_threshold=sample_threshold,
+        spike_threshold=spike_threshold,
+        large_spike_threshold=large_spike_threshold,
     )
 
-    return result
+
+def smooth_negative_spikes(
+    ds: xr.Dataset,
+    sample_threshold: int = 30,
+    spike_threshold: float = SPIKE_AMPLITUDE_THRESHOLD,
+    large_spike_threshold: float = LARGE_NEGATIVE_SPIKE_THRESHOLD,
+) -> xr.Dataset:
+    """Smooth negative spikes using 3-point rolling mean (with rolling windows).
+
+    Detects and smooths negative spikes where the middle point in a 3-level
+    sequence is below both neighbors by more than the spike threshold.
+    For moderate spikes, applies 3-point moving average. For large spikes,
+    replaces the spike with the average of the two neighbors only.
+
+    This operation is ideal for rolling window implementation because it uses
+    a symmetric 3-point window applied uniformly across all valid data.
+
+    Based on allprof_prodx2.pl lines 522-548 ("Negatiivinen piikki").
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        VVP dataset with 'lin_dbz', 'corrected_dbz', and 'sample_count' variables
+        Must have 'height' and 'time' dimensions
+    sample_threshold : int, default=30
+        Minimum number of samples required for valid data (Perl $kynnys)
+    spike_threshold : float, default=3.0
+        Amplitude threshold for spike detection (dBZ)
+        A point is a spike if it is below both neighbors by this amount
+    large_spike_threshold : float, default=-10.0
+        Threshold for using 2-point vs 3-point average (dBZ, Perl $dbzkynnys2)
+        If difference between original and 3-point average is below this,
+        use 2-point average (neighbors only) instead
+
+    Returns
+    -------
+    xr.Dataset
+        Dataset with smoothed negative spikes in corrected_dbz
+
+    Notes
+    -----
+    Algorithm:
+    1. Check three consecutive valid levels (i, i+1, i+2)
+    2. If middle level is <spike_threshold below both neighbors:
+       a. Calculate 3-point moving average
+       b. Calculate difference between original and smoothed
+       c. If difference < large_spike_threshold: use 2-point average
+       d. Otherwise: use 3-point average
+
+    The Perl code uses lin_dbz (original) for spike detection but modifies
+    corrected_dbz (working values), so we follow the same approach.
+    """
+    return _smooth_spikes_rolling(
+        ds,
+        spike_type='negative',
+        sample_threshold=sample_threshold,
+        spike_threshold=spike_threshold,
+        large_spike_threshold=large_spike_threshold,
+    )
 
 
 def smooth_spikes(ds: xr.Dataset) -> xr.Dataset:
@@ -373,8 +491,10 @@ def smooth_spikes(ds: xr.Dataset) -> xr.Dataset:
     # Operation 3: Positive spike smoothing (rolling window - processes all heights)
     ds = smooth_positive_spikes(ds)
 
+    # Operation 4: Negative spike smoothing (rolling window - processes all heights)
+    ds = smooth_negative_spikes(ds)
+
     # TODO: Add remaining operations
-    # Operation 4: Negative spike smoothing
     # Operation 5: Gap filling
     # Operation 6: Isolated echo removal
 
