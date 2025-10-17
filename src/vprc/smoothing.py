@@ -282,69 +282,44 @@ def smooth_positive_spikes(
     """
     result = ds.copy(deep=True)
 
-    # Create mask for valid data based on sample count
+    # Identify valid data
     is_valid = result['sample_count'] >= sample_threshold
 
-    # We need 3 consecutive valid levels
-    # Use shift to align data from i, i+1, i+2 positions
-    valid_current = is_valid  # level i
-    valid_above_1 = is_valid.shift(height=1, fill_value=False)  # level i+1
-    valid_above_2 = is_valid.shift(height=2, fill_value=False)  # level i+2
+    # Check if we have 3 consecutive valid levels (centered window)
+    # rolling(height=3, center=True) creates a window of 3 heights centered on each point
+    valid_window = is_valid.rolling(height=3, center=True).sum() == 3
 
-    # All three levels must be valid
-    three_valid = valid_current & valid_above_1 & valid_above_2
-
-    # Get original dBZ values at the three positions (for spike detection)
-    # Perl uses lin_dbz (isotaulu[i][j][0]) for detection
-    lin_dbz = result['lin_dbz']
-    lin_current = lin_dbz  # level i
-    lin_above_1 = lin_dbz.shift(height=1, fill_value=0)  # level i+1
-    lin_above_2 = lin_dbz.shift(height=2, fill_value=0)  # level i+2
-
-    # Detect positive spikes at middle position (i+1):
-    # lin_dbz[i+1] - lin_dbz[i] > 3 AND lin_dbz[i+1] - lin_dbz[i+2] > 3
-    # When viewed from position i, we check if i+1 exceeds both i and i+2
-    spike_above_lower = lin_above_1 - lin_current > spike_threshold
-    spike_above_upper = lin_above_1 - lin_above_2 > spike_threshold
-
-    is_positive_spike = three_valid & spike_above_lower & spike_above_upper
-
-    # If no spikes detected, return early
-    if not is_positive_spike.any():
-        return result
-
-    # Calculate corrections using corrected_dbz values
     corrected = result['corrected_dbz']
-    corr_current = corrected  # level i
-    corr_above_1 = corrected.shift(height=1, fill_value=0)  # level i+1
-    corr_above_2 = corrected.shift(height=2, fill_value=0)  # level i+2
 
-    # Calculate 3-point moving average
-    three_point_avg = (corr_current + corr_above_1 + corr_above_2) / 3
+    # Calculate 3-point rolling mean
+    smoothed = corrected.rolling(height=3, center=True, min_periods=3).mean()
 
-    # Calculate difference between original and 3-point average at spike position
-    # Perl first applies 3-point average, THEN checks if difference is too large
-    # Perl: $dbzero = $isotaulu[$i+200][$j][0] - $isotaulu[$i+200][$j][5]
-    # where [5] is now the 3-point average
-    diff_after_smoothing = lin_above_1 - three_point_avg
+    # Detect positive spikes: middle point is > 3 dBZ above both neighbors
+    # Get values at i-1, i, i+1
+    val_below = corrected.shift(height=-1)
+    val_current = corrected
+    val_above = corrected.shift(height=1)
 
-    # For large spikes (where even 3-point average leaves big difference),
-    # use 2-point average (neighbors only, exclude spike completely)
-    two_point_avg = (corr_current + corr_above_2) / 2
+    # Spike conditions
+    spike_above_below = (val_current - val_below > spike_threshold)
+    spike_above_above = (val_current - val_above > spike_threshold)
+    is_positive_spike = valid_window & spike_above_below & spike_above_above
 
-    # Choose correction method based on spike magnitude
-    # Use 2-point if the residual after 3-point smoothing is still > threshold
-    use_two_point = diff_after_smoothing > large_spike_threshold
-    correction = xr.where(use_two_point, two_point_avg, three_point_avg)
+    # For large spikes (difference from smoothed > threshold), use 2-point average
+    diff_from_smoothed = corrected - smoothed
+    is_large_spike = diff_from_smoothed > large_spike_threshold
 
-    # Apply correction at the spike position (which is shifted up by 1)
-    # We need to shift the spike mask and correction down by 1 to apply at correct position
-    is_spike_at_this_height = is_positive_spike.shift(height=-1, fill_value=False)
-    correction_at_this_height = correction.shift(height=-1, fill_value=0)
+    # Two-point average (neighbors only, exclude center)
+    two_point_avg = (val_below + val_above) / 2
+
+    # Apply corrections
+    # Small spikes: use 3-point average (smoothed)
+    # Large spikes: use 2-point average
+    correction = xr.where(is_large_spike, two_point_avg, smoothed)
 
     result['corrected_dbz'] = xr.where(
-        is_spike_at_this_height,
-        correction_at_this_height,
+        is_positive_spike,
+        correction,
         result['corrected_dbz']
     )
 
