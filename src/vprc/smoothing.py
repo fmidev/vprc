@@ -444,6 +444,188 @@ def smooth_negative_spikes(
     )
 
 
+def fill_gap(
+    ds: xr.Dataset,
+    height: int,
+    sample_threshold: int = 30,
+    mds: float = -45,
+) -> xr.Dataset:
+    """Fill single missing values within continuous echo regions.
+
+    Interpolates missing values by averaging the adjacent valid levels when
+    surrounded by sufficient valid data (2 levels on one side, 1 on the other).
+
+    Based on allprof_prodx2.pl "täytetään puuttuvat arvot".
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        VVP dataset with 'corrected_dbz' and 'sample_count' variables
+        Must have 'height' and 'time' dimensions
+    height : int
+        The height level (in meters) to check for gaps
+    sample_threshold : int, default=30
+        Minimum number of samples required for valid data (Perl $kynnys)
+    mds : float, default=-45
+        Minimum detectable signal threshold (Perl $mds)
+
+    Returns
+    -------
+    xr.Dataset
+        Dataset with gap filled in corrected_dbz for the specified height
+
+    Notes
+    -----
+    Two patterns are checked:
+
+    Pattern A: Missing level with 2 valid levels below + 1 valid level above
+    Pattern B: Missing level with 1 valid level below + 2 valid levels above
+
+    In both cases, the gap is filled with the average of the immediately
+    adjacent valid levels (height ± 200m).
+    """
+    # Check if all required height levels exist
+    h_minus_400 = height - 400
+    h_minus_200 = height - 200
+    h = height
+    h_plus_200 = height + 200
+    h_plus_400 = height + 400
+
+    required_heights = [h_minus_400, h_minus_200, h, h_plus_200, h_plus_400]
+    if not all(hgt in ds.height.values for hgt in required_heights):
+        return ds
+
+    # Extract data at relevant heights
+    samples_current = ds['sample_count'].sel(height=h)
+    samples_minus_200 = ds['sample_count'].sel(height=h_minus_200)
+    samples_minus_400 = ds['sample_count'].sel(height=h_minus_400)
+    samples_plus_200 = ds['sample_count'].sel(height=h_plus_200)
+    samples_plus_400 = ds['sample_count'].sel(height=h_plus_400)
+
+    corrected_current = ds['corrected_dbz'].sel(height=h)
+    corrected_minus_200 = ds['corrected_dbz'].sel(height=h_minus_200)
+    corrected_minus_400 = ds['corrected_dbz'].sel(height=h_minus_400)
+    corrected_plus_200 = ds['corrected_dbz'].sel(height=h_plus_200)
+    corrected_plus_400 = ds['corrected_dbz'].sel(height=h_plus_400)
+
+    # Current level must be missing samples but have a valid corrected value (>= mds)
+    is_gap = (samples_current < sample_threshold) & (corrected_current >= mds)
+
+    # Pattern A: 2 valid below + 1 valid above
+    # Perl: alapuolella kahdessa kerroksessa havaintoa ja yläpuolella yhdessä
+    valid_below_2 = (
+        (samples_minus_200 > sample_threshold) & (corrected_minus_200 > mds) &
+        (samples_minus_400 > sample_threshold) & (corrected_minus_400 > mds)
+    )
+    valid_above_1 = (samples_plus_200 > sample_threshold) & (corrected_plus_200 > mds)
+    pattern_a = is_gap & valid_below_2 & valid_above_1
+
+    # Pattern B: 1 valid below + 2 valid above
+    # Perl: alapuolella yhdessä kerroksessa havaintoa ja yläpuolella kahdessa
+    valid_below_1 = (samples_minus_200 > sample_threshold) & (corrected_minus_200 > mds)
+    valid_above_2 = (
+        (samples_plus_200 > sample_threshold) & (corrected_plus_200 > mds) &
+        (samples_plus_400 > sample_threshold) & (corrected_plus_400 > mds)
+    )
+    pattern_b = is_gap & valid_below_1 & valid_above_2
+
+    # Apply gap filling where either pattern matches
+    needs_fill = pattern_a | pattern_b
+
+    if needs_fill.any():
+        # Fill with average of adjacent valid levels
+        fill_value = (corrected_minus_200 + corrected_plus_200) / 2
+
+        ds['corrected_dbz'].loc[{'height': h}] = xr.where(
+            needs_fill,
+            fill_value,
+            ds['corrected_dbz'].sel(height=h)
+        )
+
+    return ds
+
+
+def remove_isolated_echo(
+    ds: xr.Dataset,
+    height: int,
+    sample_threshold: int = 30,
+    mds: float = -45,
+) -> xr.Dataset:
+    """Remove isolated echoes that lack supporting data above and below.
+
+    Removes single valid points that are surrounded by missing data on both
+    sides (2 levels above and below with no valid data).
+
+    Based on allprof_prodx2.pl after "jos yksittäinen piste, siten että ylä- ja
+    alapuolella ei kahdessa kerroksessa kaikua".
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        VVP dataset with 'corrected_dbz' and 'sample_count' variables
+        Must have 'height' and 'time' dimensions
+    height : int
+        The height level (in meters) to check for isolated echoes
+    sample_threshold : int, default=30
+        Minimum number of samples required for valid data (Perl $kynnys)
+    mds : float, default=-45
+        Minimum detectable signal threshold (Perl $mds)
+
+    Returns
+    -------
+    xr.Dataset
+        Dataset with isolated echo removed (set to mds) for the specified height
+
+    Notes
+    -----
+    Pattern: Valid point with 2 invalid levels both above and below
+
+    If all 4 surrounding levels (±200m and ±400m) have insufficient samples,
+    the current point is considered an isolated artifact and is removed.
+    """
+    # Check if all required height levels exist
+    h_minus_400 = height - 400
+    h_minus_200 = height - 200
+    h = height
+    h_plus_200 = height + 200
+    h_plus_400 = height + 400
+
+    required_heights = [h_minus_400, h_minus_200, h, h_plus_200, h_plus_400]
+    if not all(hgt in ds.height.values for hgt in required_heights):
+        return ds
+
+    # Extract sample counts at relevant heights
+    samples_current = ds['sample_count'].sel(height=h)
+    samples_minus_200 = ds['sample_count'].sel(height=h_minus_200)
+    samples_minus_400 = ds['sample_count'].sel(height=h_minus_400)
+    samples_plus_200 = ds['sample_count'].sel(height=h_plus_200)
+    samples_plus_400 = ds['sample_count'].sel(height=h_plus_400)
+
+    # Current level must have valid samples
+    is_valid = samples_current > sample_threshold
+
+    # All 4 surrounding levels must be invalid
+    # Perl: ylä- ja alapuolella ei kahdessa kerroksessa kaikua
+    all_neighbors_invalid = (
+        (samples_minus_200 < sample_threshold) &
+        (samples_minus_400 < sample_threshold) &
+        (samples_plus_200 < sample_threshold) &
+        (samples_plus_400 < sample_threshold)
+    )
+
+    # Isolated echo: valid point surrounded by invalid data
+    is_isolated = is_valid & all_neighbors_invalid
+
+    if is_isolated.any():
+        ds['corrected_dbz'].loc[{'height': h}] = xr.where(
+            is_isolated,
+            mds,
+            ds['corrected_dbz'].sel(height=h)
+        )
+
+    return ds
+
+
 def smooth_spikes(ds: xr.Dataset) -> xr.Dataset:
     """Apply all spike smoothing operations to a VVP profile.
 
@@ -494,8 +676,15 @@ def smooth_spikes(ds: xr.Dataset) -> xr.Dataset:
     # Operation 4: Negative spike smoothing (rolling window - processes all heights)
     ds = smooth_negative_spikes(ds)
 
-    # TODO: Add remaining operations
-    # Operation 5: Gap filling
-    # Operation 6: Isolated echo removal
+    # Process each height level for operations 5 and 6
+    for height in heights:
+        if height < start_height:
+            continue
+
+        # Operation 5: Gap filling
+        ds = fill_gap(ds, height)
+
+        # Operation 6: Isolated echo removal
+        ds = remove_isolated_echo(ds, height)
 
     return ds

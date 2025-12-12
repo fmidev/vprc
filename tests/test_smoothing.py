@@ -8,6 +8,8 @@ from vprc.smoothing import (
     correct_upper_boundary_spike,
     smooth_positive_spikes,
     smooth_negative_spikes,
+    fill_gap,
+    remove_isolated_echo,
     smooth_spikes,
 )
 from vprc.constants import MDS
@@ -712,6 +714,254 @@ def test_both_positive_and_negative_spikes_together(sample_profile):
     expected_neg = (24.0 + 20.0 + 24.0) / 3
     result_neg = ds_smoothed['corrected_dbz'].sel(height=1900).values
     np.testing.assert_allclose(result_neg, expected_neg, rtol=1e-5)
+
+
+# =============================================================================
+# Tests for fill_gap (Operation 5)
+# =============================================================================
+
+
+def test_fill_gap_no_gap(sample_profile):
+    """Test that no fill is applied when there is no gap."""
+    ds = sample_profile.copy(deep=True)
+
+    # All valid data - no gaps
+    ds['sample_count'].loc[{'height': slice(500, 1300)}] = 50
+    ds['corrected_dbz'].loc[{'height': 500}] = 10.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 15.0
+    ds['corrected_dbz'].loc[{'height': 900}] = 20.0
+    ds['corrected_dbz'].loc[{'height': 1100}] = 18.0
+    ds['corrected_dbz'].loc[{'height': 1300}] = 16.0
+
+    original = ds['corrected_dbz'].copy()
+    ds_filled = fill_gap(ds, 900)
+
+    xr.testing.assert_identical(ds_filled['corrected_dbz'], original)
+
+
+def test_fill_gap_pattern_a(sample_profile):
+    """Test gap filling with 2 valid levels below + 1 valid level above."""
+    ds = sample_profile.copy(deep=True)
+
+    # Pattern A: 2 valid below, 1 valid above
+    ds['sample_count'].loc[{'height': 500}] = 50  # valid (-400)
+    ds['sample_count'].loc[{'height': 700}] = 50  # valid (-200)
+    ds['sample_count'].loc[{'height': 900}] = 10  # GAP (< threshold)
+    ds['sample_count'].loc[{'height': 1100}] = 50  # valid (+200)
+    ds['sample_count'].loc[{'height': 1300}] = 10  # invalid (+400) - only 1 above
+
+    ds['corrected_dbz'].loc[{'height': 500}] = 10.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 15.0
+    ds['corrected_dbz'].loc[{'height': 900}] = 0.0  # will be filled
+    ds['corrected_dbz'].loc[{'height': 1100}] = 25.0
+    ds['corrected_dbz'].loc[{'height': 1300}] = MDS
+
+    ds_filled = fill_gap(ds, 900)
+
+    # Should be average of adjacent: (15 + 25) / 2 = 20
+    expected = (15.0 + 25.0) / 2
+    result = ds_filled['corrected_dbz'].sel(height=900).values
+    np.testing.assert_allclose(result, expected, rtol=1e-5)
+
+
+def test_fill_gap_pattern_b(sample_profile):
+    """Test gap filling with 1 valid level below + 2 valid levels above."""
+    ds = sample_profile.copy(deep=True)
+
+    # Pattern B: 1 valid below, 2 valid above
+    ds['sample_count'].loc[{'height': 500}] = 10  # invalid (-400)
+    ds['sample_count'].loc[{'height': 700}] = 50  # valid (-200)
+    ds['sample_count'].loc[{'height': 900}] = 10  # GAP (< threshold)
+    ds['sample_count'].loc[{'height': 1100}] = 50  # valid (+200)
+    ds['sample_count'].loc[{'height': 1300}] = 50  # valid (+400)
+
+    ds['corrected_dbz'].loc[{'height': 500}] = MDS
+    ds['corrected_dbz'].loc[{'height': 700}] = 12.0
+    ds['corrected_dbz'].loc[{'height': 900}] = 0.0  # will be filled
+    ds['corrected_dbz'].loc[{'height': 1100}] = 18.0
+    ds['corrected_dbz'].loc[{'height': 1300}] = 20.0
+
+    ds_filled = fill_gap(ds, 900)
+
+    # Should be average of adjacent: (12 + 18) / 2 = 15
+    expected = (12.0 + 18.0) / 2
+    result = ds_filled['corrected_dbz'].sel(height=900).values
+    np.testing.assert_allclose(result, expected, rtol=1e-5)
+
+
+def test_fill_gap_not_filled_insufficient_context(sample_profile):
+    """Test that gaps are not filled without sufficient context."""
+    ds = sample_profile.copy(deep=True)
+
+    # Only 1 valid below and 1 valid above - not enough
+    ds['sample_count'].loc[{'height': 500}] = 10  # invalid
+    ds['sample_count'].loc[{'height': 700}] = 50  # valid
+    ds['sample_count'].loc[{'height': 900}] = 10  # GAP
+    ds['sample_count'].loc[{'height': 1100}] = 50  # valid
+    ds['sample_count'].loc[{'height': 1300}] = 10  # invalid
+
+    ds['corrected_dbz'].loc[{'height': 700}] = 15.0
+    ds['corrected_dbz'].loc[{'height': 900}] = 0.0
+    ds['corrected_dbz'].loc[{'height': 1100}] = 25.0
+
+    original = ds['corrected_dbz'].sel(height=900).copy()
+    ds_filled = fill_gap(ds, 900)
+
+    # Should NOT be filled
+    xr.testing.assert_identical(ds_filled['corrected_dbz'].sel(height=900), original)
+
+
+def test_fill_gap_requires_corrected_above_mds(sample_profile):
+    """Test that gap is not filled if corrected values are at MDS."""
+    ds = sample_profile.copy(deep=True)
+
+    # Pattern A setup, but adjacent corrected value is MDS
+    ds['sample_count'].loc[{'height': 500}] = 50
+    ds['sample_count'].loc[{'height': 700}] = 50
+    ds['sample_count'].loc[{'height': 900}] = 10  # GAP
+    ds['sample_count'].loc[{'height': 1100}] = 50
+
+    ds['corrected_dbz'].loc[{'height': 500}] = 10.0
+    ds['corrected_dbz'].loc[{'height': 700}] = 15.0
+    ds['corrected_dbz'].loc[{'height': 900}] = 0.0
+    ds['corrected_dbz'].loc[{'height': 1100}] = MDS  # At MDS - should prevent fill
+
+    original = ds['corrected_dbz'].sel(height=900).copy()
+    ds_filled = fill_gap(ds, 900)
+
+    # Should NOT be filled because adjacent is at MDS
+    xr.testing.assert_identical(ds_filled['corrected_dbz'].sel(height=900), original)
+
+
+def test_fill_gap_at_edge(sample_profile):
+    """Test that fill_gap handles edge heights gracefully."""
+    ds = sample_profile.copy(deep=True)
+
+    # Try to fill at lowest height - should return unchanged
+    ds_filled = fill_gap(ds, 100)
+
+    xr.testing.assert_identical(ds_filled, ds)
+
+
+# =============================================================================
+# Tests for remove_isolated_echo (Operation 6)
+# =============================================================================
+
+
+def test_remove_isolated_echo_no_isolated(sample_profile):
+    """Test that continuous echoes are not removed."""
+    ds = sample_profile.copy(deep=True)
+
+    # All valid data - no isolated echoes
+    ds['sample_count'].loc[{'height': slice(500, 1300)}] = 50
+    ds['corrected_dbz'].loc[{'height': slice(500, 1300)}] = 20.0
+
+    original = ds['corrected_dbz'].copy()
+    ds_cleaned = remove_isolated_echo(ds, 900)
+
+    xr.testing.assert_identical(ds_cleaned['corrected_dbz'], original)
+
+
+def test_remove_isolated_echo_detected(sample_profile):
+    """Test that isolated echoes are removed."""
+    ds = sample_profile.copy(deep=True)
+
+    # Isolated echo at 900m - all neighbors invalid
+    ds['sample_count'].loc[{'height': 500}] = 10  # invalid (-400)
+    ds['sample_count'].loc[{'height': 700}] = 10  # invalid (-200)
+    ds['sample_count'].loc[{'height': 900}] = 50  # VALID - isolated
+    ds['sample_count'].loc[{'height': 1100}] = 10  # invalid (+200)
+    ds['sample_count'].loc[{'height': 1300}] = 10  # invalid (+400)
+
+    ds['corrected_dbz'].loc[{'height': 900}] = 25.0  # will be removed
+
+    ds_cleaned = remove_isolated_echo(ds, 900)
+
+    # Should be set to MDS
+    result = ds_cleaned['corrected_dbz'].sel(height=900).values
+    np.testing.assert_array_equal(result, MDS)
+
+
+def test_remove_isolated_echo_one_neighbor_valid(sample_profile):
+    """Test that echo with one valid neighbor is not removed."""
+    ds = sample_profile.copy(deep=True)
+
+    # Echo at 900m with one valid neighbor
+    ds['sample_count'].loc[{'height': 500}] = 10  # invalid (-400)
+    ds['sample_count'].loc[{'height': 700}] = 50  # VALID (-200) - has support!
+    ds['sample_count'].loc[{'height': 900}] = 50  # VALID
+    ds['sample_count'].loc[{'height': 1100}] = 10  # invalid (+200)
+    ds['sample_count'].loc[{'height': 1300}] = 10  # invalid (+400)
+
+    ds['corrected_dbz'].loc[{'height': 900}] = 25.0
+
+    original = ds['corrected_dbz'].sel(height=900).copy()
+    ds_cleaned = remove_isolated_echo(ds, 900)
+
+    # Should NOT be removed
+    xr.testing.assert_identical(ds_cleaned['corrected_dbz'].sel(height=900), original)
+
+
+def test_remove_isolated_echo_far_neighbor_valid(sample_profile):
+    """Test that echo with valid neighbor 2 levels away is not removed."""
+    ds = sample_profile.copy(deep=True)
+
+    # Echo at 900m with valid neighbor at +400m
+    ds['sample_count'].loc[{'height': 500}] = 10  # invalid (-400)
+    ds['sample_count'].loc[{'height': 700}] = 10  # invalid (-200)
+    ds['sample_count'].loc[{'height': 900}] = 50  # VALID
+    ds['sample_count'].loc[{'height': 1100}] = 10  # invalid (+200)
+    ds['sample_count'].loc[{'height': 1300}] = 50  # VALID (+400) - has support!
+
+    ds['corrected_dbz'].loc[{'height': 900}] = 25.0
+
+    original = ds['corrected_dbz'].sel(height=900).copy()
+    ds_cleaned = remove_isolated_echo(ds, 900)
+
+    # Should NOT be removed
+    xr.testing.assert_identical(ds_cleaned['corrected_dbz'].sel(height=900), original)
+
+
+def test_remove_isolated_echo_at_edge(sample_profile):
+    """Test that remove_isolated_echo handles edge heights gracefully."""
+    ds = sample_profile.copy(deep=True)
+
+    # Try at lowest height - should return unchanged
+    ds_cleaned = remove_isolated_echo(ds, 100)
+
+    xr.testing.assert_identical(ds_cleaned, ds)
+
+
+def test_remove_isolated_echo_multiple_time_points(sample_profile):
+    """Test isolated echo removal across multiple time points."""
+    ds = sample_profile.copy(deep=True)
+
+    # Set up isolated echo at 900m for some time points
+    ds['sample_count'].loc[{'height': 500}] = 10
+    ds['sample_count'].loc[{'height': 700}] = 10
+    ds['sample_count'].loc[{'height': 1100}] = 10
+    ds['sample_count'].loc[{'height': 1300}] = 10
+
+    # Some time points are isolated, some have support
+    for t in range(10):
+        if t < 5:
+            ds['sample_count'].loc[{'height': 900, 'time': t}] = 50  # isolated
+        else:
+            ds['sample_count'].loc[{'height': 900, 'time': t}] = 50
+            ds['sample_count'].loc[{'height': 700, 'time': t}] = 50  # has support
+
+    ds['corrected_dbz'].loc[{'height': 900}] = 25.0
+
+    ds_cleaned = remove_isolated_echo(ds, 900)
+
+    # First 5 time points should be MDS, last 5 should be unchanged
+    for t in range(5):
+        result = ds_cleaned['corrected_dbz'].sel(height=900, time=t).values
+        assert result == MDS, f"Time {t} should be MDS"
+
+    for t in range(5, 10):
+        result = ds_cleaned['corrected_dbz'].sel(height=900, time=t).values
+        assert result == 25.0, f"Time {t} should be unchanged"
 
 
 def test_smooth_spikes_runs_without_error(sample_profile):
