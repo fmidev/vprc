@@ -179,7 +179,7 @@ class TestVVPDataframeToXarray:
         ds = _vvp_dataframe_to_xarray(df, header)
 
         assert 'height' in ds.dims
-        assert ds.dims['height'] == len(df)
+        assert ds.sizes['height'] == len(df)
 
     def test_xarray_coordinates(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has correct coordinates."""
