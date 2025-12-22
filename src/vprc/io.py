@@ -326,6 +326,10 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     # Convert DataFrame to xarray using height as the index/coordinate
     ds = df.set_index('height').to_xarray()
 
+    # Rename 'count' to 'sample_count' for consistency with processing modules
+    if 'count' in ds:
+        ds = ds.rename({'count': 'sample_count'})
+
     # Add corrected_dbz as a copy of lin_dbz (will be modified by processing)
     ds['corrected_dbz'] = ds['lin_dbz'].copy()
 

@@ -19,7 +19,7 @@ This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Pro
 2. **Parsing** (`src/vprc/io.py`):
    - `read_vvp()` → Returns `xarray.Dataset`
 
-3. **Processing** (not yet implemented):
+3. **Processing**:
    - Bright band detection and correction
    - Ground clutter removal
    - Profile quality weighting
@@ -156,5 +156,5 @@ def detect_bright_band(ds: xr.Dataset) -> xr.Dataset:
 - `src/vprc/radar_defaults.toml` - Canonical radar configurations (ship with package)
 - `tests/test_*.py` - Test modules (mirror `src/vprc/` structure)
 - `tests/data/` - Sample VVP files and expected Perl outputs for validation
-- `*.pl` - Legacy Perl scripts (read-only algorithm reference, do not modify)
-- `*.tcsh` - Legacy workflow scripts (reference only, shows legacy operational context)
+- `legacy/*.pl` - Legacy Perl scripts (read-only algorithm reference, do not modify)
+- `legacy/*.tcsh` - Legacy workflow scripts (reference only, shows legacy operational context)

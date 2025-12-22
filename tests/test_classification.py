@@ -31,7 +31,7 @@ def make_test_dataset(
     ds = xr.Dataset(
         {
             "corrected_dbz": ("height", dbz_values),
-            "count": ("height", counts),
+            "sample_count": ("height", counts),
         },
         coords={"height": heights},
         attrs={"freezing_level_m": freezing_level_m},
@@ -275,7 +275,7 @@ class TestClassifyProfiles:
         ds = xr.Dataset(
             {
                 "corrected_dbz": (["time", "height"], [dbz_t0, dbz_t1]),
-                "count": (["time", "height"], [[100] * 5, [100] * 5]),
+                "sample_count": (["time", "height"], [[100] * 5, [100] * 5]),
             },
             coords={"height": heights, "time": [0, 1]},
             attrs={"freezing_level_m": 400},

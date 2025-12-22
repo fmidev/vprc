@@ -197,7 +197,7 @@ class TestVVPDataframeToXarray:
         ds = _vvp_dataframe_to_xarray(df, header)
 
         expected_vars = [
-            'count', 'zcount',
+            'sample_count', 'zcount',
             'wind_speed', 'wind_speed_std',
             'direction', 'direction_std',
             'vertical', 'vertical_std',
@@ -245,7 +245,7 @@ class TestVVPDataframeToXarray:
 
         # Test selection by height
         data_at_1500 = ds.sel(height=1500)
-        assert data_at_1500['count'].values == 5000
+        assert data_at_1500['sample_count'].values == 5000
         assert abs(float(data_at_1500['wind_speed'].values) - 7.5) < 0.01
 
 

@@ -237,7 +237,7 @@ def classify_profile(
     each layer based on its characteristics and position.
 
     Args:
-        ds: xarray Dataset with 'corrected_dbz' and 'count' variables,
+        ds: xarray Dataset with 'corrected_dbz' and 'sample_count' variables,
             indexed by 'height'. Must have 'freezing_level_m' in attrs
             (can be None).
 
@@ -256,7 +256,7 @@ def classify_profile(
     """
     heights = ds["height"].values
     dbz = ds["corrected_dbz"]
-    count = ds["count"]
+    count = ds["sample_count"]
     freezing_level = ds.attrs.get("freezing_level_m", None)
     lowest_height = int(heights[0]) if len(heights) > 0 else 0
 

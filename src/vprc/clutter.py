@@ -43,7 +43,7 @@ def compute_gradient(ds: xr.Dataset, min_samples: int = MIN_SAMPLES) -> xr.DataA
 
     # Mark invalid where sample count is too low
     # For forward difference gradient[i], we need samples at both i and i+1
-    valid_samples = ds['count'] >= min_samples
+    valid_samples = ds['sample_count'] >= min_samples
     valid_samples_next = valid_samples.shift(height=-1, fill_value=False)
     valid_gradient = valid_samples & valid_samples_next
 

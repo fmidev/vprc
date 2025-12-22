@@ -24,7 +24,7 @@ class TestComputeGradient:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights}
         )
@@ -47,7 +47,7 @@ class TestComputeGradient:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights}
         )
@@ -72,7 +72,7 @@ class TestComputeGradient:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights}
         )
@@ -98,7 +98,7 @@ class TestRemoveGroundClutter:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights},
             attrs={'lowest_level_offset_m': 100, 'freezing_level_m': 2000}
@@ -123,7 +123,7 @@ class TestRemoveGroundClutter:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights},
             attrs={'lowest_level_offset_m': 100, 'freezing_level_m': 2000}
@@ -149,7 +149,7 @@ class TestRemoveGroundClutter:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights},
             attrs={'lowest_level_offset_m': 100, 'freezing_level_m': 500}
@@ -172,7 +172,7 @@ class TestRemoveGroundClutter:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights},
             attrs={'lowest_level_offset_m': 100, 'freezing_level_m': 2000}
@@ -192,7 +192,7 @@ class TestRemoveGroundClutter:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights},
             attrs={'lowest_level_offset_m': 100, 'freezing_level_m': 0}
@@ -212,7 +212,7 @@ class TestRemoveGroundClutter:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights},
             attrs={'lowest_level_offset_m': 100, 'freezing_level_m': 2000}
@@ -233,7 +233,7 @@ class TestRemoveGroundClutter:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights},
             attrs={'lowest_level_offset_m': 100, 'freezing_level_m': 2000}
@@ -253,7 +253,7 @@ class TestRemoveGroundClutter:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values.copy()),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights},
             attrs={'lowest_level_offset_m': 100, 'freezing_level_m': 2000}
@@ -278,7 +278,7 @@ class TestRemoveGroundClutter:
         ds = xr.Dataset(
             {
                 'corrected_dbz': ('height', dbz_values),
-                'count': ('height', counts),
+                'sample_count': ('height', counts),
             },
             coords={'height': heights},
             attrs={'lowest_level_offset_m': 100, 'freezing_level_m': 2000}

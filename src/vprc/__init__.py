@@ -27,6 +27,7 @@ from .clutter import remove_ground_clutter
 from .smoothing import smooth_spikes
 from .classification import classify_profile, ProfileClassification, LayerType
 from .bright_band import detect_bright_band, BrightBandResult
+from .vpr_correction import compute_vpr_correction, VPRCorrectionResult
 
 
 @dataclass
@@ -37,12 +38,13 @@ class ProcessedProfile:
         dataset: xarray Dataset with corrected_dbz after all processing
         classification: Layer classification results
         bright_band: Bright band detection results
-        usable_for_vpr: True if profile is suitable for VPR correction
+        vpr_correction: VPR correction factors (None if not computed)
     """
 
     dataset: xr.Dataset
     classification: ProfileClassification
     bright_band: BrightBandResult
+    vpr_correction: VPRCorrectionResult | None = None
 
     @property
     def usable_for_vpr(self) -> bool:
@@ -56,23 +58,28 @@ def process_vvp(
     antenna_height_m: int | None = None,
     lowest_level_offset_m: int | None = None,
     freezing_level_m: float | None = None,
+    compute_vpr: bool = True,
+    cappi_heights_m: tuple[int, ...] | None = None,
     **kwargs,
 ) -> ProcessedProfile:
     """Process a VVP profile through the full correction pipeline.
 
     This is the main entry point for VPR correction. It reads a VVP file,
     applies ground clutter removal, spike smoothing, layer classification,
-    and bright band detection.
+    bright band detection, and optionally computes VPR correction factors.
 
     Args:
         path: Path to the VVP profile file
         antenna_height_m: Antenna height above sea level (m)
         lowest_level_offset_m: Offset from antenna to lowest profile level (m)
         freezing_level_m: Freezing level from NWP (m above sea level)
+        compute_vpr: Whether to compute VPR correction factors (default True)
+        cappi_heights_m: CAPPI heights for VPR correction (default 500, 1000)
         **kwargs: Additional metadata passed to read_vvp()
 
     Returns:
-        ProcessedProfile with corrected dataset, classification, and BB info
+        ProcessedProfile with corrected dataset, classification, BB info,
+        and optionally VPR correction factors
 
     Example:
         >>> result = process_vvp(
@@ -83,6 +90,9 @@ def process_vvp(
         ...     print(f"Profile type: {result.classification.profile_type}")
         ...     if result.bright_band.detected:
         ...         print(f"BB at {result.bright_band.peak_height}m")
+        ...     if result.vpr_correction:
+        ...         corr = result.vpr_correction.corrections
+        ...         print(f"Correction at 100km: {corr.sel(range_km=100)}")
 
     Note:
         For Airflow integration, this function is designed to be called
@@ -118,10 +128,19 @@ def process_vvp(
 
     bright_band = detect_bright_band(ds, layer_top=layer_top)
 
+    # Step 6: VPR correction (if requested and profile is usable)
+    vpr_result = None
+    if compute_vpr and classification.usable_for_vpr:
+        vpr_result = compute_vpr_correction(
+            ds,
+            cappi_heights_m=cappi_heights_m,
+        )
+
     return ProcessedProfile(
         dataset=ds,
         classification=classification,
         bright_band=bright_band,
+        vpr_correction=vpr_result,
     )
 
 
@@ -131,5 +150,7 @@ __all__ = [
     "ProfileClassification",
     "LayerType",
     "BrightBandResult",
+    "VPRCorrectionResult",
+    "compute_vpr_correction",
     "read_vvp",
 ]
