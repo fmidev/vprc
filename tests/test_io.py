@@ -174,22 +174,36 @@ class TestVVPDataframeToXarray:
         assert isinstance(ds, xr.Dataset)
 
     def test_xarray_dimensions(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
-        """Test that xarray has correct dimensions."""
+        """Test that xarray has correct dimensions.
+
+        Note: heights are converted to above-antenna coordinates, and levels
+        below antenna are dropped. For KAN (antenna at 174m), input level 100m
+        is dropped (100-174 < 0), leaving 34 of original 35 levels.
+        """
         header, df = sample_data
         ds = _vvp_dataframe_to_xarray(df, header)
 
         assert 'height' in ds.dims
-        assert ds.sizes['height'] == len(df)
+        # Original 35 levels minus 1 dropped (below antenna)
+        assert ds.sizes['height'] == len(df) - 1
 
     def test_xarray_coordinates(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
-        """Test that xarray has correct coordinates."""
+        """Test that xarray has correct coordinates.
+
+        Heights are converted to above-antenna: sea_level - antenna_height_m.
+        For KAN (antenna 174m): 300m ASL -> 126m above antenna,
+        6900m ASL -> 6726m above antenna.
+        """
         header, df = sample_data
         ds = _vvp_dataframe_to_xarray(df, header)
 
         assert 'height' in ds.coords
-        assert len(ds.coords['height']) == len(df)
-        assert ds.coords['height'].min().values == 100
-        assert ds.coords['height'].max().values == 6900
+        # 35 input levels, 1 dropped (below antenna)
+        assert len(ds.coords['height']) == len(df) - 1
+        # Lowest remaining level: 300m ASL - 174m = 126m above antenna
+        assert ds.coords['height'].min().values == 126
+        # Highest level: 6900m ASL - 174m = 6726m above antenna
+        assert ds.coords['height'].max().values == 6726
 
     def test_xarray_variables(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has expected data variables."""
@@ -239,14 +253,18 @@ class TestVVPDataframeToXarray:
         assert 'source_file' in ds.attrs
 
     def test_xarray_data_access(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
-        """Test accessing data from xarray Dataset."""
+        """Test accessing data from xarray Dataset.
+
+        Heights are above antenna, so 1500m ASL -> 1326m above antenna.
+        """
         header, df = sample_data
         ds = _vvp_dataframe_to_xarray(df, header)
 
-        # Test selection by height
-        data_at_1500 = ds.sel(height=1500)
-        assert data_at_1500['sample_count'].values == 5000
-        assert abs(float(data_at_1500['wind_speed'].values) - 7.5) < 0.01
+        # Test selection by height (above antenna)
+        # Original 1500m ASL - 174m antenna = 1326m above antenna
+        data_at_1326 = ds.sel(height=1326)
+        assert data_at_1326['sample_count'].values == 5000
+        assert abs(float(data_at_1326['wind_speed'].values) - 7.5) < 0.01
 
 
 class TestParseVVPToXarray:

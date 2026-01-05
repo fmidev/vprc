@@ -292,8 +292,12 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     """
     Convert parsed VVP DataFrame to xarray Dataset.
 
+    Heights are converted from sea level (as in VVP files) to heights above
+    antenna, which is the appropriate coordinate system for VPR correction
+    since we're dealing with observation geometry.
+
     Args:
-        df: DataFrame from parse_vvp_file
+        df: DataFrame from parse_vvp_file (heights in meters ASL)
         header: VVPHeader metadata
         radar_metadata: Optional dict to override specific metadata fields.
                        Common fields:
@@ -309,7 +313,9 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
         source_file: Path to source VVP file for metadata
 
     Returns:
-        xarray.Dataset with dimensions (height,) and rich metadata
+        xarray.Dataset with dimensions (height,) where height is meters
+        above antenna. Rich metadata includes antenna_height_m for converting
+        back to sea level if needed.
 
     Note:
         For multi-profile processing (multiple scans), you'd extend this
@@ -322,6 +328,17 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
 
     # Get merged metadata (TOML defaults + overrides)
     metadata = _get_radar_metadata(radar_code, radar_metadata)
+
+    # Convert sea-level heights to heights above antenna
+    # This follows the legacy Perl logic: $Height = $SeaHeight - $antennin_korkeus * 1000
+    # (allprof_prodx2.pl line 153)
+    antenna_height_m = metadata.get('antenna_height_m', 0)
+    df = df.copy()
+    df['height'] = df['height'] - antenna_height_m
+
+    # Drop levels below antenna (negative heights)
+    # Legacy: if ($Height < $alintaso) { $Height = 0; } but actually skips them
+    df = df[df['height'] > 0].copy()
 
     # Convert DataFrame to xarray using height as the index/coordinate
     ds = df.set_index('height').to_xarray()
@@ -418,3 +435,29 @@ def read_vvp(filepath: Path | str,
     ds = _vvp_dataframe_to_xarray(df, header, radar_metadata, source_file=filepath)
     return ds
 
+
+def height_to_sea_level(ds: xr.Dataset) -> xr.DataArray:
+    """
+    Convert height coordinate from above-antenna to sea level.
+
+    The VPR correction uses heights above antenna for processing (since
+    observation geometry is relative to antenna position). This helper
+    converts back to sea level heights for output or comparison with
+    other data sources.
+
+    Args:
+        ds: Dataset with height coordinate in meters above antenna
+            and antenna_height_m in attrs
+
+    Returns:
+        DataArray with heights in meters above sea level
+
+    Example:
+        >>> ds = read_vvp('profile.txt')
+        >>> ds.height.values[:3]  # Heights above antenna
+        array([126, 326, 526])
+        >>> height_to_sea_level(ds).values[:3]  # Sea level
+        array([300, 500, 700])
+    """
+    antenna_height_m = ds.attrs.get('antenna_height_m', 0)
+    return ds.height + antenna_height_m
