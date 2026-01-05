@@ -222,3 +222,4 @@ __marimo__/
 .vscode/
 legacy/
 *.pdf
+scripts/
