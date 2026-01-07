@@ -27,9 +27,9 @@ from .legacy_parser import parse_legacy_profile
 
 
 # Paths to test data
-LEGACY_DIR = Path(__file__).parent.parent / 'legacy'
-INPUT_FILE = LEGACY_DIR / '202508241100_KAN.VVP_40.txt'
-EXPECTED_PROFILE = LEGACY_DIR / '202508241100_KAN.VVP_40.profile'
+DATA_DIR = Path(__file__).parent / 'data'
+INPUT_FILE = DATA_DIR / '202508241100_KAN.VVP_40.txt'
+EXPECTED_PROFILE = DATA_DIR / '202508241100_KAN.VVP_40.profile'
 
 # Freezing level from sounding (since NWP data unavailable)
 # The legacy run used HIRLAM data; we use observed value for testing
