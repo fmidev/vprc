@@ -23,7 +23,6 @@ from wradlib.trafo import decibel, idecibel
 
 from .constants import (
     MDS,
-    STEP,
     FINE_GRID_RESOLUTION_M,
     MAX_PROFILE_HEIGHT_M,
     BEAMWIDTH_DEG,
