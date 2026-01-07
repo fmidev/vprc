@@ -74,22 +74,6 @@ os.environ['VPRC_RADAR_CONFIG'] = '/path/to/custom_radars.toml'
 ds = read_vvp('202508241100_KAN.VVP_40.txt')
 ```
 
-### Full Precedence Example
-
-```python
-import os
-
-# Custom TOML: [KAN] antenna_height_m = 500
-os.environ['VPRC_RADAR_CONFIG'] = '/opt/fmi/radars.toml'
-
-# Function param wins
-ds = read_vvp('202508241100_KAN.VVP_40.txt', {
-    'antenna_height_m': 300,      # Overrides TOML
-    'freezing_level_m': 2000      # New field
-})
-# Result: antenna_height_m=300, freezing_level_m=2000, lowest_level_offset_m from TOML
-```
-
 ## Environment Variables
 
 **`VPRC_RADAR_CONFIG`**: Path to custom TOML configuration file
@@ -108,31 +92,6 @@ VVP file "KANKAANPAA" → TOML name lookup → "KAN" → load metadata
                               ↓
                     radar_defaults.toml
                     (or VPRC_RADAR_CONFIG)
-```
-
-## API Functions
-
-### Public API
-
-```python
-from vprc import read_vvp
-
-ds = read_vvp(filepath, radar_metadata=None)
-```
-
-### Internal Functions (for testing)
-
-```python
-from vprc.io import (
-    _load_radar_defaults,           # Load TOML config (cached)
-    _build_radar_name_to_code_map,  # Build name→code mapping (cached)
-    _radar_name_to_code,            # Convert "KANKAANPAA" → "KAN"
-    _get_radar_metadata,            # Get metadata with overrides
-)
-
-# Clear cache (needed when changing VPRC_RADAR_CONFIG)
-_load_radar_defaults.cache_clear()
-_build_radar_name_to_code_map.cache_clear()
 ```
 
 ## Radar Stations (Package Default)
@@ -156,51 +115,3 @@ Based on `allprof_prodx2.pl` lines 32-50, 75-135:
 | NUR  | NURMES       | 323        | 177        |
 | VIH  | VIHTI        | 181        | 119        |
 | KAU  | KAUNISPAA    | 489        | 11         |
-
-## Adding New Radars
-
-1. Add section to TOML:
-   ```toml
-   [NEW]
-   name = "NEWRADAR"
-   antenna_height_m = 250
-   lowest_level_offset_m = 50
-   ```
-
-2. Clear cache (if needed):
-   ```python
-   _load_radar_defaults.cache_clear()
-   _build_radar_name_to_code_map.cache_clear()
-   ```
-
-3. Use immediately - no Python code changes required.
-
-## Common Patterns
-
-### Airflow Deployment
-
-```python
-from airflow.decorators import task
-
-@task.docker(image="fmi/vprc:latest")
-def process_vpr(vvp_file: str, nwp_freezing_level: int):
-    from vprc import read_vvp
-
-    ds = read_vvp(vvp_file, {
-        'freezing_level_m': nwp_freezing_level
-    })
-    # ... processing ...
-```
-
-### Testing
-
-```python
-import os
-from vprc.io import _load_radar_defaults, _build_radar_name_to_code_map
-
-os.environ['VPRC_RADAR_CONFIG'] = 'tests/data/test_radars.toml'
-_load_radar_defaults.cache_clear()
-_build_radar_name_to_code_map.cache_clear()
-
-ds = read_vvp('tests/data/test_file.txt')
-```
