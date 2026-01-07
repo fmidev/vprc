@@ -144,7 +144,6 @@ def detect_bright_band(ds: xr.Dataset) -> xr.Dataset:
 
 ## Common Pitfalls
 
-- **Don't assume sea level heights**: Input files use heights relative to antenna
 - **Column name confusion**: Perl uses `$dbz`, Python uses `lin_dbz` (avoid `log_dbz` unless logarithmic). `lin_dbz` is not to be confused with linear reflectivity Z (in mm^6/m^3).
 - **Zero vs. missing**: Legacy code uses `-45` for missing, not `NaN` or `0`
 - **Radar codes**: Three-letter codes (KAN, VAN, IKA) map to full names (see `allprof_prodx2.pl` line 32+)

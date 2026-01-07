@@ -30,10 +30,10 @@ lowest_level_offset_m = 102
 - `lowest_level_offset_m` (int): Offset from nearest profile level (meters)
 
 **Optional (runtime):**
-- `freezing_level_m` (int | None): Freezing level from NWP data
+- `freezing_level_m` (int | None): Freezing level from NWP data (meters ASL)
   - `None`: Unknown (not retrieved)
   - `0` or negative: No freezing layer → normalized to 0
-  - Positive: Valid freezing level in meters above antenna
+  - Positive: Valid freezing level in meters above sea level
 
 ## Configuration Precedence
 

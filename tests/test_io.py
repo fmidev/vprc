@@ -288,15 +288,18 @@ class TestParseVVPToXarray:
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
+        # KAN antenna height is 174m
+        antenna_height = 174
         radar_meta = {
             'antenna_height_km': 0.174,
             'lowest_level_offset_m': 126,
-            'freezing_level_m': 2000,
+            'freezing_level_m': 2000,  # ASL
         }
         ds = read_vvp(SAMPLE_VVP_FILE, radar_meta)
 
         assert ds.attrs['antenna_height_km'] == 0.174
-        assert ds.attrs['freezing_level_m'] == 2000
+        # freezing_level converted from ASL (2000) to above-antenna (2000 - 174)
+        assert ds.attrs['freezing_level_m'] == 2000 - antenna_height
 
     def test_roundtrip_consistency(self):
         """Test that step-by-step and high-level APIs produce same results."""
@@ -344,10 +347,13 @@ class TestEdgeCases:
         Three cases:
         1. Unknown (None/not provided): Keep as None
         2. No freezing layer (0 or negative): Normalize to 0
-        3. Valid (positive): Store as-is
+        3. Valid (positive ASL): Convert to above-antenna
         """
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
+
+        # KAN antenna height is 174m
+        antenna_height = 174
 
         # Case 1: Unknown - No metadata provided
         ds1 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'antenna_height_km': 0.174})
@@ -357,17 +363,23 @@ class TestEdgeCases:
         ds2 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': None})
         assert ds2.attrs.get('freezing_level_m') is None
 
-        # Case 2: No freezing layer - negative (below antenna)
+        # Case 2: No freezing layer - negative (below surface)
         ds3 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': -100})
         assert ds3.attrs.get('freezing_level_m') == 0
 
-        # Case 2: No freezing layer - zero (at antenna level)
+        # Case 2: No freezing layer - zero (at sea level)
         ds4 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': 0})
         assert ds4.attrs.get('freezing_level_m') == 0
 
-        # Case 3: Valid freezing layer - positive value
+        # Case 2b: Freezing level positive ASL but below antenna (e.g., 100m ASL < 174m antenna)
+        # No melting layer visible to radar → normalized to 0
+        ds4b = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': 100})
+        assert ds4b.attrs.get('freezing_level_m') == 0
+
+        # Case 3: Valid freezing layer - positive ASL value
+        # Input 2000m ASL -> stored as 2000 - 174 = 1826m above antenna
         ds5 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': 2000})
-        assert ds5.attrs['freezing_level_m'] == 2000
+        assert ds5.attrs['freezing_level_m'] == 2000 - antenna_height
 
 
 class TestRadarConfiguration:
@@ -441,14 +453,15 @@ class TestRadarConfiguration:
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
+        # Override antenna_height to 200m, freezing_level to 2500m ASL
         ds = read_vvp(SAMPLE_VVP_FILE, {'antenna_height_m': 200, 'freezing_level_m': 2500})
 
         # Overridden value
         assert ds.attrs['antenna_height_m'] == 200
         # TOML default
         assert ds.attrs['lowest_level_offset_m'] == 126
-        # New field from override
-        assert ds.attrs['freezing_level_m'] == 2500
+        # freezing_level converted from ASL (2500) to above-antenna (2500 - 200 = 2300)
+        assert ds.attrs['freezing_level_m'] == 2300
 
     def test_custom_config_via_env_var(self, tmp_path):
         """Test loading custom TOML via VPRC_RADAR_CONFIG environment variable."""

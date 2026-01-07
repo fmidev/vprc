@@ -303,10 +303,10 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
                        Common fields:
                        - antenna_height_m: Antenna elevation above sea level (meters)
                        - lowest_level_offset_m: Offset from nearest profile level
-                       - freezing_level_m: Freezing level above antenna
+                       - freezing_level_m: Freezing level in meters ASL (from NWP)
                          * None: Unknown (not yet retrieved from NWP)
                          * 0 or negative: No freezing layer → normalized to 0
-                         * Positive: Valid freezing level in meters
+                         * Positive: Valid freezing level (converted to above-antenna internally)
 
                        If not provided or partially provided, missing fields will be
                        loaded from TOML configuration (env var or package default).
@@ -364,16 +364,22 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     # Add radar-specific metadata
     # Handle freezing_level_m specially with three cases:
     # 1. None or not provided: Unknown (not yet retrieved from NWP) → keep as None
-    # 2. Zero or negative: Known to be absent/below antenna → set to 0
-    # 3. Positive: Valid freezing level → use as-is
+    # 2. Zero or negative (ASL or above-antenna): No melting layer visible → set to 0
+    # 3. Positive above-antenna: Valid freezing level for BB detection
     # (following Perl logic from allprof_prodx2.pl lines 359-362)
     metadata_copy = metadata.copy()
     if 'freezing_level_m' in metadata_copy:
         fl = metadata_copy['freezing_level_m']
-        if fl is not None and isinstance(fl, (int, float)) and fl <= 0:
-            # Explicitly no freezing layer (or below antenna)
-            metadata_copy['freezing_level_m'] = 0
-        # else: None stays None (unknown), positive stays positive
+        if fl is not None and isinstance(fl, (int, float)):
+            if fl <= 0:
+                # Explicitly no freezing layer (or below surface)
+                metadata_copy['freezing_level_m'] = 0
+            else:
+                # Convert from ASL to above-antenna (same as height coordinate)
+                # If result is ≤0, freezing level is at/below antenna → no melting visible
+                fl_above_antenna = fl - antenna_height_m
+                metadata_copy['freezing_level_m'] = max(0, fl_above_antenna)
+        # else: None stays None (unknown)
 
     attrs.update(metadata_copy)
 
@@ -401,10 +407,10 @@ def read_vvp(filepath: Path | str,
                        Common fields:
                        - antenna_height_m: Antenna elevation above sea level (meters)
                        - lowest_level_offset_m: Offset from nearest profile level
-                       - freezing_level_m: Freezing level above antenna
+                       - freezing_level_m: Freezing level in meters ASL (from NWP)
                          * None: Unknown (not yet retrieved from NWP data)
                          * 0 or negative: No freezing layer → normalized to 0
-                         * Positive: Valid freezing level in meters
+                         * Positive: Valid freezing level (converted to above-antenna internally)
 
     Returns:
         xarray.Dataset with profile data and metadata
