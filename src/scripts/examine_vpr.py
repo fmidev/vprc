@@ -22,6 +22,8 @@ Individual processing steps are also available:
 import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+
 # Ensure package is importable when running from repo root
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
@@ -38,6 +40,47 @@ from vprc.vpr_correction import compute_vpr_correction
 
 # Default sample file
 DEFAULT_VVP = Path(__file__).resolve().parents[2] / "tests/data/202508241100_KAN.VVP_40.txt"
+
+
+def plot_profile(ds, title: str | None = None) -> plt.Figure:
+    """Plot dBZ and sample count profiles against height.
+
+    Args:
+        ds: xarray Dataset with 'corrected_dbz' and 'sample_count'
+        title: Optional plot title
+
+    Returns:
+        matplotlib Figure object
+    """
+    fig, ax1 = plt.subplots(figsize=(8, 10))
+
+    height = ds["height"].values
+    dbz = ds["corrected_dbz"].values
+    count = ds["sample_count"].values
+
+    # Plot dBZ on primary x-axis
+    color_dbz = "tab:blue"
+    ax1.plot(dbz, height, color=color_dbz, linewidth=2, label="dBZ")
+    ax1.set_xlabel("Reflectivity (dBZ)", color=color_dbz)
+    ax1.set_ylabel("Height (m)")
+    ax1.tick_params(axis="x", labelcolor=color_dbz)
+    ax1.set_xlim(-50, 50)
+    ax1.axvline(x=0, color="gray", linestyle="--", alpha=0.5)
+
+    # Plot sample count on secondary x-axis
+    ax2 = ax1.twiny()
+    color_count = "tab:orange"
+    ax2.plot(count, height, color=color_count, linewidth=2, label="count")
+    ax2.set_xlabel("Sample count", color=color_count)
+    ax2.tick_params(axis="x", labelcolor=color_count)
+
+    # Grid and title
+    ax1.grid(True, alpha=0.3)
+    if title:
+        fig.suptitle(title)
+
+    fig.tight_layout()
+    return fig
 
 
 def load_vvp(path: str | Path | None = None) -> ProcessedProfile:
@@ -149,4 +192,9 @@ if __name__ == "__main__":
     print("  ds_smooth   - After spike smoothing")
     print("  result      - ProcessedProfile object")
     print("  classification, bright_band, vpr_correction")
+    print("  fig         - Profile plot figure")
     print("-" * 60 + "\n")
+
+    # Create profile plot
+    fig = plot_profile(ds, title=str(vvp_path.name))
+    plt.show()
