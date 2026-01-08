@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Interactive script for examining VPR processing results.
+
+Run with: python -i src/scripts/examine_vpr.py [path_to_vvp_file]
+
+Or from IPython:
+    %run src/scripts/examine_vpr.py
+
+Key variables available after running:
+    ds          - xarray Dataset with corrected_dbz after all processing
+    result      - ProcessedProfile with all processing results
+    classification - Profile layer classification
+    bright_band - Bright band detection results
+    vpr_correction - VPR correction factors (if computed)
+
+Individual processing steps are also available:
+    ds_raw      - Raw dataset before any processing
+    ds_clutter  - After ground clutter removal
+    ds_smooth   - After spike smoothing
+"""
+
+import sys
+from pathlib import Path
+
+# Ensure package is importable when running from repo root
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from vprc import (
+    process_vvp,
+    read_vvp,
+    ProcessedProfile,
+)
+from vprc.clutter import remove_ground_clutter
+from vprc.smoothing import smooth_spikes
+from vprc.classification import classify_profile
+from vprc.bright_band import detect_bright_band
+from vprc.vpr_correction import compute_vpr_correction
+
+# Default sample file
+DEFAULT_VVP = Path(__file__).resolve().parents[2] / "tests/data/202508241100_KAN.VVP_40.txt"
+
+
+def load_vvp(path: str | Path | None = None) -> ProcessedProfile:
+    """Load and process a VVP file.
+
+    Args:
+        path: Path to VVP file. Uses default sample if None.
+
+    Returns:
+        ProcessedProfile with all results.
+    """
+    if path is None:
+        path = DEFAULT_VVP
+    path = Path(path)
+    print(f"Loading: {path}")
+    return process_vvp(path)
+
+
+def load_step_by_step(path: str | Path | None = None) -> dict:
+    """Load VVP file with intermediate results at each processing step.
+
+    Useful for debugging or understanding the processing pipeline.
+
+    Args:
+        path: Path to VVP file. Uses default sample if None.
+
+    Returns:
+        Dictionary with datasets at each processing step.
+    """
+    if path is None:
+        path = DEFAULT_VVP
+    path = Path(path)
+    print(f"Loading step-by-step: {path}")
+
+    ds_raw = read_vvp(path)
+    ds_clutter = remove_ground_clutter(ds_raw)
+    ds_smooth = smooth_spikes(ds_clutter)
+    classification = classify_profile(ds_smooth)
+
+    layer_top = None
+    if classification.lowest_layer is not None:
+        layer_top = classification.lowest_layer.top_height
+
+    bright_band = detect_bright_band(ds_smooth, layer_top=layer_top)
+
+    vpr_correction = None
+    if classification.usable_for_vpr:
+        vpr_correction = compute_vpr_correction(ds_smooth)
+
+    return {
+        "ds_raw": ds_raw,
+        "ds_clutter": ds_clutter,
+        "ds_smooth": ds_smooth,
+        "ds": ds_smooth,  # alias for final dataset
+        "classification": classification,
+        "bright_band": bright_band,
+        "vpr_correction": vpr_correction,
+    }
+
+
+if __name__ == "__main__":
+    # Get VVP file path from command line or use default
+    vvp_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_VVP
+
+    # Load with step-by-step results for maximum visibility
+    steps = load_step_by_step(vvp_path)
+
+    # Unpack into module namespace for interactive use
+    ds_raw = steps["ds_raw"]
+    ds_clutter = steps["ds_clutter"]
+    ds_smooth = steps["ds_smooth"]
+    ds = steps["ds"]
+    classification = steps["classification"]
+    bright_band = steps["bright_band"]
+    vpr_correction = steps["vpr_correction"]
+
+    # Also run the full pipeline for comparison
+    result = process_vvp(vvp_path)
+
+    # Print summary
+    print("\n" + "=" * 60)
+    print("VPR Processing Results")
+    print("=" * 60)
+    print(f"\nProfile type: {classification.profile_type}")
+    print(f"Usable for VPR: {classification.usable_for_vpr}")
+
+    if classification.layers:
+        print(f"\nLayers ({len(classification.layers)}):")
+        for i, layer in enumerate(classification.layers, 1):
+            print(f"  {i}. {layer.layer_type.name}: {layer.bottom_height}–{layer.top_height} m")
+
+    print(f"\nBright band detected: {bright_band.detected}")
+    if bright_band.detected:
+        print(f"  Peak height: {bright_band.peak_height} m")
+        print(f"  Top: {bright_band.top_height} m, Bottom: {bright_band.bottom_height} m")
+        print(f"  Peak dBZ: {bright_band.peak_dbz:.1f}")
+
+    if vpr_correction is not None:
+        print(f"\nVPR correction computed: usable={vpr_correction.usable}")
+        print(f"  Ground reflectivity: {vpr_correction.z_ground_dbz:.1f} dBZ")
+    else:
+        print("\nVPR correction: not computed (profile not usable)")
+
+    print("\n" + "-" * 60)
+    print("Available variables:")
+    print("  ds          - Final processed dataset")
+    print("  ds_raw      - Raw input dataset")
+    print("  ds_clutter  - After ground clutter removal")
+    print("  ds_smooth   - After spike smoothing")
+    print("  result      - ProcessedProfile object")
+    print("  classification, bright_band, vpr_correction")
+    print("-" * 60 + "\n")
