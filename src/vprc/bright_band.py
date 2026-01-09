@@ -253,12 +253,14 @@ def _validate_bright_band(
         return False
 
     # Gradient check above BB top should show continued decrease
-    # (Perl: if ($isotaulu[$zyla][$j][3] * 200 > $ylaamp / 2) -> reject)
+    # Perl: if ($isotaulu[$zyla][$j][3] * 200 > $ylaamp / 2) -> reject
+    # Perl gradient is dBZ/m, so *200 converts to dBZ/step.
+    # Python gradient is already dBZ/step, so no multiplication needed.
     if result.top_height in gradient["height"].values:
         grad_above = float(gradient.sel(height=result.top_height).values)
         if not np.isnan(grad_above) and result.amplitude_above is not None:
             # grad_above is dBZ/step; if positive and > half the amplitude, reject
-            if grad_above * STEP > result.amplitude_above / 2:
+            if grad_above > result.amplitude_above / 2:
                 return False
 
     return True

@@ -258,3 +258,44 @@ class TestIntegration:
         # Should not crash, returns a result
         assert isinstance(result, BrightBandResult)
         assert result.freezing_level_m is None
+
+
+class TestRealData:
+    """Tests using real VVP data files."""
+
+    def test_vih_clear_bright_band(self):
+        """Detect bright band in VIH case with clear BB signal.
+
+        202511071400_VIH.VVP_40.txt has a prominent bright band around 2200m.
+        The legacy Perl method failed to detect it (without freezing level data),
+        but the signature is unmistakable in the profile.
+        """
+        from pathlib import Path
+        from vprc.io import read_vvp
+        from vprc.clutter import remove_ground_clutter
+        from vprc.smoothing import smooth_spikes
+
+        test_file = Path(__file__).parent / "data" / "202511071400_VIH.VVP_40.txt"
+        ds = read_vvp(test_file)
+        ds = remove_ground_clutter(ds)
+        ds = smooth_spikes(ds)
+
+        result = detect_bright_band(ds)
+
+        assert result.detected is True, "BB should be detected in this clear case"
+
+        # Peak around 2200m (±200m margin)
+        assert result.peak_height is not None
+        assert 2000 <= result.peak_height <= 2400, f"Peak at {result.peak_height}m, expected ~2200m"
+
+        # Bottom around 1500m (±200m margin)
+        assert result.bottom_height is not None
+        assert 1300 <= result.bottom_height <= 1700, f"Bottom at {result.bottom_height}m, expected ~1500m"
+
+        # Top around 3000m (±200m margin)
+        assert result.top_height is not None
+        assert 2800 <= result.top_height <= 3200, f"Top at {result.top_height}m, expected ~3000m"
+
+        # Sanity checks on amplitudes
+        assert result.amplitude_below is not None and result.amplitude_below > 5
+        assert result.amplitude_above is not None and result.amplitude_above > 10
