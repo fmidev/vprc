@@ -68,7 +68,7 @@ def correct_vpr(vvp_file: str, radar_config: dict) -> str:
 
 ### Data Representation
 
-- **Heights**: Integer meters above antenna (not sea level), in 200m steps: 100, 300, 500, ...
+- **Heights**: Integer meters above antenna (converted from ASL), in 200m steps, e.g., 119, 319, 519, ...
 - **dBZ values**: Use `lin_dbz` column (reflectivity in dBZ), not `log_dbz`
 - **Missing data**: Represented as `-45` dBZ (the MDS threshold in legacy code)
 - **xarray coordinate**: Use `height` dimension for all vertical profiles
