@@ -42,11 +42,12 @@ from vprc.vpr_correction import compute_vpr_correction
 DEFAULT_VVP = Path(__file__).resolve().parents[2] / "tests/data/202508241100_KAN.VVP_40.txt"
 
 
-def plot_profile(ds, title: str | None = None) -> plt.Figure:
+def plot_profile(ds, ds_raw=None, title: str | None = None) -> plt.Figure:
     """Plot dBZ and sample count profiles against height.
 
     Args:
         ds: xarray Dataset with 'corrected_dbz' and 'sample_count'
+        ds_raw: Optional raw dataset to show original dBZ profile
         title: Optional plot title
 
     Returns:
@@ -57,6 +58,11 @@ def plot_profile(ds, title: str | None = None) -> plt.Figure:
     height = ds["height"].values
     dbz = ds["corrected_dbz"].values
     count = ds["sample_count"].values
+
+    # Plot raw dBZ if provided
+    if ds_raw is not None:
+        raw_dbz = ds_raw["corrected_dbz"].values
+        ax1.plot(raw_dbz, height, color="tab:blue", linewidth=1, alpha=0.4, label="dBZ (raw)")
 
     # Plot dBZ on primary x-axis
     color_dbz = "tab:blue"
@@ -196,5 +202,5 @@ if __name__ == "__main__":
     print("-" * 60 + "\n")
 
     # Create profile plot
-    fig = plot_profile(ds, title=str(vvp_path.name))
+    fig = plot_profile(ds, ds_raw=ds_raw, title=str(vvp_path.name))
     plt.show()
