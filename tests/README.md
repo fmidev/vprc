@@ -6,11 +6,22 @@ This directory contains the test suite for the VPR correction project.
 
 ```
 tests/
-├── README.md           # This file
-├── __init__.py         # Test package initialization
-├── test_io.py          # Tests for VVP file parsing (src/vprc/io.py)
-└── data/               # Test data files
-    └── 202508241100_KAN.VVP_40.txt  # Sample VVP file from KANKAANPAA radar
+├── README.md              # This file
+├── __init__.py            # Test package initialization
+├── legacy_parser.py       # Utility for parsing legacy Perl outputs
+├── test_io.py             # VVP file parsing
+├── test_clutter.py        # Ground clutter removal
+├── test_smoothing.py      # Spike smoothing
+├── test_classification.py # Profile classification
+├── test_bright_band.py    # Bright band detection
+├── test_vpr_correction.py # VPR correction calculation
+├── test_legacy_comparison.py  # Validation against Perl output
+└── data/                  # Test data files
+    ├── 202508241100_KAN.VVP_40.txt      # Sample VVP (Kankaanpää)
+    ├── 202508241100_KAN.VVP_40.profile  # Legacy profile output
+    ├── 202508241100_KAN.VVP_40.cor      # Legacy correction output
+    ├── 202511071400_VIH.VVP_40.txt      # Sample VVP (Vihti)
+    └── 202511071400_VIH.VVP_40.profile  # Legacy profile output
 ```
 
 ## Running Tests
@@ -47,71 +58,44 @@ pytest tests/test_io.py::TestParseVVPFile::test_parse_sample_file -v
 
 ## Test Organization
 
-### test_io.py
+Each test file corresponds to a module in `src/vprc/`:
 
-Tests for the VVP file parser (`src/vprc/io.py`). Organized into test classes:
-
-- **TestParseVVPHeader**: Tests for `parse_vvp_header()` function
-  - Valid header parsing
-  - Headers without elevation angles
-  - Single elevation angle
-  - Invalid/malformed headers
-  - Whitespace handling
-
-- **TestParseVVPFile**: Tests for `parse_vvp_file()` function
-  - Parsing sample VVP file
-  - DataFrame structure validation
-  - Column names and data types
-  - Height sorting
-  - Specific data value checks
-  - Error handling (missing files, invalid format)
-
-- **TestVVPDataframeToXarray**: Tests for `vvp_dataframe_to_xarray()` function
-  - Conversion to xarray Dataset
-  - Dimensions and coordinates
-  - Data variables
-  - Metadata attributes
-  - Data access patterns
-
-- **TestParseVVPToXarray**: Tests for high-level `parse_vvp_to_xarray()` function
-  - Direct file-to-xarray conversion
-  - Metadata injection
-  - API consistency checks
-
-- **TestEdgeCases**: Edge case and integration tests
-  - Missing elevation angles
-  - Path object vs string input
+| Test File | Module | Description |
+|-----------|--------|-------------|
+| `test_io.py` | `io.py` | VVP file parsing and xarray conversion |
+| `test_clutter.py` | `clutter.py` | Ground clutter removal |
+| `test_smoothing.py` | `smoothing.py` | Spike smoothing algorithms |
+| `test_classification.py` | `classification.py` | Profile layer classification |
+| `test_bright_band.py` | `bright_band.py` | Bright band detection |
+| `test_vpr_correction.py` | `vpr_correction.py` | VPR correction calculation |
+| `test_legacy_comparison.py` | – | End-to-end validation against Perl output |
 
 ## Test Data
 
-Test data files are stored in `tests/data/` to keep them separate from the test code.
+Test data files in `tests/data/`:
 
-### Sample Files
+### Input Files
 
-- `202508241100_KAN.VVP_40.txt`: Real VVP file from KANKAANPAA radar
-  - Timestamp: 2025-08-24 11:00 UTC
-  - 35 height levels (100-6900 m)
-  - 3 elevation angles: 0.7°, 1.5°, 3.0°
+- `202508241100_KAN.VVP_40.txt` – Kankaanpää radar, 2025-08-24 11:00 UTC
+- `202511071400_VIH.VVP_40.txt` – Vihti radar, 2025-11-07 14:00 UTC
+
+### Legacy Reference Outputs
+
+Used by `test_legacy_comparison.py` to validate against the original Perl implementation:
+
+- `*.profile` – Processed profile output from `allprof_prodx2.pl`
+- `*.cor` – Correction factors from `pystycappi.pl`
 
 ## Adding New Tests
 
-When adding new test files:
-
-1. Create `test_<module_name>.py` in the `tests/` directory
+1. Create `test_<module_name>.py` in `tests/`
 2. Organize tests into classes by function/feature
-3. Use descriptive test names: `test_<feature>_<scenario>`
-4. Add docstrings explaining what each test validates
-5. Place test data files in `tests/data/`
-6. Use pytest fixtures for shared setup code
+3. Use descriptive names: `test_<feature>_<scenario>`
+4. Place test data files in `tests/data/`
+5. Use pytest fixtures for shared setup
 
 ## Dependencies
 
-Tests require:
-- pytest
-- pytest-cov (for coverage reports)
-- All dependencies from the main package (pandas, xarray, etc.)
-
-Install test dependencies:
 ```bash
 pip install pytest pytest-cov
 ```
