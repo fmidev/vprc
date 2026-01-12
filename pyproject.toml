@@ -28,9 +28,7 @@ dependencies = [
 ]
 
 [project.urls]
-#Documentation = "https://github.com/Jussi Tiira/vprc#readme"
-#Issues = "https://github.com/Jussi Tiira/vprc/issues"
-#Source = "https://github.com/Jussi Tiira/vprc"
+Source = "https://github.com/fmidev/vprc"
 
 [tool.hatch.version]
 source = "vcs"
