@@ -252,8 +252,8 @@ class TestComputeVprCorrection:
 
         assert isinstance(result, VPRCorrectionResult)
         assert result.usable
-        assert "correction_db" in result.corrections
-        assert "beam_height_m" in result.corrections
+        assert "cappi_correction_db" in result.corrections
+        assert "cappi_beam_height_m" in result.corrections
         assert "range_km" in result.corrections.dims
         assert "cappi_height" in result.corrections.dims
 
@@ -294,7 +294,7 @@ class TestComputeVprCorrection:
 
         result = compute_vpr_correction(ds, max_range_km=100, range_step_km=10)
 
-        corr = result.corrections["correction_db"].sel(cappi_height=500)
+        corr = result.corrections["cappi_correction_db"].sel(cappi_height=500)
         # Correction at 100km should be larger than at 10km
         assert abs(corr.sel(range_km=100).values) > abs(corr.sel(range_km=10).values)
 
@@ -329,7 +329,7 @@ class TestIntegration:
         if result.usable_for_vpr:
             assert result.vpr_correction is not None
             assert result.vpr_correction.usable
-            assert "correction_db" in result.vpr_correction.corrections
+            assert "cappi_correction_db" in result.vpr_correction.corrections
 
     def test_process_vvp_skips_vpr_when_disabled(self):
         """process_vvp skips VPR correction when compute_vpr=False."""

@@ -278,12 +278,13 @@ def compute_correction_for_range(
 def compute_vpr_correction(
     ds: xr.Dataset,
     cappi_heights_m: tuple[int, ...] | None = None,
+    elevation_angles_deg: tuple[float, ...] | None = None,
     max_range_km: int = DEFAULT_MAX_RANGE_KM,
     range_step_km: int = DEFAULT_RANGE_STEP_KM,
     min_elevation_deg: float = 0.5,
     beamwidth_deg: float | None = None,
 ) -> VPRCorrectionResult:
-    """Compute VPR correction factors vs range for CAPPI heights.
+    """Compute VPR correction factors vs range for CAPPI heights and elevations.
 
     This is the main entry point for VPR correction calculation.
 
@@ -293,6 +294,9 @@ def compute_vpr_correction(
             Should have 'beamwidth_deg' in attrs (from radar config).
         cappi_heights_m: CAPPI heights to compute corrections for.
             Default: (500, 1000)
+        elevation_angles_deg: Fixed elevation angles to compute corrections for.
+            If None, uses angles from ds.attrs['elevation_angles'] (from VVP).
+            Pass empty tuple () to disable elevation-based corrections.
         max_range_km: Maximum range for corrections (default 250 km)
         range_step_km: Range step size (default 1 km)
         min_elevation_deg: Minimum elevation angle for pseudo-CAPPI
@@ -301,7 +305,8 @@ def compute_vpr_correction(
 
     Returns:
         VPRCorrectionResult containing:
-        - corrections: Dataset with dims (range_km, cappi_height)
+        - corrections: Dataset with dims (range_km, cappi_height) and optionally
+          (range_km, elevation) for elevation-based corrections
         - z_ground_dbz: Reference ground reflectivity
         - usable: Whether corrections are valid
 
@@ -310,10 +315,15 @@ def compute_vpr_correction(
         >>> ds = remove_ground_clutter(ds)
         >>> ds = smooth_spikes(ds)
         >>> result = compute_vpr_correction(ds)
-        >>> result.corrections['correction_db'].sel(cappi_height=500, range_km=100)
+        >>> result.corrections['cappi_correction_db'].sel(cappi_height=500, range_km=100)
+        >>> result.corrections['elev_correction_db'].sel(elevation=0.7, range_km=100)
     """
     if cappi_heights_m is None:
         cappi_heights_m = DEFAULT_CAPPI_HEIGHTS_M
+
+    # Get elevation angles from parameter or dataset attrs
+    if elevation_angles_deg is None:
+        elevation_angles_deg = tuple(ds.attrs.get("elevation_angles", []))
 
     # Get beamwidth from parameter, dataset attrs, or use default
     if beamwidth_deg is None:
@@ -331,7 +341,9 @@ def compute_vpr_correction(
 
     if not np.any(valid_mask):
         # No valid echo - return empty result
-        return _create_empty_result(cappi_heights_m, max_range_km, range_step_km)
+        return _create_empty_result(
+            cappi_heights_m, elevation_angles_deg, max_range_km, range_step_km
+        )
 
     lowest_valid_idx = np.argmax(valid_mask)
     z_ground_dbz = float(dbz_values[lowest_valid_idx])
@@ -341,8 +353,9 @@ def compute_vpr_correction(
     ranges_km = np.arange(range_step_km, max_range_km + range_step_km, range_step_km)
     n_ranges = len(ranges_km)
     n_heights = len(cappi_heights_m)
+    n_elevs = len(elevation_angles_deg)
 
-    # Allocate output arrays
+    # Allocate output arrays for CAPPI heights
     corrections = np.zeros((n_ranges, n_heights))
     beam_heights = np.zeros((n_ranges, n_heights))
 
@@ -373,16 +386,45 @@ def compute_vpr_correction(
             corrections[i, j] = corr
             beam_heights[i, j] = beam_h
 
-    # Build output Dataset
+    # Build output Dataset with CAPPI corrections
+    data_vars = {
+        "cappi_correction_db": (["range_km", "cappi_height"], corrections),
+        "cappi_beam_height_m": (["range_km", "cappi_height"], beam_heights),
+    }
+    coords = {
+        "range_km": ranges_km,
+        "cappi_height": list(cappi_heights_m),
+    }
+
+    # Compute corrections for fixed elevation angles if provided
+    if n_elevs > 0:
+        elev_corrections = np.zeros((n_ranges, n_elevs))
+        elev_beam_heights = np.zeros((n_ranges, n_elevs))
+
+        for j, elev_deg in enumerate(elevation_angles_deg):
+            for i, range_km in enumerate(ranges_km):
+                # Compute correction for fixed elevation
+                corr, beam_h = compute_correction_for_range(
+                    fine_heights,
+                    fine_z,
+                    z_ground,
+                    range_km,
+                    elev_deg,
+                    antenna_height_m,
+                    beamwidth_deg,
+                )
+
+                elev_corrections[i, j] = corr
+                elev_beam_heights[i, j] = beam_h
+
+        # Add elevation-based corrections to dataset
+        data_vars["elev_correction_db"] = (["range_km", "elevation"], elev_corrections)
+        data_vars["elev_beam_height_m"] = (["range_km", "elevation"], elev_beam_heights)
+        coords["elevation"] = list(elevation_angles_deg)
+
     correction_ds = xr.Dataset(
-        data_vars={
-            "correction_db": (["range_km", "cappi_height"], corrections),
-            "beam_height_m": (["range_km", "cappi_height"], beam_heights),
-        },
-        coords={
-            "range_km": ranges_km,
-            "cappi_height": list(cappi_heights_m),
-        },
+        data_vars=data_vars,
+        coords=coords,
         attrs={
             "radar": ds.attrs.get("radar", "unknown"),
             "timestamp": str(ds.attrs.get("timestamp", "")),
@@ -402,6 +444,7 @@ def compute_vpr_correction(
 
 def _create_empty_result(
     cappi_heights_m: tuple[int, ...],
+    elevation_angles_deg: tuple[float, ...],
     max_range_km: int,
     range_step_km: int,
 ) -> VPRCorrectionResult:
@@ -409,17 +452,29 @@ def _create_empty_result(
     ranges_km = np.arange(range_step_km, max_range_km + range_step_km, range_step_km)
     n_ranges = len(ranges_km)
     n_heights = len(cappi_heights_m)
+    n_elevs = len(elevation_angles_deg)
 
-    correction_ds = xr.Dataset(
-        data_vars={
-            "correction_db": (["range_km", "cappi_height"], np.zeros((n_ranges, n_heights))),
-            "beam_height_m": (["range_km", "cappi_height"], np.zeros((n_ranges, n_heights))),
-        },
-        coords={
-            "range_km": ranges_km,
-            "cappi_height": list(cappi_heights_m),
-        },
-    )
+    data_vars = {
+        "cappi_correction_db": (["range_km", "cappi_height"], np.zeros((n_ranges, n_heights))),
+        "cappi_beam_height_m": (["range_km", "cappi_height"], np.zeros((n_ranges, n_heights))),
+    }
+    coords = {
+        "range_km": ranges_km,
+        "cappi_height": list(cappi_heights_m),
+    }
+
+    if n_elevs > 0:
+        data_vars["elev_correction_db"] = (
+            ["range_km", "elevation"],
+            np.zeros((n_ranges, n_elevs)),
+        )
+        data_vars["elev_beam_height_m"] = (
+            ["range_km", "elevation"],
+            np.zeros((n_ranges, n_elevs)),
+        )
+        coords["elevation"] = list(elevation_angles_deg)
+
+    correction_ds = xr.Dataset(data_vars=data_vars, coords=coords)
 
     return VPRCorrectionResult(
         corrections=correction_ds,

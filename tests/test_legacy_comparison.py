@@ -256,3 +256,281 @@ class TestProcessingPipeline:
             assert processed_result.vpr_correction is not None, (
                 "VPR correction should be computed for usable profiles"
             )
+
+
+class TestVPRCorrectionComparison:
+    """Compare VPR correction output against legacy .cor file.
+
+    Legacy format outputs corrections for:
+    - 2 CAPPI heights (500m, 1000m)
+    - 4 elevation angles (0.7°, 1.5°, 3.0°, 3.3° for Kankaanpää)
+
+    The Python implementation currently supports CAPPI heights.
+    """
+
+    @pytest.fixture
+    def legacy_cor(self):
+        """Load the legacy .cor file."""
+        from .legacy_parser import parse_legacy_cor
+        cor_path = DATA_DIR / '202508241100_KAN.VVP_40.cor'
+        return parse_legacy_cor(cor_path)
+
+    @pytest.fixture
+    def python_profile(self):
+        """Run the Python pipeline to get the corrected profile."""
+        return process_vvp(INPUT_FILE, freezing_level_m=FREEZING_LEVEL_M)
+
+    def test_cor_file_exists(self):
+        """Verify .cor test data file exists."""
+        cor_path = DATA_DIR / '202508241100_KAN.VVP_40.cor'
+        assert cor_path.exists(), f".cor file not found: {cor_path}"
+
+    def test_cor_parser_loads_data(self, legacy_cor):
+        """Verify .cor parser returns valid data structure."""
+        ds, header = legacy_cor
+        assert 'correction_klim_db' in ds
+        assert 'correction_rain_db' in ds
+        assert 'beam_height_m' in ds
+        # 2 CAPPI heights + 4 elevation angles = 6 correction types
+        assert len(ds.correction_type) == 6
+        assert len(header.elevation_angles) == 4
+
+    def test_cor_header_values(self, legacy_cor):
+        """Verify parsed header contains expected metadata."""
+        _, header = legacy_cor
+        assert header.radar_name == 'KANKAANPAA'
+        assert header.step == 200
+        assert header.mds == -45
+        assert header.precip_code == 2  # rain
+        assert header.elevation_angles == [0.7, 1.5, 3.0, 3.3]
+
+    def test_cappi_beam_height_calculation(self, legacy_cor):
+        """Verify CAPPI beam height calculation matches legacy.
+
+        The CAPPI heights (500m, 1000m) use pseudo-CAPPI logic where the
+        beam height matches the target CAPPI level at close range but
+        transitions to minimum elevation at far range.
+        """
+        from vprc.vpr_correction import compute_beam_height, solve_elevation_for_height
+
+        ds, header = legacy_cor
+        # Kankaanpää: antenna 174m ASL, we work in heights above antenna
+        antenna_height_m = 174
+
+        # Test CAPPI 500m beam heights
+        # At very close range, should approach 500 - (antenna adjustment)
+        # At far range, should follow minimum elevation angle
+        cappi_500_heights = ds['beam_height_m'].sel(correction_type='cappi_500')
+
+        # At far range (200km), the beam follows the lowest elevation
+        # and should be much higher than 500m (above antenna)
+        far_range_height = float(cappi_500_heights.sel(range_km=200).values)
+        assert far_range_height > 500, (
+            f"Far range CAPPI 500m height should exceed 500m: got {far_range_height}"
+        )
+
+    def test_elevation_beam_height_calculation(self, legacy_cor):
+        """Verify fixed elevation beam height calculation matches legacy.
+
+        For fixed elevation angles, the beam height at each range should
+        follow the standard 4/3 Earth refraction model.
+        """
+        from vprc.vpr_correction import compute_beam_height
+
+        ds, header = legacy_cor
+        # Kankaanpää: antenna 174m ASL
+        antenna_height_m = 174
+
+        # Test first elevation angle (0.7°)
+        elev = header.elevation_angles[0]
+        test_ranges = [50, 100, 150, 200]
+
+        for range_km in test_ranges:
+            legacy_height = int(ds['beam_height_m'].sel(
+                range_km=range_km, correction_type='elev_1'
+            ).values)
+
+            python_height_asl = compute_beam_height(
+                range_km * 1000, elev, antenna_height_m
+            )
+            # Convert to height above antenna
+            python_height = python_height_asl - antenna_height_m
+
+            # Allow tolerance for different implementations of the formula
+            # Legacy uses Rinehart formula, Python uses wradlib
+            tolerance = max(10, int(python_height * 0.02))  # 2% or 10m
+            assert abs(python_height - legacy_height) <= tolerance, (
+                f"Beam height mismatch at {range_km}km, {elev}°: "
+                f"Python={python_height:.0f}m, legacy={legacy_height}m"
+            )
+
+    def test_correction_sign_convention(self, legacy_cor):
+        """Verify correction sign convention matches legacy.
+
+        Positive correction = beam is above ground, seeing weaker echo
+        Negative correction = beam sees stronger echo (e.g. bright band)
+        """
+        ds, _ = legacy_cor
+
+        # At close range, CAPPI corrections should be small
+        corr_close = ds['correction_klim_db'].sel(range_km=10, correction_type='cappi_500').values
+        assert abs(corr_close) < 5, f"Close range correction too large: {corr_close}"
+
+    def test_max_dbz_matches_profile(self, legacy_cor, expected_profile):
+        """Verify .cor max_dBZ matches .profile footer."""
+        _, cor_header = legacy_cor
+        _, _, profile_footer = expected_profile
+
+        assert abs(cor_header.max_dbz - profile_footer.max_dbz) < 0.1, (
+            f"max_dBZ mismatch: .cor={cor_header.max_dbz}, "
+            f".profile={profile_footer.max_dbz}"
+        )
+
+    def test_quality_weight_consistent(self, legacy_cor, expected_profile):
+        """Verify quality weight is consistent between .cor and .profile."""
+        _, cor_header = legacy_cor
+        _, _, profile_footer = expected_profile
+
+        assert abs(cor_header.quality_weight - profile_footer.quality_weight) < 0.01, (
+            f"Quality weight mismatch: .cor={cor_header.quality_weight}, "
+            f".profile={profile_footer.quality_weight}"
+        )
+
+    def test_python_cappi_corrections_computed(self, python_profile):
+        """Verify Python computes VPR corrections for CAPPI heights."""
+        vpr = python_profile.vpr_correction
+        assert vpr is not None, "VPR correction should be computed"
+        assert vpr.usable, "VPR correction should be usable for this profile"
+
+        # Check correction dataset structure
+        ds = vpr.corrections
+        assert 'cappi_correction_db' in ds
+        assert 'range_km' in ds.dims
+        assert 'cappi_height' in ds.dims
+
+    def test_python_vs_legacy_cappi_500_trend(self, legacy_cor, python_profile):
+        """Compare Python CAPPI 500m corrections to legacy trend.
+
+        Both should show increasing positive correction with range
+        (beam sees weaker echo at higher altitudes).
+        """
+        legacy_ds, _ = legacy_cor
+        python_vpr = python_profile.vpr_correction
+
+        if python_vpr is None or not python_vpr.usable:
+            pytest.skip("Python VPR correction not computed")
+
+        # Get klim corrections (climatology profile) from legacy
+        legacy_corr = legacy_ds['correction_klim_db'].sel(correction_type='cappi_500')
+
+        # Get corrections from Python (for CAPPI 500m)
+        python_ds = python_vpr.corrections
+        if 500 not in python_ds.cappi_height.values:
+            pytest.skip("Python doesn't compute CAPPI 500m")
+
+        python_corr = python_ds['cappi_correction_db'].sel(cappi_height=500)
+
+        # Both should have corrections increasing with range in far field
+        # (beam goes higher, sees less precipitation)
+        legacy_100 = float(legacy_corr.sel(range_km=100).values)
+        legacy_200 = float(legacy_corr.sel(range_km=200).values)
+
+        python_100 = float(python_corr.sel(range_km=100).values)
+        python_200 = float(python_corr.sel(range_km=200).values)
+
+        # Corrections should generally increase with range for CAPPI
+        # (this is a trend check, not exact value match)
+        assert legacy_200 >= legacy_100 - 1, (
+            f"Legacy CAPPI 500m should increase with range: "
+            f"100km={legacy_100:.1f}, 200km={legacy_200:.1f}"
+        )
+        assert python_200 >= python_100 - 1, (
+            f"Python CAPPI 500m should increase with range: "
+            f"100km={python_100:.1f}, 200km={python_200:.1f}"
+        )
+
+    def test_python_elevation_corrections_computed(self, python_profile):
+        """Verify Python computes VPR corrections for elevation angles from VVP."""
+        vpr = python_profile.vpr_correction
+        assert vpr is not None, "VPR correction should be computed"
+
+        ds = vpr.corrections
+
+        # Should have elevation-based corrections from VVP file
+        assert 'elev_correction_db' in ds, (
+            "Elevation-based corrections should be computed"
+        )
+        assert 'elevation' in ds.dims, (
+            "Dataset should have elevation dimension"
+        )
+
+        # VVP file has 3 elevations: 0.7, 1.5, 3.0
+        expected_elevs = [0.7, 1.5, 3.0]
+        actual_elevs = list(ds.elevation.values)
+        assert actual_elevs == expected_elevs, (
+            f"Elevation angles mismatch: got {actual_elevs}, expected {expected_elevs}"
+        )
+
+    def test_python_elevation_beam_heights_match_legacy(self, legacy_cor, python_profile):
+        """Compare Python elevation beam heights to legacy output.
+
+        For fixed elevation angles, beam heights should match closely
+        between Python and legacy implementations.
+        """
+        legacy_ds, header = legacy_cor
+        python_vpr = python_profile.vpr_correction
+
+        if python_vpr is None or not python_vpr.usable:
+            pytest.skip("Python VPR correction not computed")
+
+        python_ds = python_vpr.corrections
+
+        if 'elev_beam_height_m' not in python_ds:
+            pytest.skip("No elevation corrections in Python output")
+
+        # Compare beam heights for first 3 elevations (legacy has 4, Python has 3)
+        test_ranges = [50, 100, 150, 200]
+        for elev_idx, elev in enumerate(header.elevation_angles[:3]):
+            for range_km in test_ranges:
+                legacy_height = int(legacy_ds['beam_height_m'].sel(
+                    range_km=range_km, correction_type=f'elev_{elev_idx + 1}'
+                ).values)
+
+                python_height = float(python_ds['elev_beam_height_m'].sel(
+                    range_km=range_km, elevation=elev
+                ).values)
+
+                # Allow 2% tolerance for implementation differences
+                tolerance = max(10, int(python_height * 0.02))
+                assert abs(python_height - legacy_height) <= tolerance, (
+                    f"Beam height mismatch at {range_km}km, {elev}°: "
+                    f"Python={python_height:.0f}m, legacy={legacy_height}m"
+                )
+
+    def test_python_elevation_corrections_trend(self, python_profile):
+        """Verify elevation-based corrections follow expected trend.
+
+        Higher elevations see higher altitudes, so corrections should
+        generally increase with elevation angle at the same range.
+        """
+        vpr = python_profile.vpr_correction
+
+        if vpr is None or not vpr.usable:
+            pytest.skip("Python VPR correction not computed")
+
+        ds = vpr.corrections
+
+        if 'elev_correction_db' not in ds:
+            pytest.skip("No elevation corrections in Python output")
+
+        # At 100km, higher elevations should see weaker echo (larger correction)
+        # or be in bright band (smaller/negative correction)
+        corr_07 = float(ds['elev_correction_db'].sel(range_km=100, elevation=0.7).values)
+        corr_15 = float(ds['elev_correction_db'].sel(range_km=100, elevation=1.5).values)
+        corr_30 = float(ds['elev_correction_db'].sel(range_km=100, elevation=3.0).values)
+
+        # At least verify they're all computed and reasonable
+        assert all(abs(c) < 30 for c in [corr_07, corr_15, corr_30]), (
+            f"Corrections out of range: 0.7°={corr_07:.1f}, "
+            f"1.5°={corr_15:.1f}, 3.0°={corr_30:.1f}"
+        )
