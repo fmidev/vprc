@@ -7,6 +7,11 @@ The `vprc` package uses TOML-based configuration for radar station metadata. All
 ## TOML File Structure
 
 ```toml
+[defaults]  # Shared defaults and fallback for unknown radars
+antenna_height_m = 198
+lowest_level_offset_m = 102
+beamwidth_deg = 0.95
+
 [KAN]  # Three-letter code (section key)
 name = "KANKAANPAA"  # Full radar name from VVP file headers
 antenna_height_m = 174
@@ -16,18 +21,22 @@ lowest_level_offset_m = 126
 name = "VANTAA"
 antenna_height_m = 83
 lowest_level_offset_m = 17
-
-[other]  # Fallback for unknown radars
-antenna_height_m = 198
-lowest_level_offset_m = 102
 ```
 
 ### Fields
 
-**Required (in TOML):**
+**Shared defaults:**
+- `beamwidth_deg` (float): One-way half-power beamwidth in degrees
+  - Defined in `[defaults]` section
+  - Can be overridden per-radar
+
+**Required (per-radar):**
 - `name` (string): Full radar name for VVP header matching (case-insensitive)
 - `antenna_height_m` (int): Antenna elevation above sea level (meters)
 - `lowest_level_offset_m` (int): Offset from nearest profile level (meters)
+
+**Optional (per-radar):**
+- `beamwidth_deg` (float): Override default beamwidth for this specific radar
 
 **Optional (runtime):**
 - `freezing_level_m` (int | None): Freezing level from NWP data (meters ASL)
@@ -40,9 +49,10 @@ lowest_level_offset_m = 102
 Values are resolved in this order (highest to lowest):
 
 1. **Function parameters** - `read_vvp(radar_metadata={...})`
-2. **Environment variable** - `VPRC_RADAR_CONFIG` points to custom TOML
-3. **Package default** - `src/vprc/radar_defaults.toml`
-4. **Fallback** - `[other]` section if radar code not found
+2. **Radar-specific TOML section** - e.g., `[KAN]`
+3. **Shared defaults** - `[defaults]` section in TOML (also serves as fallback for unknown radars)
+4. **Environment variable** - `VPRC_RADAR_CONFIG` points to custom TOML
+5. **Package default** - `src/vprc/radar_defaults.toml`
 
 ## Usage Examples
 
@@ -54,6 +64,7 @@ from vprc import read_vvp
 # Uses package defaults
 ds = read_vvp('202508241100_KAN.VVP_40.txt')
 print(ds.attrs['antenna_height_m'])  # 174
+print(ds.attrs['beamwidth_deg'])     # 0.95 (from [defaults])
 ```
 
 ### Override Specific Fields
@@ -62,6 +73,11 @@ print(ds.attrs['antenna_height_m'])  # 174
 # Override freezing level from NWP data
 ds = read_vvp('202508241100_KAN.VVP_40.txt', {
     'freezing_level_m': 2000
+})
+
+# Override beamwidth for a specific radar
+ds = read_vvp('202508241100_KAN.VVP_40.txt', {
+    'beamwidth_deg': 1.0
 })
 ```
 
@@ -72,6 +88,28 @@ import os
 
 os.environ['VPRC_RADAR_CONFIG'] = '/path/to/custom_radars.toml'
 ds = read_vvp('202508241100_KAN.VVP_40.txt')
+```
+
+Example custom TOML with radar-specific beamwidth:
+
+```toml
+[defaults]
+beamwidth_deg = 0.95
+# Shared defaults and fallback for unknown radars
+antenna_height_m = 198
+lowest_level_offset_m = 102
+
+[KAN]
+name = "KANKAANPAA"
+antenna_height_m = 174
+lowest_level_offset_m = 126
+beamwidth_deg = 1.0  # Override for this specific radar
+
+[VAN]
+name = "VANTAA"
+antenna_height_m = 83
+lowest_level_offset_m = 17
+# Uses default beamwidth_deg = 0.95
 ```
 
 ## Environment Variables

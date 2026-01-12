@@ -25,7 +25,7 @@ from .constants import (
     MDS,
     FINE_GRID_RESOLUTION_M,
     MAX_PROFILE_HEIGHT_M,
-    BEAMWIDTH_DEG,
+    DEFAULT_BEAMWIDTH_DEG,
     MAX_CORRECTION_DB,
     MIN_CORRECTION_THRESHOLD_DB,
     DEFAULT_CAPPI_HEIGHTS_M,
@@ -155,7 +155,7 @@ def solve_elevation_for_height(
 
 def compute_beam_weight(
     angular_distance_deg: float,
-    beamwidth_deg: float = BEAMWIDTH_DEG,
+    beamwidth_deg: float = DEFAULT_BEAMWIDTH_DEG,
 ) -> float:
     """Compute two-way Gaussian beam power weight.
 
@@ -178,7 +178,7 @@ def convolve_beam_with_profile(
     fine_z: np.ndarray,
     beam_center_m: float,
     range_m: float,
-    beamwidth_deg: float = BEAMWIDTH_DEG,
+    beamwidth_deg: float = DEFAULT_BEAMWIDTH_DEG,
     horizon_height_m: float = 0.0,
 ) -> float:
     """Convolve radar beam pattern with vertical Z profile.
@@ -230,7 +230,7 @@ def compute_correction_for_range(
     range_km: float,
     elevation_deg: float,
     antenna_height_m: float,
-    beamwidth_deg: float = BEAMWIDTH_DEG,
+    beamwidth_deg: float = DEFAULT_BEAMWIDTH_DEG,
     max_correction_db: float = MAX_CORRECTION_DB,
 ) -> tuple[float, float]:
     """Compute VPR correction at a single range.
@@ -281,7 +281,7 @@ def compute_vpr_correction(
     max_range_km: int = DEFAULT_MAX_RANGE_KM,
     range_step_km: int = DEFAULT_RANGE_STEP_KM,
     min_elevation_deg: float = 0.5,
-    beamwidth_deg: float = BEAMWIDTH_DEG,
+    beamwidth_deg: float | None = None,
 ) -> VPRCorrectionResult:
     """Compute VPR correction factors vs range for CAPPI heights.
 
@@ -290,12 +290,14 @@ def compute_vpr_correction(
     Args:
         ds: Dataset with 'corrected_dbz' indexed by 'height'.
             Must have 'antenna_height_m' in attrs.
+            Should have 'beamwidth_deg' in attrs (from radar config).
         cappi_heights_m: CAPPI heights to compute corrections for.
             Default: (500, 1000)
         max_range_km: Maximum range for corrections (default 250 km)
         range_step_km: Range step size (default 1 km)
         min_elevation_deg: Minimum elevation angle for pseudo-CAPPI
-        beamwidth_deg: Radar beamwidth (degrees)
+        beamwidth_deg: Radar beamwidth (degrees). If None, reads from
+            ds.attrs['beamwidth_deg'] or uses default.
 
     Returns:
         VPRCorrectionResult containing:
@@ -312,6 +314,10 @@ def compute_vpr_correction(
     """
     if cappi_heights_m is None:
         cappi_heights_m = DEFAULT_CAPPI_HEIGHTS_M
+
+    # Get beamwidth from parameter, dataset attrs, or use default
+    if beamwidth_deg is None:
+        beamwidth_deg = ds.attrs.get("beamwidth_deg", DEFAULT_BEAMWIDTH_DEG)
 
     antenna_height_m = ds.attrs.get("antenna_height_m", 0)
 

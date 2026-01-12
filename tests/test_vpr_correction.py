@@ -14,7 +14,7 @@ from vprc.vpr_correction import (
     compute_correction_for_range,
     compute_vpr_correction,
 )
-from vprc.constants import MDS, STEP, FINE_GRID_RESOLUTION_M, BEAMWIDTH_DEG
+from vprc.constants import MDS, STEP, FINE_GRID_RESOLUTION_M, DEFAULT_BEAMWIDTH_DEG
 
 
 def make_test_dataset(
@@ -150,27 +150,27 @@ class TestComputeBeamWeight:
 
     def test_center_weight_is_one(self):
         """Weight at beam center (0°) is 1.0."""
-        w = compute_beam_weight(0.0, BEAMWIDTH_DEG)
+        w = compute_beam_weight(0.0, DEFAULT_BEAMWIDTH_DEG)
         assert np.isclose(w, 1.0)
 
     def test_half_power_at_beamwidth(self):
         """Weight at half-power beamwidth is ~0.5."""
-        w = compute_beam_weight(BEAMWIDTH_DEG, BEAMWIDTH_DEG)
+        w = compute_beam_weight(DEFAULT_BEAMWIDTH_DEG, DEFAULT_BEAMWIDTH_DEG)
         # 10^(-0.6 * 1^2) = 10^(-0.6) ≈ 0.25
         assert np.isclose(w, 0.25, atol=0.01)
 
     def test_symmetric(self):
         """Weight is symmetric about center."""
-        w_pos = compute_beam_weight(0.5, BEAMWIDTH_DEG)
-        w_neg = compute_beam_weight(-0.5, BEAMWIDTH_DEG)
+        w_pos = compute_beam_weight(0.5, DEFAULT_BEAMWIDTH_DEG)
+        w_neg = compute_beam_weight(-0.5, DEFAULT_BEAMWIDTH_DEG)
         # Function uses abs implicitly via angular_distance
         assert np.isclose(w_pos, w_neg)
 
     def test_weight_decreases_with_distance(self):
         """Weight decreases with angular distance."""
-        w1 = compute_beam_weight(0.3, BEAMWIDTH_DEG)
-        w2 = compute_beam_weight(0.6, BEAMWIDTH_DEG)
-        w3 = compute_beam_weight(1.0, BEAMWIDTH_DEG)
+        w1 = compute_beam_weight(0.3, DEFAULT_BEAMWIDTH_DEG)
+        w2 = compute_beam_weight(0.6, DEFAULT_BEAMWIDTH_DEG)
+        w3 = compute_beam_weight(1.0, DEFAULT_BEAMWIDTH_DEG)
         assert w1 > w2 > w3
 
 

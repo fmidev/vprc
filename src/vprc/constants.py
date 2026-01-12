@@ -51,10 +51,11 @@ FINE_GRID_RESOLUTION_M = 25
 # Perl: $kerroksia = int(15000 / $kerrospaksuus)
 MAX_PROFILE_HEIGHT_M = 15000
 
-# One-way half-power beamwidth (degrees)
+# Default one-way half-power beamwidth (degrees)
 # Used for Gaussian beam weighting in VPR correction
+# Can be overridden per-radar in radar_defaults.toml
 # Perl variable: $puolentehonleveys
-BEAMWIDTH_DEG = 0.95
+DEFAULT_BEAMWIDTH_DEG = 0.95
 
 # Maximum allowed VPR correction (dB)
 # Corrections larger than this are capped

@@ -106,16 +106,16 @@ def _get_radar_metadata(radar_code: str,
 
     Precedence (highest to lowest):
     1. Values provided in override_metadata parameter
-    2. Values from TOML file (env var VPRC_RADAR_CONFIG or package default)
-    3. Fallback to 'other' section in TOML if radar code not found
+    2. Values from radar-specific section in TOML
+    3. Values from [defaults] section in TOML (used as fallback for unknown radars)
 
     Args:
         radar_code: Three-letter radar station code (e.g., 'KAN', 'VAN')
         override_metadata: Optional dict to override specific fields
 
     Returns:
-        Dictionary with antenna_height_m, lowest_level_offset_m, and
-        any additional fields from override_metadata (e.g., freezing_level_m)
+        Dictionary with antenna_height_m, lowest_level_offset_m, beamwidth_deg,
+        and any additional fields from override_metadata (e.g., freezing_level_m)
 
     Example:
         >>> meta = _get_radar_metadata('KAN', {'freezing_level_m': 2000})
@@ -123,20 +123,22 @@ def _get_radar_metadata(radar_code: str,
         174
         >>> meta['freezing_level_m']
         2000
+        >>> meta['beamwidth_deg']  # From [defaults] section
+        0.95
     """
     # Load defaults from TOML
     radar_defaults = _load_radar_defaults()
 
-    # Get radar-specific config, fallback to 'other'
-    radar_config = radar_defaults.get(
-        radar_code,
-        radar_defaults.get('other', {})
-    )
+    # Start with shared defaults (also serves as fallback for unknown radars)
+    metadata = dict(radar_defaults.get('defaults', {}))
 
-    # Start with TOML defaults
-    metadata = dict(radar_config)
+    # Get radar-specific config if it exists
+    if radar_code in radar_defaults and radar_code != 'defaults':
+        radar_config = radar_defaults[radar_code]
+        # Update with radar-specific config (overrides defaults)
+        metadata.update(radar_config)
 
-    # Override with user-supplied values
+    # Override with user-supplied values (highest priority)
     if override_metadata:
         metadata.update(override_metadata)
 
@@ -400,13 +402,14 @@ def read_vvp(filepath: Path | str,
         radar_metadata: Optional dict to override specific metadata fields.
                        Configuration precedence (highest to lowest):
                        1. Values in this parameter
-                       2. Values from TOML file (VPRC_RADAR_CONFIG env var)
-                       3. Package default radar_defaults.toml
-                       4. 'other' section if radar code not found
+                       2. Values from radar-specific TOML section
+                       3. Values from [defaults] TOML section (fallback)
+                       4. Package default radar_defaults.toml
 
                        Common fields:
                        - antenna_height_m: Antenna elevation above sea level (meters)
                        - lowest_level_offset_m: Offset from nearest profile level
+                       - beamwidth_deg: One-way half-power beamwidth (degrees)
                        - freezing_level_m: Freezing level in meters ASL (from NWP)
                          * None: Unknown (not yet retrieved from NWP data)
                          * 0 or negative: No freezing layer → normalized to 0

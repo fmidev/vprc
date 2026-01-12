@@ -392,11 +392,16 @@ class TestRadarConfiguration:
         # Check that all expected radar codes are present
         assert 'KAN' in config
         assert 'VAN' in config
-        assert 'other' in config
+        assert 'defaults' in config
 
         # Check structure of a known radar
         assert 'antenna_height_m' in config['KAN']
         assert 'lowest_level_offset_m' in config['KAN']
+
+        # Check structure of defaults section
+        assert 'antenna_height_m' in config['defaults']
+        assert 'lowest_level_offset_m' in config['defaults']
+        assert 'beamwidth_deg' in config['defaults']
 
         # Verify known values from Perl reference
         assert config['KAN']['antenna_height_m'] == 174
@@ -410,12 +415,13 @@ class TestRadarConfiguration:
         assert meta['lowest_level_offset_m'] == 126
 
     def test_get_radar_metadata_unknown_radar(self):
-        """Test fallback to 'other' for unknown radar code."""
+        """Test fallback to [defaults] for unknown radar code."""
         meta = _get_radar_metadata('UNKNOWN')
 
-        # Should get 'other' defaults
-        assert 'antenna_height_m' in meta
-        assert 'lowest_level_offset_m' in meta
+        # Should get [defaults] values
+        assert meta['antenna_height_m'] == 198
+        assert meta['lowest_level_offset_m'] == 102
+        assert meta['beamwidth_deg'] == 0.95
 
     def test_get_radar_metadata_with_override(self):
         """Test that override metadata takes precedence."""
@@ -436,6 +442,20 @@ class TestRadarConfiguration:
         # New field from override
         assert meta['freezing_level_m'] == 2000
 
+    def test_get_radar_metadata_includes_beamwidth(self):
+        """Test that beamwidth_deg is loaded from [defaults] section."""
+        meta = _get_radar_metadata('KAN')
+
+        # Should include beamwidth from [defaults] section
+        assert 'beamwidth_deg' in meta
+        assert meta['beamwidth_deg'] == 0.95
+
+    def test_get_radar_metadata_beamwidth_can_be_overridden(self):
+        """Test that beamwidth_deg can be overridden per-radar."""
+        meta = _get_radar_metadata('KAN', {'beamwidth_deg': 1.0})
+
+        assert meta['beamwidth_deg'] == 1.0
+
     def test_read_vvp_with_defaults(self):
         """Test that read_vvp loads TOML defaults automatically."""
         if not SAMPLE_VVP_FILE.exists():
@@ -447,6 +467,8 @@ class TestRadarConfiguration:
         assert ds.attrs['radar_code'] == 'KAN'
         assert ds.attrs['antenna_height_m'] == 174
         assert ds.attrs['lowest_level_offset_m'] == 126
+        # Should also include beamwidth from [defaults] section
+        assert ds.attrs['beamwidth_deg'] == 0.95
 
     def test_read_vvp_with_override(self):
         """Test precedence: function parameter > TOML defaults."""

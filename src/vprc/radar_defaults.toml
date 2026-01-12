@@ -6,9 +6,16 @@
 # - antenna_height_m: Antenna elevation above sea level (meters)
 # - lowest_level_offset_m: Offset from nearest profile level (meters)
 #   Profile levels are at 100, 300, 500, ... meters above antenna
-#   This offset accounts for the difference between antenna height and nearest level
+# - beamwidth_deg: One-way half-power beamwidth (degrees) [optional]
 #
 # Note: freezing_level_m should be provided at runtime from MEPS/sounding data
+
+[defaults]
+# Shared default values used when radar-specific value is not specified
+# Also serves as fallback for unknown/unrecognized radar codes
+antenna_height_m = 198
+lowest_level_offset_m = 102
+beamwidth_deg = 0.95
 
 [VAN]  # Vantaa
 name = "VANTAA"
@@ -84,7 +91,3 @@ lowest_level_offset_m = 119
 name = "KAUNISPAA"
 antenna_height_m = 489
 lowest_level_offset_m = 11
-
-[other]  # Default/Other (used when radar code is not recognized)
-antenna_height_m = 198
-lowest_level_offset_m = 102
