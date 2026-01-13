@@ -1,0 +1,41 @@
+# Git (except .git itself needed for hatch-vcs)
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.tox/
+
+# Local development files
+local/
+
+# Legacy code (not needed in container)
+legacy/
+
+# Documentation source (not needed in runtime)
+docs/
