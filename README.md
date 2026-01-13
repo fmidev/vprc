@@ -3,6 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.txt)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Status: Beta](https://img.shields.io/badge/status-beta-yellow.svg)]()
+[![Docker Repository on Quay](https://quay.io/repository/fmi/vprc/status "Docker Repository on Quay")](https://quay.io/repository/fmi/vprc)
 
 Python implementation of the **Koistinen & Pohjola VPR (Vertical Profile Reflectivity) correction algorithm** for weather radar data. This modernization of a circa-2003 Perl codebase is designed for use in Apache Airflow workflows at FMI.
 

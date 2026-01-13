@@ -62,3 +62,15 @@ if classification.usable_for_vpr:
     vpr_result = compute_vpr_correction(ds)
 ```
 
+## Airflow Integration
+
+```python
+@task.docker(image="quay.io/fmi/vprc:v0.2.0")
+def correct_vpr(vvp_file: str, radar_config: dict) -> dict:
+    from vprc import process_vvp
+    result = process_vvp(vvp_file, **radar_config)
+    return {
+        "usable": result.usable_for_vpr,
+        "profile_type": str(result.classification.profile_type),
+    }
+```

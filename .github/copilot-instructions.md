@@ -51,7 +51,7 @@ Ship a `radar_defaults.toml` with the package containing canonical radar configu
 
 This package will be deployed as a containerized service in FMI's Airflow radar production system. The integration pattern:
 
-- **Deployment**: Docker container with this package installed
+- **Deployment**: Docker container with this package installed (image `quay.io/fmi/vprc`)
 - **Airflow tasks**: Use `@task.docker` decorator to invoke Python API
 - **Configuration**: Radar metadata and algorithm parameters from Airflow (static TOML files initially)
 - **No DAGs in this repo**: Workflow orchestration lives in the separate Airflow radar production repository
@@ -91,14 +91,6 @@ def correct_vpr(vvp_file: str, radar_config: dict) -> str:
 - Avoid repeating bad practices from legacy code
 
 ### Algorithm Implementation Strategy
-
-**Development sequence** (logical order for testing against Perl reference):
-
-1. **Ground clutter removal** (`allprof_prodx2.pl` "maakaikujen poisto") - Simplest, enables early validation
-2. **Spike smoothing** (`allprof_prodx2.pl` "piikkien tasoitus") - Independent preprocessing step
-3. **Profile quality weighting** (`allprof_prodx2.pl`) - Needed for correction calculation
-4. **Bright band detection** (`allprof_prodx2.pl`) - Complex but well-defined
-5. **VPR correction calculation** (`pystycappi.pl`) - Final integration
 
 **Implementation guidelines**:
 
