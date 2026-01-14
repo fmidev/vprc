@@ -7,8 +7,16 @@
 # - lowest_level_offset_m: Offset from nearest profile level (meters)
 #   Profile levels are at 100, 300, 500, ... meters above antenna
 # - beamwidth_deg: One-way half-power beamwidth (degrees) [optional]
+# - latitude: WGS84 latitude (degrees)
+# - longitude: WGS84 longitude (degrees)
+# - max_range_km: Maximum usable range for compositing (km)
 #
 # Note: freezing_level_m should be provided at runtime from MEPS/sounding data
+
+[network]
+# Network-wide settings for compositing
+crs_epsg = 3067  # ETRS-TM35FIN (Finland standard)
+default_grid_resolution_m = 1000
 
 [defaults]
 # Shared default values used when radar-specific value is not specified
@@ -16,78 +24,108 @@
 antenna_height_m = 198
 lowest_level_offset_m = 102
 beamwidth_deg = 0.95
+max_range_km = 250
 
 [VAN]  # Vantaa
 name = "VANTAA"
 antenna_height_m = 83
 lowest_level_offset_m = 17
+latitude = 60.270620
+longitude = 24.869024
 
 [KER]  # Kerava
 name = "KERAVA"
 antenna_height_m = 83
 lowest_level_offset_m = 5
+# latitude/longitude: coordinates not available
 
 [IKA]  # Ikaalinen
 name = "IKAALINEN"
 antenna_height_m = 154
 lowest_level_offset_m = 146
+latitude = 61.767337
+longitude = 23.076448
 
 [KAN]  # Kankaanpää
 name = "KANKAANPAA"
 antenna_height_m = 174
 lowest_level_offset_m = 126
+latitude = 61.81085
+longitude = 22.50204
 
 [KES]  # Kesälahti
 name = "KESALAHTI"
 antenna_height_m = 174
 lowest_level_offset_m = 126
+latitude = 61.90699
+longitude = 29.79772
 
 [PET]  # Petäjävesi
 name = "PETAJAVESI"
 antenna_height_m = 271
 lowest_level_offset_m = 29
+latitude = 62.30451365
+longitude = 25.44008118
 
 [ANJ]  # Anjalankoski
 name = "ANJALANKOSKI"
 antenna_height_m = 139
 lowest_level_offset_m = 161
+latitude = 60.903871
+longitude = 27.108057
 
 [KUO]  # Kuopio
 name = "KUOPIO"
 antenna_height_m = 268
 lowest_level_offset_m = 32
+latitude = 62.862598
+longitude = 27.381468
 
 [KOR]  # Korpo
 name = "KOR"
 antenna_height_m = 61
 lowest_level_offset_m = 39
+latitude = 60.128469
+longitude = 21.643379
 
 [UTA]  # Utajärvi
 name = "UTAJARVI"
 antenna_height_m = 118
 lowest_level_offset_m = 182
+latitude = 64.774934
+longitude = 26.318877
 
 [LUO]  # Luosto
 name = "LUOSTO"
 antenna_height_m = 530
 lowest_level_offset_m = 170
+latitude = 67.139096
+longitude = 26.896916
 
 [VIM]  # Vimpeli
 name = "VIMPELI"
 antenna_height_m = 198
 lowest_level_offset_m = 102
+latitude = 63.104835
+longitude = 23.82086
 
 [NUR]  # Nurmes
 name = "NURMES"
 antenna_height_m = 323
 lowest_level_offset_m = 177
+latitude = 63.83786
+longitude = 29.44892
 
 [VIH]  # Vihti
 name = "VIHTI"
 antenna_height_m = 181
 lowest_level_offset_m = 119
+latitude = 60.5561915
+longitude = 24.49558603
 
 [KAU]  # Kaunispää
 name = "KAUNISPAA"
 antenna_height_m = 489
 lowest_level_offset_m = 11
+latitude = 68.434430
+longitude = 27.443993

@@ -381,3 +381,154 @@ def _parse_cor_data(lines: list[str], header: LegacyCorHeader) -> xr.Dataset:
     )
 
     return ds
+
+
+@dataclass
+class LegacyCoraveHeader:
+    """Parsed header from .corave file.
+
+    Format: VIMPELI VVP_40 200 -45 17 08 2022 12 45 0 ELEVS 0.3 0.7 1.5 3.0
+    Note: nollaraja_ps (freezing level indicator) replaces the precip info.
+    """
+
+    radar_name: str
+    product: str
+    step: int
+    mds: float
+    timestamp: datetime
+    freezing_level_flag: int
+    elevation_angles: list[float]
+
+
+def parse_legacy_corave(path: str | Path) -> tuple[xr.Dataset, LegacyCoraveHeader]:
+    """Parse a legacy .corave file with time-averaged VPR corrections.
+
+    The .corave format is similar to .cor but:
+    - Has simplified header (no max_dBZ, quality_weight, etc.)
+    - Has two extra columns at the end of each data row for sample counts
+
+    Args:
+        path: Path to the .corave file
+
+    Returns:
+        Tuple of (dataset, header) where dataset contains averaged corrections.
+    """
+    path = Path(path)
+    lines = path.read_text().strip().split('\n')
+
+    # Parse header
+    header = _parse_corave_header(lines[0])
+
+    # Parse data lines
+    ds = _parse_corave_data(lines[1:], header)
+
+    return ds, header
+
+
+def _parse_corave_header(line: str) -> LegacyCoraveHeader:
+    """Parse the header line of .corave file.
+
+    Format: VIMPELI VVP_40 200 -45 17 08 2022 12 45 0 ELEVS 0.3 0.7 1.5 3.0
+    """
+    parts = line.split()
+
+    radar_name = parts[0]
+    product = parts[1]
+    step = int(parts[2])
+    mds = float(parts[3])
+
+    # Date/time: day month year hour minute
+    day = int(parts[4])
+    month = int(parts[5])
+    year = int(parts[6])
+    hour = int(parts[7])
+    minute = int(parts[8])
+    timestamp = datetime(year, month, day, hour, minute)
+
+    # Freezing level flag
+    freezing_level_flag = int(parts[9])
+
+    # Elevation angles after 'ELEVS'
+    elevs_idx = parts.index('ELEVS') + 1
+    elevation_angles = [float(e) for e in parts[elevs_idx:]]
+
+    return LegacyCoraveHeader(
+        radar_name=radar_name,
+        product=product,
+        step=step,
+        mds=mds,
+        timestamp=timestamp,
+        freezing_level_flag=freezing_level_flag,
+        elevation_angles=elevation_angles,
+    )
+
+
+def _parse_corave_data(lines: list[str], header: LegacyCoraveHeader) -> xr.Dataset:
+    """Parse the data lines of .corave file into an xarray Dataset.
+
+    Format per line (with 4 elevations):
+    range corr_500_avg corr_500_rain height_500 corr_1000_avg corr_1000_rain height_1000
+          corr_e1_avg corr_e1_rain height_e1 ... count_klim count_rain
+
+    Returns dataset with dimensions (range_km, correction_type).
+    """
+    n_elevs = len(header.elevation_angles)
+    n_triplets = 2 + n_elevs  # 2 CAPPI heights + n elevation angles
+
+    ranges = []
+    corrections_avg = []
+    corrections_rain = []
+    beam_heights = []
+    count_klim = []
+    count_rain = []
+
+    for line in lines:
+        parts = line.split()
+        expected_cols = 1 + 3 * n_triplets + 2  # range + triplets + 2 counts
+        if len(parts) < expected_cols:
+            continue
+
+        ranges.append(int(parts[0]))
+
+        row_corr_avg = []
+        row_corr_rain = []
+        row_height = []
+
+        for i in range(n_triplets):
+            base_idx = 1 + i * 3
+            row_corr_avg.append(float(parts[base_idx]))
+            row_corr_rain.append(float(parts[base_idx + 1]))
+            row_height.append(int(parts[base_idx + 2]))
+
+        corrections_avg.append(row_corr_avg)
+        corrections_rain.append(row_corr_rain)
+        beam_heights.append(row_height)
+
+        # Last two columns are sample counts
+        count_klim.append(int(parts[-2]))
+        count_rain.append(int(parts[-1]))
+
+    range_arr = np.array(ranges)
+    type_labels = ['cappi_500', 'cappi_1000'] + [f'elev_{i+1}' for i in range(n_elevs)]
+
+    ds = xr.Dataset(
+        {
+            'correction_avg_db': (['range_km', 'correction_type'], np.array(corrections_avg)),
+            'correction_rain_db': (['range_km', 'correction_type'], np.array(corrections_rain)),
+            'beam_height_m': (['range_km', 'correction_type'], np.array(beam_heights)),
+            'count_klim': (['range_km'], np.array(count_klim)),
+            'count_rain': (['range_km'], np.array(count_rain)),
+        },
+        coords={
+            'range_km': range_arr,
+            'correction_type': type_labels,
+        },
+        attrs={
+            'radar_name': header.radar_name,
+            'product': header.product,
+            'timestamp': header.timestamp.isoformat(),
+            'elevation_angles': header.elevation_angles,
+        },
+    )
+
+    return ds

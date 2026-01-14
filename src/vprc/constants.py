@@ -74,3 +74,11 @@ DEFAULT_MAX_RANGE_KM = 250
 
 # Default range step for VPR correction (km)
 DEFAULT_RANGE_STEP_KM = 1
+
+# -----------------------------------------------------------------------------
+# Temporal Averaging Constants (from pystycappi_ka.pl)
+# -----------------------------------------------------------------------------
+
+# Weight for climatological profile when blending with precipitation profile
+# Perl: `corr_klim * 0.2 + corr_sade * $wq`
+CLIMATOLOGICAL_WEIGHT = 0.2

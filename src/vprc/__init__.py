@@ -28,6 +28,7 @@ from .smoothing import smooth_spikes
 from .classification import classify_profile, ProfileClassification, LayerType
 from .bright_band import detect_bright_band, BrightBandResult
 from .vpr_correction import compute_vpr_correction, VPRCorrectionResult
+from .temporal import average_corrections
 
 
 @dataclass
@@ -152,5 +153,6 @@ __all__ = [
     "BrightBandResult",
     "VPRCorrectionResult",
     "compute_vpr_correction",
+    "average_corrections",
     "read_vvp",
 ]
