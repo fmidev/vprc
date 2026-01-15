@@ -99,6 +99,52 @@ def plot_profile(ds, ds_raw=None, bright_band=None, title: str | None = None) ->
     return fig
 
 
+def plot_vpr_correction(vpr_correction, title: str | None = None) -> plt.Figure:
+    """Plot VPR correction factors vs range for CAPPI heights.
+
+    Args:
+        vpr_correction: VPRCorrectionResult object with corrections
+        title: Optional plot title
+
+    Returns:
+        matplotlib Figure object
+    """
+    if vpr_correction is None or not vpr_correction.usable:
+        print("No VPR correction to plot")
+        return None
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    corr = vpr_correction.corrections
+    if "cappi_correction_db" not in corr:
+        print("No cappi_correction_db in corrections dataset")
+        return None
+
+    # Plot correction for each CAPPI height
+    cappi_heights = corr["cappi_height"].values
+    for height in cappi_heights:
+        data = corr["cappi_correction_db"].sel(cappi_height=height)
+        range_km = data["range_km"].values
+        correction_db = data.values
+        ax.plot(range_km, correction_db, linewidth=2, label=f"{height} m")
+
+    ax.set_xlabel("Range (km)")
+    ax.set_ylabel("Correction (dB)")
+    ax.set_title(title or "VPR Correction Factors")
+    ax.legend(loc="best", title="CAPPI height")
+    ax.grid(True, alpha=0.3)
+    ax.axhline(y=0, color="gray", linestyle="--", alpha=0.5)
+
+    # Add ground reflectivity info to title or legend
+    z_ground = vpr_correction.z_ground_dbz
+    ax.text(0.02, 0.98, f"Ground reflectivity: {z_ground:.1f} dBZ",
+            transform=ax.transAxes, verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
+
+    fig.tight_layout()
+    return fig
+
+
 def load_vvp(path: str | Path | None = None) -> ProcessedProfile:
     """Load and process a VVP file.
 
@@ -209,8 +255,15 @@ if __name__ == "__main__":
     print("  result      - ProcessedProfile object")
     print("  classification, bright_band, vpr_correction")
     print("  fig         - Profile plot figure")
+    print("  fig_corr    - VPR correction plot figure (if available)")
     print("-" * 60 + "\n")
 
     # Create profile plot
     fig = plot_profile(ds, ds_raw=ds_raw, bright_band=bright_band, title=str(vvp_path.name))
+
+    # Create VPR correction plot if available
+    fig_corr = None
+    if vpr_correction is not None:
+        fig_corr = plot_vpr_correction(vpr_correction, title=f"VPR Correction - {vvp_path.name}")
+
     plt.show()
