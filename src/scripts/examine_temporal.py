@@ -113,6 +113,9 @@ def plot_correction_comparison(
     """
     fig, ax = plt.subplots(figsize=(10, 8))
 
+    # Identify the newest (original) timestamp
+    original_ts = averaged.corrections.attrs.get("timestamp") if averaged is not None else None
+
     # Plot individual profiles with timestamps in legend
     for vpr in vpr_results:
         corr = vpr.corrections
@@ -122,7 +125,11 @@ def plot_correction_comparison(
             data = corr["cappi_correction_db"].sel(cappi_height=cappi_height)
             range_km = data["range_km"].values
             correction_db = data.values
-            ax.plot(range_km, correction_db, alpha=0.4, linewidth=1, label=label)
+            # Make the original (newest) profile thicker
+            if ts == original_ts:
+                ax.plot(range_km, correction_db, alpha=0.7, linewidth=2.5, label=label)
+            else:
+                ax.plot(range_km, correction_db, alpha=0.4, linewidth=1, label=label)
 
     # Plot averaged profile
     if averaged is not None and "cappi_correction_db" in averaged.corrections:
