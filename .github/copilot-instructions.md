@@ -16,17 +16,18 @@ This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Pro
    - Format: Text files with header + tabular vertical profile data
    - Example: `tests/data/202508241100_KAN.VVP_40.txt` (Kankaanpää radar)
 
-2. **Parsing** (`src/vprc/io.py`):
+2. **Parsing** ([src/vprc/io.py](src/vprc/io.py)):
    - `read_vvp()` → Returns `xarray.Dataset`
 
-3. **Processing**:
-   - Bright band detection and correction
-   - Ground clutter removal
-   - Profile quality weighting
-   - Spike smoothing
-   - VPR correction factor calculation
+3. **Processing** (modular pipeline):
+   - Ground clutter removal ([src/vprc/clutter.py](src/vprc/clutter.py))
+   - Spike smoothing ([src/vprc/smoothing.py](src/vprc/smoothing.py))
+   - Profile classification ([src/vprc/classification.py](src/vprc/classification.py))
+   - Bright band detection ([src/vprc/bright_band.py](src/vprc/bright_band.py))
+   - VPR correction factor calculation ([src/vprc/vpr_correction.py](src/vprc/vpr_correction.py))
+   - Temporal averaging ([src/vprc/temporal.py](src/vprc/temporal.py))
 
-4. **Output**: Corrected radar reflectivity profiles for operational use
+4. **Output**: Corrected radar reflectivity profiles and VPR correction factors for operational use
 
 ### Radar-Specific Metadata
 
@@ -49,19 +50,24 @@ Ship a `radar_defaults.toml` with the package containing canonical radar configu
 
 ## Airflow Integration
 
-This package will be deployed as a containerized service in FMI's Airflow radar production system. The integration pattern:
+This package is deployed as a containerized service in FMI's Airflow radar production system. The integration pattern:
 
-- **Deployment**: Docker container with this package installed (image `quay.io/fmi/vprc`)
+- **Deployment**: Docker container with this package installed (built via [Containerfile](Containerfile), image `quay.io/fmi/vprc`)
 - **Airflow tasks**: Use `@task.docker` decorator to invoke Python API
-- **Configuration**: Radar metadata and algorithm parameters from Airflow (static TOML files initially)
+- **Configuration**: Radar metadata from TOML files ([src/vprc/radar_defaults.toml](src/vprc/radar_defaults.toml)), runtime parameters from Airflow
 - **No DAGs in this repo**: Workflow orchestration lives in the separate Airflow radar production repository
 
 Example Airflow task (external to this repo):
 ```python
-@task.docker(image="fmi/vprc:latest")
-def correct_vpr(vvp_file: str, radar_config: dict) -> str:
+@task.docker(image="quay.io/fmi/vprc:latest")
+def correct_vpr(vvp_file: str, freezing_level_m: float) -> dict:
     from vprc import process_vvp
-    return process_vvp(vvp_file, radar_config)
+    result = process_vvp(vvp_file, freezing_level_m=freezing_level_m)
+    return {
+        "usable": result.usable_for_vpr,
+        "profile_type": result.classification.profile_type,
+        "bright_band_detected": result.bright_band.detected,
+    }
 ```
 
 ## Key Conventions
@@ -75,10 +81,11 @@ def correct_vpr(vvp_file: str, radar_config: dict) -> str:
 
 ### Testing
 
-- **Run tests**: `pytest tests/` (requires sample data in `tests/data/`)
-- **Test structure**: One test file per module (`test_io.py` ↔ `src/vprc/io.py`)
-- **Use fixtures**: Test data files should be in `tests/data/` and checked into git
-- **Validation approach**: Compare against legacy Perl output when implementing algorithms
+- **Run tests**: `pytest tests/` (requires sample data in [tests/data/](tests/data/))
+- **Test structure**: One test file per module ([tests/test_io.py](tests/test_io.py) ↔ [src/vprc/io.py](src/vprc/io.py))
+- **Use fixtures**: Test data files in [tests/data/](tests/data/) (checked into git)
+- **Validation approach**: Compare against legacy Perl output ([tests/test_legacy_comparison.py](tests/test_legacy_comparison.py))
+- **Documentation**: See [tests/README.md](tests/README.md) for details on test structure and coverage
 
 ### Style
 - Follow Black formatting
@@ -117,35 +124,75 @@ MK_THRESHOLD = -0.005  # Gradient threshold: -1 dBZ/200m (Perl $mkkynnys)
 
 ## Development Workflow
 
-### Adding New Processing Functions
+### Current Implementation Status
 
-When implementing algorithm components (e.g., bright band detection):
+Core algorithm modules are **implemented and tested**:
+- ✅ VVP parsing ([src/vprc/io.py](src/vprc/io.py))
+- ✅ Ground clutter removal ([src/vprc/clutter.py](src/vprc/clutter.py))
+- ✅ Spike smoothing ([src/vprc/smoothing.py](src/vprc/smoothing.py))
+- ✅ Profile classification ([src/vprc/classification.py](src/vprc/classification.py))
+- ✅ Bright band detection ([src/vprc/bright_band.py](src/vprc/bright_band.py))
+- ✅ VPR correction calculation ([src/vprc/vpr_correction.py](src/vprc/vpr_correction.py))
+- ✅ Temporal averaging ([src/vprc/temporal.py](src/vprc/temporal.py))
+- ✅ End-to-end pipeline ([src/vprc/__init__.py](src/vprc/__init__.py))
 
-1. **Study Perl reference**: Understand algorithm logic from `allprof_prodx2.pl` (comments in Finnish)
+### Extending the Algorithm
+
+When implementing new features or algorithm improvements:
+
+1. **Study Perl reference**: Understand algorithm logic from [legacy/allprof_prodx2.pl](legacy/allprof_prodx2.pl) (comments in Finnish)
 2. **Research existing solutions**: Check if `wradlib`, `numpy`, or other packages provide relevant functions
-3. **Create module**: Add to `src/vprc/` (e.g., `bright_band.py`) using pythonic patterns
-4. **Write tests**: Add to `tests/test_<module>.py` with validation against Perl output
+3. **Create/modify module**: Update existing module in [src/vprc/](src/vprc/) using pythonic patterns
+4. **Write/update tests**: Add to corresponding [tests/test_<module>.py](tests/) with validation against Perl output
+5. **Update documentation**: Add user-facing docs to [docs/](docs/) if needed
 
-Example function signature:
+Example function signature pattern:
 ```python
-def detect_bright_band(ds: xr.Dataset) -> xr.Dataset:
-    """Based on algorithm from allprof_prodx2.pl titled 'Bright Band'"""
-    dbz_gradient = ds['corrected_dbz'].differentiate('height')
+def detect_bright_band(ds: xr.Dataset, freezing_level_m: float) -> BrightBandResult:
+    """Detect melting layer using gradient analysis.
+
+    Based on 'Bright Band' algorithm in allprof_prodx2.pl.
+    """
     # ... pythonic implementation using numpy/xarray operations
 ```
+
+## File Organization
+
+**Core implementation** ([src/vprc/](src/vprc/)):
+- [io.py](src/vprc/io.py) - VVP file parsing
+- [clutter.py](src/vprc/clutter.py) - Ground clutter removal
+- [smoothing.py](src/vprc/smoothing.py) - Spike smoothing
+- [classification.py](src/vprc/classification.py) - Profile classification
+- [bright_band.py](src/vprc/bright_band.py) - Bright band detection
+- [vpr_correction.py](src/vprc/vpr_correction.py) - VPR correction calculation
+- [temporal.py](src/vprc/temporal.py) - Temporal averaging
+- [constants.py](src/vprc/constants.py) - Algorithm constants (MDS, STEP, etc.)
+- [radar_defaults.toml](src/vprc/radar_defaults.toml) - Canonical radar configurations
+
+**Testing** ([tests/](tests/)):
+- [test_*.py](tests/) - Test modules (mirror [src/vprc/](src/vprc/) structure)
+- [test_legacy_comparison.py](tests/test_legacy_comparison.py) - End-to-end validation against Perl
+- [test_temporal_e2e.py](tests/test_temporal_e2e.py) - Temporal averaging integration test
+- [legacy_parser.py](tests/legacy_parser.py) - Utility for parsing Perl output
+- [data/](tests/data/) - Sample VVP files and expected Perl outputs
+
+**Documentation**:
+- [docs/quickstart.md](docs/quickstart.md) - Usage examples
+- [docs/configuration.md](docs/configuration.md) - TOML configuration guide
+- [tests/README.md](tests/README.md) - Test suite documentation
+
+**Legacy reference** ([legacy/](legacy/)):
+- [allprof_prodx2.pl](legacy/allprof_prodx2.pl) - Main algorithm (read-only reference)
+- [pystycappi.pl](legacy/pystycappi.pl), [pystycappi_ka.pl](legacy/pystycappi_ka.pl) - CAPPI correction scripts
+- `*.tcsh` - Legacy workflow scripts (operational context reference)
+- `*.txt`, `*.profile`, `*.cor` - Sample input/output data
+
+**Development tools** not in version control ([local/](local/)):
+- [scripts/](local/scripts/) - Development utilities
+- [data/](local/data/) - Additional test data
 
 ## Common Pitfalls
 
 - **Column name confusion**: Perl uses `$dbz`, Python uses `lin_dbz` (avoid `log_dbz` unless logarithmic). `lin_dbz` is not to be confused with linear reflectivity Z (in mm^6/m^3).
 - **Zero vs. missing**: Legacy code uses `-45` for missing, not `NaN` or `0`
 - **Radar codes**: Three-letter codes (KAN, VAN, IKA) map to full names (see `allprof_prodx2.pl` line 32+)
-
-## File Organization
-
-- `src/vprc/io.py` - VVP file parsing (complete)
-- `src/vprc/*.py` - Algorithm modules (to be added: `clutter.py`, `smoothing.py`, `bright_band.py`, etc.)
-- `src/vprc/radar_defaults.toml` - Canonical radar configurations (ship with package)
-- `tests/test_*.py` - Test modules (mirror `src/vprc/` structure)
-- `tests/data/` - Sample VVP files and expected Perl outputs for validation
-- `legacy/*.pl` - Legacy Perl scripts (read-only algorithm reference, do not modify)
-- `legacy/*.tcsh` - Legacy workflow scripts (reference only, shows legacy operational context)
