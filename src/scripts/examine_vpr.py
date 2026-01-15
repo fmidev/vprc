@@ -126,12 +126,23 @@ def plot_vpr_correction(vpr_correction, title: str | None = None) -> plt.Figure:
         data = corr["cappi_correction_db"].sel(cappi_height=height)
         range_km = data["range_km"].values
         correction_db = data.values
-        ax.plot(range_km, correction_db, linewidth=2, label=f"{height} m")
+        ax.plot(range_km, correction_db, linewidth=2, label=f"CAPPI {height} m")
+
+    # Plot correction for lowest elevation angle if available
+    if "elev_correction_db" in corr:
+        elev_angles = corr["elevation"].values
+        if len(elev_angles) > 0:
+            lowest_elev = elev_angles[0]  # Assuming sorted, lowest first
+            data = corr["elev_correction_db"].sel(elevation=lowest_elev)
+            range_km = data["range_km"].values
+            correction_db = data.values
+            ax.plot(range_km, correction_db, linewidth=2, linestyle="--",
+                    label=f"Elevation {lowest_elev:.1f}°")
 
     ax.set_xlabel("Range (km)")
     ax.set_ylabel("Correction (dB)")
     ax.set_title(title or "VPR Correction Factors")
-    ax.legend(loc="best", title="CAPPI height")
+    ax.legend(loc="best")
     ax.grid(True, alpha=0.3)
     ax.axhline(y=0, color="gray", linestyle="--", alpha=0.5)
 
@@ -204,6 +215,8 @@ def load_step_by_step(path: str | Path | None = None) -> dict:
 
 
 if __name__ == "__main__":
+    plt.ion()  # Interactive mode on
+
     # Get VVP file path from command line or use default
     vvp_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_VVP
 
@@ -265,5 +278,3 @@ if __name__ == "__main__":
     fig_corr = None
     if vpr_correction is not None:
         fig_corr = plot_vpr_correction(vpr_correction, title=f"VPR Correction - {vvp_path.name}")
-
-    plt.show()
