@@ -7,7 +7,7 @@
 
 Python implementation of the **Koistinen & Pohjola VPR (Vertical Profile Reflectivity) correction algorithm** for weather radar data. This modernization of a circa-2003 Perl codebase is designed for use in Apache Airflow workflows at FMI.
 
-📖 [Quick Start](docs/quickstart.md) · [Configuration](docs/configuration.md)
+📖 [Introduction](docs/introduction.md) · [Quick Start](docs/quickstart.md) · [Configuration](docs/configuration.md)
 
 ## Features
 
