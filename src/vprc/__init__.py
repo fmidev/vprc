@@ -15,6 +15,7 @@ Individual processing steps:
     smoothing.apply_spike_smoothing() - Smooth profile spikes
     classification.classify_profile() - Segment and classify layers
     bright_band.detect_bright_band() - Detect melting layer
+    climatology.generate_climatological_profile() - Generate fallback profile
 """
 
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from .classification import classify_profile, ProfileClassification, LayerType
 from .bright_band import detect_bright_band, BrightBandResult
 from .vpr_correction import compute_vpr_correction, VPRCorrectionResult
 from .temporal import average_corrections
+from .climatology import generate_climatological_profile, get_clim_ground_reference
 
 
 @dataclass
