@@ -99,6 +99,20 @@ def plot_profile(ds, ds_raw=None, bright_band=None, title: str | None = None) ->
     return fig
 
 
+def _plot_correction_line(ax, data, label, **kwargs):
+    """Helper to plot a correction line.
+
+    Args:
+        ax: Matplotlib axis
+        data: xarray DataArray with correction data
+        label: Legend label
+        **kwargs: Additional plot kwargs (linewidth, linestyle, color, etc.)
+    """
+    range_km = data["range_km"].values
+    correction_db = data.values
+    ax.plot(range_km, correction_db, label=label, **kwargs)
+
+
 def plot_vpr_correction(vpr_correction, title: str | None = None) -> plt.Figure:
     """Plot VPR correction factors vs range for CAPPI heights.
 
@@ -120,13 +134,26 @@ def plot_vpr_correction(vpr_correction, title: str | None = None) -> plt.Figure:
         print("No cappi_correction_db in corrections dataset")
         return None
 
+    # Cappi 1000 orange color
+    color_1000 = "tab:orange"
+
     # Plot correction for each CAPPI height
     cappi_heights = corr["cappi_height"].values
     for height in cappi_heights:
         data = corr["cappi_correction_db"].sel(cappi_height=height)
-        range_km = data["range_km"].values
-        correction_db = data.values
-        ax.plot(range_km, correction_db, linewidth=2, label=f"CAPPI {height} m")
+        _plot_correction_line(ax, data, f"CAPPI {height} m", linewidth=2)
+
+    # Plot climatological correction for CAPPI 1000 if available
+    if "cappi_clim_correction_db" in corr:
+        data = corr["cappi_clim_correction_db"].sel(cappi_height=1000)
+        _plot_correction_line(ax, data, "Climatology 1000 m",
+                             linewidth=2, linestyle=":", color=color_1000)
+
+    # Plot blended correction for CAPPI 1000 if available
+    if "cappi_blended_correction_db" in corr:
+        data = corr["cappi_blended_correction_db"].sel(cappi_height=1000)
+        _plot_correction_line(ax, data, "Blended 1000 m",
+                             linewidth=2, linestyle="--", color=color_1000)
 
     # Plot correction for lowest elevation angle if available
     if "elev_correction_db" in corr:
@@ -134,10 +161,7 @@ def plot_vpr_correction(vpr_correction, title: str | None = None) -> plt.Figure:
         if len(elev_angles) > 0:
             lowest_elev = elev_angles[0]  # Assuming sorted, lowest first
             data = corr["elev_correction_db"].sel(elevation=lowest_elev)
-            range_km = data["range_km"].values
-            correction_db = data.values
-            ax.plot(range_km, correction_db, linewidth=2, linestyle="--",
-                    label=f"Elevation {lowest_elev:.1f}°")
+            _plot_correction_line(ax, data, f"Elevation {lowest_elev:.1f}°", linewidth=2)
 
     ax.set_xlabel("Range (km)")
     ax.set_ylabel("Correction (dB)")
@@ -198,11 +222,11 @@ def load_step_by_step(path: str | Path | None = None) -> dict:
         layer_top = classification.lowest_layer.top_height
 
     bright_band = detect_bright_band(ds_smooth, layer_top=layer_top)
+    freezing_level_m = bright_band.top_height if bright_band.detected else None
 
     vpr_correction = None
     if classification.usable_for_vpr:
-        vpr_correction = compute_vpr_correction(ds_smooth)
-
+        vpr_correction = compute_vpr_correction(ds_smooth, freezing_level_m=freezing_level_m)
     return {
         "ds_raw": ds_raw,
         "ds_clutter": ds_clutter,

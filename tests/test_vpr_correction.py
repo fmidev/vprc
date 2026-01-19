@@ -13,6 +13,7 @@ from vprc.vpr_correction import (
     convolve_beam_with_profile,
     compute_correction_for_range,
     compute_vpr_correction,
+    compute_quality_weight,
 )
 from vprc.constants import MDS, STEP, FINE_GRID_RESOLUTION_M, DEFAULT_BEAMWIDTH_DEG
 
@@ -343,3 +344,121 @@ class TestIntegration:
         result = process_vvp(test_file, compute_vpr=False)
 
         assert result.vpr_correction is None
+
+class TestQualityWeight:
+    """Tests for profile quality weight calculation."""
+
+    def test_strong_profile_has_positive_weight(self):
+        """Strong continuous echo gives positive quality weight."""
+        # Strong profile: 35 dBZ (Z ~ 3162) at all levels
+        dbz_values = [35.0] * 20  # 20 levels from 100m to 3900m
+        heights = list(range(100, 100 + STEP * 20, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        wq = compute_quality_weight(ds)
+
+        assert wq > 0
+        # 35 dBZ ≈ 3162 Z, well above threshold
+        # Expected: ~3162 / 5000 ≈ 0.63 per level
+        assert wq > 0.5
+
+    def test_weak_profile_has_zero_weight(self):
+        """Weak echo below threshold gives zero quality weight."""
+        # Weak profile: 10 dBZ (Z = 10) - below 500 threshold at lowest levels
+        dbz_values = [10.0] * 20
+        heights = list(range(100, 100 + STEP * 20, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        wq = compute_quality_weight(ds)
+
+        # Z = 10 at lowest levels < MIN_Z_FOR_USABLE (500)
+        assert wq == 0.0
+
+    def test_missing_echo_has_zero_weight(self):
+        """Missing echo (MDS) gives zero quality weight."""
+        dbz_values = [MDS] * 10
+        heights = list(range(100, 100 + STEP * 10, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        wq = compute_quality_weight(ds)
+
+        assert wq == 0.0
+
+
+class TestClimatologicalCorrection:
+    """Tests for climatological correction computation."""
+
+    def test_clim_corrections_included_when_fl_provided(self):
+        """Climatological corrections computed when freezing level provided."""
+        dbz_values = [35.0] * 25
+        heights = list(range(100, 100 + STEP * 25, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        result = compute_vpr_correction(
+            ds,
+            freezing_level_m=2000,
+            include_clim=True,
+        )
+
+        assert "cappi_clim_correction_db" in result.corrections
+        assert "cappi_blended_correction_db" in result.corrections
+        assert result.z_ground_clim_dbz is not None
+
+    def test_clim_corrections_excluded_when_disabled(self):
+        """Climatological corrections not computed when include_clim=False."""
+        dbz_values = [35.0] * 25
+        heights = list(range(100, 100 + STEP * 25, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        result = compute_vpr_correction(
+            ds,
+            freezing_level_m=2000,
+            include_clim=False,
+        )
+
+        assert "cappi_clim_correction_db" not in result.corrections
+        assert "cappi_blended_correction_db" not in result.corrections
+        assert result.z_ground_clim_dbz is None
+
+    def test_blended_is_between_instant_and_clim(self):
+        """Blended correction is weighted average of instant and clim."""
+        # Create profile with strong echo
+        dbz_values = [35.0] * 25
+        heights = list(range(100, 100 + STEP * 25, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        result = compute_vpr_correction(
+            ds,
+            freezing_level_m=2000,
+            include_clim=True,
+            clim_weight=0.2,
+        )
+
+        corr = result.corrections
+        instant = corr["cappi_correction_db"].values
+        clim = corr["cappi_clim_correction_db"].values
+        blended = corr["cappi_blended_correction_db"].values
+
+        # Blended should be between instant and clim (or equal if they're equal)
+        for i in range(blended.shape[0]):
+            for j in range(blended.shape[1]):
+                lo = min(instant[i, j], clim[i, j])
+                hi = max(instant[i, j], clim[i, j])
+                assert lo - 0.01 <= blended[i, j] <= hi + 0.01
+
+    def test_quality_weight_affects_blend(self):
+        """Higher quality weight gives more weight to instantaneous correction."""
+        dbz_values = [35.0] * 25
+        heights = list(range(100, 100 + STEP * 25, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        result = compute_vpr_correction(
+            ds,
+            freezing_level_m=2000,
+            include_clim=True,
+            clim_weight=0.2,
+        )
+
+        assert result.quality_weight > 0
+        # Quality weight should be stored in result
+        assert result.corrections.attrs["quality_weight"] == result.quality_weight

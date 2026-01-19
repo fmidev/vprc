@@ -61,6 +61,7 @@ def process_vvp(
     antenna_height_m: int | None = None,
     lowest_level_offset_m: int | None = None,
     freezing_level_m: float | None = None,
+    fallback_detected_freezing_level: bool = True,
     compute_vpr: bool = True,
     cappi_heights_m: tuple[int, ...] | None = None,
     **kwargs,
@@ -76,6 +77,7 @@ def process_vvp(
         antenna_height_m: Antenna height above sea level (m)
         lowest_level_offset_m: Offset from antenna to lowest profile level (m)
         freezing_level_m: Freezing level from NWP (m above sea level)
+        fallback_detected_freezing_level: Whether to fallback to detected freezing level if not provided (default True)
         compute_vpr: Whether to compute VPR correction factors (default True)
         cappi_heights_m: CAPPI heights for VPR correction (default 500, 1000)
         **kwargs: Additional metadata passed to read_vvp()
@@ -131,11 +133,17 @@ def process_vvp(
 
     bright_band = detect_bright_band(ds, layer_top=layer_top)
 
+    # Use provided freezing level, else detected if allowed and available
+    if freezing_level_m is None and fallback_detected_freezing_level:
+        if bright_band.detected and bright_band.top_height is not None:
+            freezing_level_m = float(bright_band.top_height)
+
     # Step 6: VPR correction (if requested and profile is usable)
     vpr_result = None
     if compute_vpr and classification.usable_for_vpr:
         vpr_result = compute_vpr_correction(
             ds,
+            freezing_level_m=freezing_level_m,
             cappi_heights_m=cappi_heights_m,
         )
 

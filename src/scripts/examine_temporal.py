@@ -201,6 +201,8 @@ def plot_z_ground_comparison(
 
 
 if __name__ == "__main__":
+    plt.ion()  # Interactive mode
+
     # Allow custom directory from command line
     if len(sys.argv) > 1:
         data_dir = Path(sys.argv[1])
@@ -243,4 +245,3 @@ if __name__ == "__main__":
     if vpr_results:
         fig = plot_correction_comparison(vpr_results, averaged)
         fig2 = plot_z_ground_comparison(vpr_results, averaged)
-        plt.show()

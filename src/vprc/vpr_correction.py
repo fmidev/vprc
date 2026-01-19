@@ -23,6 +23,7 @@ from wradlib.trafo import decibel, idecibel
 
 from .constants import (
     MDS,
+    STEP,
     FINE_GRID_RESOLUTION_M,
     MAX_PROFILE_HEIGHT_M,
     DEFAULT_BEAMWIDTH_DEG,
@@ -34,18 +35,33 @@ from .constants import (
 )
 
 
+# Quality weight calculation constants (from allprof_prodx2.pl lines 1188-1219)
+# Minimum linear Z for layer to contribute to quality weight (~15 dBZ)
+MIN_Z_FOR_QUALITY = 30  # mm^6/m^3
+# Maximum height for quality weight integration (m above antenna)
+MAX_QUALITY_HEIGHT_M = 5000
+# Minimum linear Z at lowest 5 levels for profile to be usable (~27 dBZ)
+MIN_Z_FOR_USABLE = 500  # mm^6/m^3
+
+
 @dataclass
 class VPRCorrectionResult:
     """Results of VPR correction calculation.
 
     Attributes:
-        corrections: xarray Dataset with correction factors vs range
+        corrections: xarray Dataset with correction factors vs range.
+            Contains 'cappi_correction_db', 'cappi_clim_correction_db',
+            'cappi_blended_correction_db' and similar for elevations.
         z_ground_dbz: Reference reflectivity at ground level (dBZ)
+        z_ground_clim_dbz: Climatological reference reflectivity (dBZ)
+        quality_weight: Profile quality weight for blending (0-10 typical range)
         usable: True if corrections were successfully computed
     """
 
     corrections: xr.Dataset
     z_ground_dbz: float
+    z_ground_clim_dbz: float | None = None
+    quality_weight: float = 0.0
     usable: bool = True
 
 
@@ -275,6 +291,65 @@ def compute_correction_for_range(
     return correction_db, beam_height_antenna
 
 
+def compute_quality_weight(
+    ds: xr.Dataset,
+    max_height_m: int = MAX_QUALITY_HEIGHT_M,
+) -> float:
+    """Compute profile quality weight for correction blending.
+
+    The quality weight indicates how reliable the instantaneous profile is
+    for VPR correction. Higher values indicate stronger, more continuous
+    precipitation echo suitable for VPR correction.
+
+    Based on allprof_prodx2.pl lines 1188-1219 ($wq calculation).
+
+    Algorithm:
+        1. Check that lowest 5 levels have Z > 500 mm^6/m^3 (~27 dBZ)
+        2. Sum linear Z values from ground to min(layer_top, 5km)
+        3. Only include layers with Z > 30 mm^6/m^3 (~15 dBZ)
+        4. Normalize by (5000 * num_valid_layers)
+
+    Args:
+        ds: Dataset with 'corrected_dbz' indexed by 'height'.
+        max_height_m: Maximum integration height (default 5000m).
+
+    Returns:
+        Quality weight (typically 0-10, where higher = better quality).
+        Returns 0 if profile is not suitable for VPR correction.
+    """
+    heights = ds["height"].values
+    dbz_values = ds["corrected_dbz"].values
+
+    # Convert to linear Z
+    z_values = np.where(dbz_values > MDS, idecibel(dbz_values), 0.0)
+
+    # Check lowest 5 levels for sufficient echo strength
+    # Perl: $isotaulu[$alintaso][$j][1] > 500 and ... (5 levels)
+    n_required = min(5, len(z_values))
+    if not np.all(z_values[:n_required] >= MIN_Z_FOR_USABLE):
+        return 0.0
+
+    # Integrate Z up to max_height_m, excluding weak layers
+    mask = (heights <= max_height_m) & (z_values >= MIN_Z_FOR_QUALITY)
+
+    if not np.any(mask):
+        return 0.0
+
+    # Sum Z values where mask is True (σ=1 for strong layers)
+    # Perl: $wq_yla = $wq_yla + $isotaulu[$i][$j][1] * $sigma
+    z_sum = np.sum(z_values[mask])
+
+    # Normalize by 5000 * number of valid layers
+    # Perl: $wq_ala = $wq_ala + 5000 * $sigma
+    n_valid = np.sum(mask)
+    normalization = 5000 * n_valid
+
+    if normalization == 0:
+        return 0.0
+
+    return z_sum / normalization
+
+
 def compute_vpr_correction(
     ds: xr.Dataset,
     cappi_heights_m: tuple[int, ...] | None = None,
@@ -283,10 +358,15 @@ def compute_vpr_correction(
     range_step_km: int = DEFAULT_RANGE_STEP_KM,
     min_elevation_deg: float = 0.5,
     beamwidth_deg: float | None = None,
+    freezing_level_m: float | None = None,
+    include_clim: bool = True,
+    clim_weight: float = 0.2,
 ) -> VPRCorrectionResult:
     """Compute VPR correction factors vs range for CAPPI heights and elevations.
 
-    This is the main entry point for VPR correction calculation.
+    This is the main entry point for VPR correction calculation. Optionally
+    computes climatological corrections and blends them with instantaneous
+    corrections based on profile quality.
 
     Args:
         ds: Dataset with 'corrected_dbz' indexed by 'height'.
@@ -302,22 +382,34 @@ def compute_vpr_correction(
         min_elevation_deg: Minimum elevation angle for pseudo-CAPPI
         beamwidth_deg: Radar beamwidth (degrees). If None, reads from
             ds.attrs['beamwidth_deg'] or uses default.
+        freezing_level_m: Freezing level for climatological profile (m above antenna).
+            Required if include_clim=True. If None and include_clim=True,
+            attempts to read from ds.attrs['freezing_level_m'].
+        include_clim: Whether to compute climatological corrections (default True).
+        clim_weight: Fixed weight for climatological correction in blending.
+            Default 0.2 (from pystycappi_ka.pl).
 
     Returns:
         VPRCorrectionResult containing:
         - corrections: Dataset with dims (range_km, cappi_height) and optionally
-          (range_km, elevation) for elevation-based corrections
+          (range_km, elevation) for elevation-based corrections. Includes
+          'cappi_correction_db' (instantaneous), 'cappi_clim_correction_db' (clim),
+          and 'cappi_blended_correction_db' (weighted blend).
         - z_ground_dbz: Reference ground reflectivity
+        - z_ground_clim_dbz: Climatological ground reference
+        - quality_weight: Profile quality weight
         - usable: Whether corrections are valid
 
     Example:
         >>> ds = read_vvp("profile.txt")
         >>> ds = remove_ground_clutter(ds)
         >>> ds = smooth_spikes(ds)
-        >>> result = compute_vpr_correction(ds)
+        >>> result = compute_vpr_correction(ds, freezing_level_m=2000)
         >>> result.corrections['cappi_correction_db'].sel(cappi_height=500, range_km=100)
-        >>> result.corrections['elev_correction_db'].sel(elevation=0.7, range_km=100)
+        >>> result.corrections['cappi_blended_correction_db'].sel(cappi_height=500, range_km=100)
     """
+    from .climatology import generate_climatological_profile, get_clim_ground_reference
+
     if cappi_heights_m is None:
         cappi_heights_m = DEFAULT_CAPPI_HEIGHTS_M
 
@@ -330,6 +422,13 @@ def compute_vpr_correction(
         beamwidth_deg = ds.attrs.get("beamwidth_deg", DEFAULT_BEAMWIDTH_DEG)
 
     antenna_height_m = ds.attrs.get("antenna_height_m", 0)
+
+    # Get freezing level for climatological profile
+    if freezing_level_m is None:
+        freezing_level_m = ds.attrs.get("freezing_level_m")
+
+    # Compute quality weight
+    quality_weight = compute_quality_weight(ds)
 
     # Interpolate profile to fine grid
     fine_heights, fine_z = interpolate_to_fine_grid(ds)
@@ -386,11 +485,87 @@ def compute_vpr_correction(
             corrections[i, j] = corr
             beam_heights[i, j] = beam_h
 
+    # Compute climatological corrections if requested and freezing level available
+    clim_corrections = None
+    z_ground_clim_dbz = None
+    z_ground_clim = None
+
+    if include_clim and freezing_level_m is not None:
+        # Generate climatological profile
+        lowest_level_m = int(heights[0])
+        clim_ds = generate_climatological_profile(
+            freezing_level_m=freezing_level_m,
+            lowest_level_m=lowest_level_m,
+        )
+
+        # Create a dataset compatible with interpolate_to_fine_grid
+        clim_profile_ds = xr.Dataset(
+            data_vars={"corrected_dbz": (["height"], clim_ds["clim_dbz"].values)},
+            coords={"height": clim_ds["height"].values},
+        )
+
+        # Interpolate clim profile to fine grid
+        clim_fine_heights, clim_fine_z = interpolate_to_fine_grid(clim_profile_ds)
+
+        # Get climatological ground reference
+        z_ground_clim_dbz = get_clim_ground_reference(freezing_level_m, lowest_level_m)
+        z_ground_clim = idecibel(z_ground_clim_dbz)
+
+        # Allocate clim correction arrays
+        clim_corrections = np.zeros((n_ranges, n_heights))
+
+        # Compute climatological corrections for each CAPPI height and range
+        for j, cappi_height in enumerate(cappi_heights_m):
+            for i, range_km in enumerate(ranges_km):
+                range_m = range_km * 1000.0
+
+                elevation = solve_elevation_for_height(
+                    cappi_height + antenna_height_m,
+                    range_m,
+                    antenna_height_m,
+                    min_elevation_deg,
+                )
+
+                corr, _ = compute_correction_for_range(
+                    clim_fine_heights,
+                    clim_fine_z,
+                    z_ground_clim,
+                    range_km,
+                    elevation,
+                    antenna_height_m,
+                    beamwidth_deg,
+                )
+
+                clim_corrections[i, j] = corr
+
     # Build output Dataset with CAPPI corrections
     data_vars = {
         "cappi_correction_db": (["range_km", "cappi_height"], corrections),
         "cappi_beam_height_m": (["range_km", "cappi_height"], beam_heights),
     }
+
+    # Add climatological and blended corrections if computed
+    if clim_corrections is not None:
+        data_vars["cappi_clim_correction_db"] = (
+            ["range_km", "cappi_height"],
+            clim_corrections,
+        )
+
+        # Compute blended correction
+        # Perl: (clim_weight * corr_clim + quality_weight * corr_sade) / (clim_weight + quality_weight)
+        if quality_weight > 0:
+            blended = (
+                clim_weight * clim_corrections + quality_weight * corrections
+            ) / (clim_weight + quality_weight)
+        else:
+            # No quality weight: use climatological only
+            blended = clim_corrections.copy()
+
+        data_vars["cappi_blended_correction_db"] = (
+            ["range_km", "cappi_height"],
+            blended,
+        )
+
     coords = {
         "range_km": ranges_km,
         "cappi_height": list(cappi_heights_m),
@@ -422,6 +597,41 @@ def compute_vpr_correction(
         data_vars["elev_beam_height_m"] = (["range_km", "elevation"], elev_beam_heights)
         coords["elevation"] = list(elevation_angles_deg)
 
+        # Add climatological elevation corrections if computed
+        if include_clim and freezing_level_m is not None:
+            elev_clim_corrections = np.zeros((n_ranges, n_elevs))
+
+            for j, elev_deg in enumerate(elevation_angles_deg):
+                for i, range_km in enumerate(ranges_km):
+                    corr, _ = compute_correction_for_range(
+                        clim_fine_heights,
+                        clim_fine_z,
+                        z_ground_clim,
+                        range_km,
+                        elev_deg,
+                        antenna_height_m,
+                        beamwidth_deg,
+                    )
+                    elev_clim_corrections[i, j] = corr
+
+            data_vars["elev_clim_correction_db"] = (
+                ["range_km", "elevation"],
+                elev_clim_corrections,
+            )
+
+            # Compute blended elevation corrections
+            if quality_weight > 0:
+                elev_blended = (
+                    clim_weight * elev_clim_corrections + quality_weight * elev_corrections
+                ) / (clim_weight + quality_weight)
+            else:
+                elev_blended = elev_clim_corrections.copy()
+
+            data_vars["elev_blended_correction_db"] = (
+                ["range_km", "elevation"],
+                elev_blended,
+            )
+
     correction_ds = xr.Dataset(
         data_vars=data_vars,
         coords=coords,
@@ -429,6 +639,10 @@ def compute_vpr_correction(
             "radar": ds.attrs.get("radar", "unknown"),
             "timestamp": str(ds.attrs.get("timestamp", "")),
             "z_ground_dbz": z_ground_dbz,
+            "z_ground_clim_dbz": z_ground_clim_dbz,
+            "quality_weight": quality_weight,
+            "clim_weight": clim_weight if include_clim else None,
+            "freezing_level_m": freezing_level_m,
             "antenna_height_m": antenna_height_m,
             "beamwidth_deg": beamwidth_deg,
             "min_elevation_deg": min_elevation_deg,
@@ -438,6 +652,8 @@ def compute_vpr_correction(
     return VPRCorrectionResult(
         corrections=correction_ds,
         z_ground_dbz=z_ground_dbz,
+        z_ground_clim_dbz=z_ground_clim_dbz,
+        quality_weight=quality_weight,
         usable=True,
     )
 
