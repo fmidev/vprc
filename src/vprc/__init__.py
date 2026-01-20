@@ -31,6 +31,13 @@ from .bright_band import detect_bright_band, BrightBandResult
 from .vpr_correction import compute_vpr_correction, VPRCorrectionResult
 from .temporal import average_corrections
 from .climatology import generate_climatological_profile, get_clim_ground_reference
+from .composite import (
+    CompositeGrid,
+    RadarCorrection,
+    composite_corrections,
+    create_radar_correction,
+    inverse_distance_weight,
+)
 
 
 @dataclass
@@ -165,4 +172,9 @@ __all__ = [
     "compute_vpr_correction",
     "average_corrections",
     "read_vvp",
+    "CompositeGrid",
+    "RadarCorrection",
+    "composite_corrections",
+    "create_radar_correction",
+    "inverse_distance_weight",
 ]

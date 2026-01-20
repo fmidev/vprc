@@ -245,3 +245,5 @@ if __name__ == "__main__":
     if vpr_results:
         fig = plot_correction_comparison(vpr_results, averaged)
         fig2 = plot_z_ground_comparison(vpr_results, averaged)
+
+        fig.savefig("/tmp/vpr_correction_comparison.png", dpi=150)
