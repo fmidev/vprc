@@ -38,6 +38,11 @@ from .composite import (
     create_radar_correction,
     inverse_distance_weight,
 )
+from .io_export import (
+    write_correction_cog,
+    write_composite_cogs,
+    write_weights_cog,
+)
 
 
 @dataclass
@@ -177,4 +182,7 @@ __all__ = [
     "composite_corrections",
     "create_radar_correction",
     "inverse_distance_weight",
+    "write_correction_cog",
+    "write_composite_cogs",
+    "write_weights_cog",
 ]

@@ -25,6 +25,8 @@ dependencies = [
   "xarray",
   "numpy",
   "wradlib",
+  "rioxarray",
+  "pyproj",
 ]
 
 [project.urls]
