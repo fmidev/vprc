@@ -15,7 +15,9 @@ Python implementation of the **Koistinen & Pohjola VPR (Vertical Profile Reflect
 - **Spike smoothing** – Boundary correction and isolated echo removal
 - **Profile classification** – Automatic layer segmentation (Precipitation, Altostratus, Clear Air Echo, Clutter)
 - **Bright band detection** – Melting layer identification using gradient analysis
-- **VPR correction** – Range-dependent correction factors for CAPPI products
+- **VPR correction** – Range-dependent correction factors for CAPPI products and individual elevations
+- **Climatology blending** – Quality weight based climatology fallback for VPR correction
+- **Compositing** - Gridded correction fields for radar composite products
 - **TOML configuration** – Flexible radar metadata management with environment variable support
 
 ## Installation

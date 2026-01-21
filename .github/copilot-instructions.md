@@ -16,7 +16,7 @@ This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Pro
    - Format: Text files with header + tabular vertical profile data
    - Example: `tests/data/202508241100_KAN.VVP_40.txt` (Kankaanpää radar)
 
-2. **Parsing** ([src/vprc/io.py](src/vprc/io.py)):
+2. **Parsing** ([src/vprc/io/](src/vprc/io/)):
    - `read_vvp()` → Returns `xarray.Dataset`
 
 3. **Processing** (modular pipeline):
@@ -26,6 +26,8 @@ This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Pro
    - Bright band detection ([src/vprc/bright_band.py](src/vprc/bright_band.py))
    - VPR correction factor calculation ([src/vprc/vpr_correction.py](src/vprc/vpr_correction.py))
    - Temporal averaging ([src/vprc/temporal.py](src/vprc/temporal.py))
+   - Climatology blending ([src/vprc/climatology.py](src/vprc/climatology.py))
+   - Compositing VPR corrections ([src/vprc/composite.py](src/vprc/composite.py))
 
 4. **Output**: Corrected radar reflectivity profiles and VPR correction factors for operational use
 
@@ -82,7 +84,7 @@ def correct_vpr(vvp_file: str, freezing_level_m: float) -> dict:
 ### Testing
 
 - **Run tests**: `pytest tests/` (requires sample data in [tests/data/](tests/data/))
-- **Test structure**: One test file per module ([tests/test_io.py](tests/test_io.py) ↔ [src/vprc/io.py](src/vprc/io.py))
+- **Test structure**: One test file per module ([tests/test_clutter.py](tests/test_clutter.py) ↔ [src/vprc/clutter.py](src/vprc/clutter.py))
 - **Use fixtures**: Test data files in [tests/data/](tests/data/) (checked into git)
 - **Validation approach**: Compare against legacy Perl output ([tests/test_legacy_comparison.py](tests/test_legacy_comparison.py))
 - **Documentation**: See [tests/README.md](tests/README.md) for details on test structure and coverage
@@ -124,18 +126,6 @@ MK_THRESHOLD = -0.005  # Gradient threshold: -1 dBZ/200m (Perl $mkkynnys)
 
 ## Development Workflow
 
-### Current Implementation Status
-
-Core algorithm modules are **implemented and tested**:
-- ✅ VVP parsing ([src/vprc/io.py](src/vprc/io.py))
-- ✅ Ground clutter removal ([src/vprc/clutter.py](src/vprc/clutter.py))
-- ✅ Spike smoothing ([src/vprc/smoothing.py](src/vprc/smoothing.py))
-- ✅ Profile classification ([src/vprc/classification.py](src/vprc/classification.py))
-- ✅ Bright band detection ([src/vprc/bright_band.py](src/vprc/bright_band.py))
-- ✅ VPR correction calculation ([src/vprc/vpr_correction.py](src/vprc/vpr_correction.py))
-- ✅ Temporal averaging ([src/vprc/temporal.py](src/vprc/temporal.py))
-- ✅ End-to-end pipeline ([src/vprc/__init__.py](src/vprc/__init__.py))
-
 ### Extending the Algorithm
 
 When implementing new features or algorithm improvements:
@@ -158,9 +148,14 @@ def detect_bright_band(ds: xr.Dataset, freezing_level_m: float) -> BrightBandRes
 
 ## File Organization
 
+What's currently implemented:
+
 **Core implementation** ([src/vprc/](src/vprc/)):
 - [__init__.py](src/vprc/__init__.py) - Main API and pipeline orchestration
-- [io.py](src/vprc/io.py) - VVP file parsing
+- [io/](src/vprc/io/) - I/O module (VVP parsing and GeoTIFF export)
+  - [vvp.py](src/vprc/io/vvp.py) - VVP file parsing
+  - [geotiff.py](src/vprc/io/geotiff.py) - GeoTIFF export (Cloud Optimized GeoTIFFs)
+  - [__init__.py](src/vprc/io/__init__.py) - Public API shortcuts
 - [clutter.py](src/vprc/clutter.py) - Ground clutter removal
 - [smoothing.py](src/vprc/smoothing.py) - Spike smoothing
 - [classification.py](src/vprc/classification.py) - Profile classification
@@ -180,6 +175,7 @@ def detect_bright_band(ds: xr.Dataset, freezing_level_m: float) -> BrightBandRes
 
 **Documentation**:
 - [docs/quickstart.md](docs/quickstart.md) - Usage examples
+- [docs/introduction.md](docs/introduction.md) - Algorithm overview
 - [docs/configuration.md](docs/configuration.md) - TOML configuration guide
 - [tests/README.md](tests/README.md) - Test suite documentation
 
@@ -192,6 +188,7 @@ def detect_bright_band(ds: xr.Dataset, freezing_level_m: float) -> BrightBandRes
 **Development tools** not in version control ([local/](local/)):
 - [scripts/](local/scripts/) - Development utilities
 - [data/](local/data/) - Additional test data
+- [output/](local/output/) - Output files
 
 ## Common Pitfalls
 
