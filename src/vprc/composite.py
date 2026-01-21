@@ -20,7 +20,7 @@ from .vpr_correction import VPRCorrectionResult
 
 # Type alias for weight functions
 # Signature: (distances, quality_weights, **kwargs) -> weights
-WeightFunc = Callable[[np.ndarray, np.ndarray], np.ndarray]
+WeightFunc = Callable[..., np.ndarray]
 
 
 class RadarLocation(Protocol):
@@ -123,6 +123,7 @@ def inverse_distance_weight(
     quality_weights: np.ndarray,
     power: float = 2.0,
     min_distance_m: float = 1000.0,
+    max_distance_m: float = 250_000.0,
 ) -> np.ndarray:
     """Compute inverse distance weights scaled by quality.
 
@@ -141,7 +142,7 @@ def inverse_distance_weight(
     d = np.maximum(distances_m, min_distance_m)
 
     # IDW with quality scaling
-    weights = quality_weights / np.power(d, power)
+    weights = quality_weights * (1 / np.power(d, power) - 1 / np.power(max_distance_m, power))
 
     return weights
 
@@ -281,7 +282,7 @@ def composite_corrections(
         )
 
         # Compute weights (quality scaled by distance)
-        w = weight_func(distances[i], quality_weights[i])
+        w = weight_func(distances[i], quality_weights[i], max_distance_m=max_range_km * 1000)
 
         # Zero weight beyond max range
         w[distances[i] > max_range_km * 1000] = 0.0

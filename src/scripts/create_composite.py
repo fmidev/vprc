@@ -77,7 +77,7 @@ def extract_timestamp(filepath: Path) -> str:
 @click.option(
     "--output-dir", "-o",
     type=click.Path(path_type=Path),
-    default=Path("output"),
+    default=Path("local/output"),
     show_default=True,
     help="Output directory for COG files.",
 )
