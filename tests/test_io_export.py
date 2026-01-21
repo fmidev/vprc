@@ -5,7 +5,7 @@ import pytest
 import xarray as xr
 from pathlib import Path
 
-from vprc.io_export import (
+from vprc.io.geotiff import (
     prepare_for_export,
     write_correction_cog,
     write_composite_cogs,

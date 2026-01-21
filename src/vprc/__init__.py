@@ -23,7 +23,7 @@ from pathlib import Path
 
 import xarray as xr
 
-from .io import read_vvp
+from .io import read_vvp  # Used internally by process_vvp
 from .clutter import remove_ground_clutter
 from .smoothing import smooth_spikes
 from .classification import classify_profile, ProfileClassification, LayerType
@@ -37,11 +37,6 @@ from .composite import (
     composite_corrections,
     create_radar_correction,
     inverse_distance_weight,
-)
-from .io_export import (
-    write_correction_cog,
-    write_composite_cogs,
-    write_weights_cog,
 )
 
 
@@ -176,13 +171,9 @@ __all__ = [
     "VPRCorrectionResult",
     "compute_vpr_correction",
     "average_corrections",
-    "read_vvp",
     "CompositeGrid",
     "RadarCorrection",
     "composite_corrections",
     "create_radar_correction",
     "inverse_distance_weight",
-    "write_correction_cog",
-    "write_composite_cogs",
-    "write_weights_cog",
 ]

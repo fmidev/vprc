@@ -1,7 +1,4 @@
-#!/usr/bin/env python3
-"""
-Parser for IRIS VVP (Velocity Volume Processing) prodx files.
-"""
+"""Parser for IRIS VVP (Velocity Volume Processing) prodx files."""
 
 import os
 import tomllib
@@ -41,8 +38,8 @@ def _load_radar_defaults() -> dict:
                 f"VPRC_RADAR_CONFIG points to non-existent file: {config_path}"
             )
     else:
-        # Use package default
-        config_file = Path(__file__).parent / 'radar_defaults.toml'
+        # Use package default (one level up from io/ submodule)
+        config_file = Path(__file__).parent.parent / 'radar_defaults.toml'
 
     with open(config_file, 'rb') as f:
         return tomllib.load(f)
