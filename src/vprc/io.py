@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Parser for IRIS VVP (Vertical Velocity Profile) prodx files.
+Parser for IRIS VVP (Velocity Volume Processing) prodx files.
 """
 
 import os

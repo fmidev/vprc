@@ -12,7 +12,7 @@ This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Pro
 
 ### Data Flow Pipeline
 
-1. **Input**: IRIS VVP (Vertical Velocity Profile) prodx files from radar stations
+1. **Input**: IRIS VVP (Velocity Volume Processing) prodx files from radar stations
    - Format: Text files with header + tabular vertical profile data
    - Example: `tests/data/202508241100_KAN.VVP_40.txt` (Kankaanpää radar)
 
@@ -159,6 +159,7 @@ def detect_bright_band(ds: xr.Dataset, freezing_level_m: float) -> BrightBandRes
 ## File Organization
 
 **Core implementation** ([src/vprc/](src/vprc/)):
+- [__init__.py](src/vprc/__init__.py) - Main API and pipeline orchestration
 - [io.py](src/vprc/io.py) - VVP file parsing
 - [clutter.py](src/vprc/clutter.py) - Ground clutter removal
 - [smoothing.py](src/vprc/smoothing.py) - Spike smoothing
@@ -166,6 +167,7 @@ def detect_bright_band(ds: xr.Dataset, freezing_level_m: float) -> BrightBandRes
 - [bright_band.py](src/vprc/bright_band.py) - Bright band detection
 - [vpr_correction.py](src/vprc/vpr_correction.py) - VPR correction calculation
 - [temporal.py](src/vprc/temporal.py) - Temporal averaging
+- [composite.py](src/vprc/composite.py) - Compositing VPR corrections
 - [constants.py](src/vprc/constants.py) - Algorithm constants (MDS, STEP, etc.)
 - [radar_defaults.toml](src/vprc/radar_defaults.toml) - Canonical radar configurations
 
