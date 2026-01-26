@@ -108,14 +108,9 @@ def correct_vpr(vvp_file: str, freezing_level_m: float) -> dict:
 3. **Match numerical results**: Validate against Perl output, but code structure can differ significantly
 4. **No hardcoding**: Use configuration files and input parameters. The radar network will evolve over time.
 
-**Key algorithm constants** (from `allprof_prodx2.pl`):
-```python
-MDS = -45              # Minimum detectable signal [dBZ]
-STEP = 200             # Vertical resolution [m]
-MK_THRESHOLD = -0.005  # Gradient threshold: -1 dBZ/200m (Perl $mkkynnys)
-```
+### Profile types
 
-**Profile classification**: `Prec.` (precipitation), `As` (altostratus), `CAE` (clear air echo), `Clutter`
+`Prec.` (precipitation), `As` (altostratus), `CAE` (clear air echo), `Clutter`
 
 ### Dependencies
 
@@ -134,7 +129,7 @@ When implementing new features or algorithm improvements:
 2. **Research existing solutions**: Check if `wradlib`, `numpy`, or other packages provide relevant functions
 3. **Create/modify module**: Update existing module in [src/vprc/](src/vprc/) using pythonic patterns
 4. **Write/update tests**: Add to corresponding [tests/test_<module>.py](tests/) with validation against Perl output
-5. **Update documentation**: Add user-facing docs to [docs/](docs/) if needed
+5. **Update documentation**: On major changes, update [docs/](docs/) and this instruction file
 
 Example function signature pattern:
 ```python
