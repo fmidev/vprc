@@ -35,6 +35,9 @@ LABEL org.opencontainers.image.title="vprc"
 LABEL org.opencontainers.image.description="FMI VPR correction for weather radar data"
 LABEL org.opencontainers.image.source="https://github.com/fmidev/vprc"
 
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y libexpat1 && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash vprc
 WORKDIR /home/vprc
