@@ -35,6 +35,7 @@ from .composite import (
     CompositeGrid,
     RadarCorrection,
     composite_corrections,
+    create_empty_composite,
     create_radar_correction,
     inverse_distance_weight,
 )
@@ -174,6 +175,7 @@ __all__ = [
     "CompositeGrid",
     "RadarCorrection",
     "composite_corrections",
+    "create_empty_composite",
     "create_radar_correction",
     "inverse_distance_weight",
 ]

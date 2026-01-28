@@ -233,6 +233,45 @@ def interpolate_correction_to_grid(
     return interp_corr
 
 
+def create_empty_composite(grid: CompositeGrid, radar_codes: list[str] | None = None) -> xr.Dataset:
+    """Create an empty composite Dataset with all NaN values.
+
+    Used when no radars have usable VPR corrections (e.g., no precipitation).
+    This produces a valid COG-compatible Dataset that can be written to GeoTIFF.
+
+    Args:
+        grid: Target composite grid
+        radar_codes: Optional list of radar codes that were attempted
+
+    Returns:
+        xarray Dataset with:
+        - correction_db: All NaN values
+        - weight_sum: All zeros
+        - n_radars: All zeros
+    """
+    ny, nx = len(grid.y), len(grid.x)
+
+    return xr.Dataset(
+        {
+            "correction_db": (["y", "x"], np.full((ny, nx), np.nan)),
+            "weight_sum": (["y", "x"], np.zeros((ny, nx))),
+            "n_radars": (["y", "x"], np.zeros((ny, nx), dtype=np.int8)),
+        },
+        coords={
+            "x": grid.x,
+            "y": grid.y,
+        },
+        attrs={
+            "crs": str(grid.crs),
+            "crs_epsg": grid.crs.to_epsg(),
+            "correction_variable": "none",
+            "max_range_km": 0.0,
+            "radar_codes": radar_codes or [],
+            "empty_composite": True,
+        },
+    )
+
+
 def composite_corrections(
     radars: list[RadarCorrection],
     grid: CompositeGrid,
@@ -246,8 +285,12 @@ def composite_corrections(
     the specified weight function. For areas covered by only one radar,
     that radar's correction is used directly.
 
+    If no radars are provided (e.g., no precipitation detected by any radar),
+    returns a valid empty composite with all NaN corrections. This is a valid
+    operational scenario, not an error.
+
     Args:
-        radars: List of RadarCorrection objects with VPR results
+        radars: List of RadarCorrection objects with VPR results (may be empty)
         grid: Target composite grid
         weight_func: Function to compute weights from distances and quality
         correction_var: Name of correction variable to composite
@@ -255,12 +298,13 @@ def composite_corrections(
 
     Returns:
         xarray Dataset with:
-        - correction_db: Composite VPR correction (dB)
+        - correction_db: Composite VPR correction (dB), NaN where no coverage
         - weight_sum: Total weight at each point (for QC)
         - n_radars: Number of radars contributing at each point
     """
+    # Handle empty radar list gracefully (no precipitation scenario)
     if not radars:
-        raise ValueError("At least one radar correction required")
+        return create_empty_composite(grid)
 
     n_radars = len(radars)
     ny, nx = len(grid.y), len(grid.x)
@@ -321,6 +365,7 @@ def composite_corrections(
             "correction_variable": correction_var,
             "max_range_km": max_range_km,
             "radar_codes": [r.radar_code for r in radars],
+            "empty_composite": False,
         },
     )
 

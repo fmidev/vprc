@@ -23,9 +23,10 @@ from vprc import (
     process_vvp,
     CompositeGrid,
     composite_corrections,
-    write_composite_cogs,
+    create_empty_composite,
 )
 from vprc.composite import RadarCorrection
+from vprc.io import write_composite_cogs, Compression
 
 # Default test files
 DEFAULT_FILES = (
@@ -141,12 +142,13 @@ def main(
 
     # Process each VVP file
     radar_corrections = []
+    attempted_radars = []  # Track all attempted radars for grid bounds
     timestamp = None
 
     for filepath in files:
         if not filepath.exists():
-            click.echo(f"Warning: File not found: {filepath}", err=True)
-            continue
+            # Missing input file is an error - it was explicitly requested
+            raise click.ClickException(f"Input file not found: {filepath}")
 
         radar_code = extract_radar_code(filepath)
         if timestamp is None:
@@ -161,6 +163,7 @@ def main(
             continue
 
         lat, lon = RADAR_COORDS[radar_code]
+        attempted_radars.append((radar_code, lat, lon))
 
         # Process through pipeline
         try:
@@ -170,7 +173,7 @@ def main(
             continue
 
         if result.vpr_correction is None:
-            click.echo(f"Warning: No VPR correction for {radar_code} (not usable)", err=True)
+            click.echo(f"Info: No VPR correction for {radar_code} (profile not usable)", err=True)
             continue
 
         # Create radar correction object
@@ -195,68 +198,83 @@ def main(
 
         radar_corrections.append(radar_corr)
 
-    if not radar_corrections:
-        raise click.ClickException("No valid radar corrections to composite")
+    # Determine grid bounds from attempted radars (or use Finland fallback)
+    if attempted_radars:
+        # Use locations of all attempted radars for grid bounds
+        lats = [r[1] for r in attempted_radars]
+        lons = [r[2] for r in attempted_radars]
+        attempted_codes = [r[0] for r in attempted_radars]
 
-    click.echo(f"\nCreating composite from {len(radar_corrections)} radars:")
-    for rc in radar_corrections:
-        click.echo(f"  {rc.radar_code}: quality={rc.quality_weight:.3f}")
+        # Transform to ETRS-TM35FIN for grid bounds
+        from pyproj import CRS, Transformer
+        transformer = Transformer.from_crs(CRS.from_epsg(4326), CRS.from_epsg(3067), always_xy=True)
 
-    # Compute grid bounds from radar locations
-    lats = [rc.latitude for rc in radar_corrections]
-    lons = [rc.longitude for rc in radar_corrections]
+        xs, ys = [], []
+        for lat, lon in zip(lats, lons):
+            x, y = transformer.transform(lon, lat)
+            xs.append(x)
+            ys.append(y)
 
-    # Transform to ETRS-TM35FIN for grid bounds
-    from pyproj import CRS, Transformer
-    transformer = Transformer.from_crs(CRS.from_epsg(4326), CRS.from_epsg(3067), always_xy=True)
+        # Extend bounds by max range
+        margin = max_range * 1000  # km to m
+        xmin = min(xs) - margin
+        xmax = max(xs) + margin
+        ymin = min(ys) - margin
+        ymax = max(ys) + margin
 
-    xs, ys = [], []
-    for lat, lon in zip(lats, lons):
-        x, y = transformer.transform(lon, lat)
-        xs.append(x)
-        ys.append(y)
+        if verbose:
+            click.echo(f"\nGrid bounds (ETRS-TM35FIN):")
+            click.echo(f"  X: {xmin:.0f} to {xmax:.0f}")
+            click.echo(f"  Y: {ymin:.0f} to {ymax:.0f}")
 
-    # Extend bounds by max range
-    margin = max_range * 1000  # km to m
-    xmin = min(xs) - margin
-    xmax = max(xs) + margin
-    ymin = min(ys) - margin
-    ymax = max(ys) + margin
-
-    if verbose:
-        click.echo(f"\nGrid bounds (ETRS-TM35FIN):")
-        click.echo(f"  X: {xmin:.0f} to {xmax:.0f}")
-        click.echo(f"  Y: {ymin:.0f} to {ymax:.0f}")
-
-    grid = CompositeGrid.from_bounds(
-        xmin, xmax, ymin, ymax,
-        resolution_m=resolution,
-    )
+        grid = CompositeGrid.from_bounds(
+            xmin, xmax, ymin, ymax,
+            resolution_m=resolution,
+        )
+    else:
+        # No radars at all - use Finland-wide grid as fallback
+        click.echo("Warning: No radar locations available, using Finland-wide grid", err=True)
+        grid = CompositeGrid.for_finland(resolution_m=resolution)
+        attempted_codes = []
 
     click.echo(f"Grid size: {len(grid.x)} x {len(grid.y)} = {len(grid.x) * len(grid.y)} cells")
 
-    # Create composite
-    composite = composite_corrections(
-        radar_corrections,
-        grid,
-        max_range_km=max_range,
-    )
+    if not radar_corrections:
+        # No usable corrections - this is a valid scenario (e.g., no precipitation)
+        click.echo("\nNo usable VPR corrections (no precipitation detected by any radar)")
+        click.echo("Creating empty composite with no corrections...")
+        composite = create_empty_composite(grid, radar_codes=attempted_codes)
+    else:
+        click.echo(f"\nCreating composite from {len(radar_corrections)} radars:")
+        for rc in radar_corrections:
+            click.echo(f"  {rc.radar_code}: quality={rc.quality_weight:.3f}")
+
+        # Create composite
+        composite = composite_corrections(
+            radar_corrections,
+            grid,
+            max_range_km=max_range,
+        )
 
     # Export COGs
     output_dir.mkdir(parents=True, exist_ok=True)
 
     prefix = timestamp or "composite"
+    compress_typed: Compression = compress.upper()  # type: ignore[assignment]
     outputs = write_composite_cogs(
         composite,
         output_dir,
         prefix=prefix,
-        compress=compress.upper(),
+        compress=compress_typed,
     )
 
     click.echo(f"\nCreated {len(outputs)} COG files:")
     for var, path in outputs.items():
         size_kb = path.stat().st_size / 1024
         click.echo(f"  {path.name} ({size_kb:.1f} KB)")
+
+    if composite.attrs.get("empty_composite", False):
+        click.echo("\nNote: These are empty COGs (no precipitation corrections).")
 
     click.echo(f"\nDone! Output directory: {output_dir}")
 

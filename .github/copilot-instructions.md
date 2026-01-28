@@ -52,12 +52,13 @@ Ship a `radar_defaults.toml` with the package containing canonical radar configu
 
 ## Airflow Integration
 
-This package is deployed as a containerized service in FMI's Airflow radar production system. The integration pattern:
+This package is deployed as a containerized service in FMI's Airflow radar production system. The main output will be VPR correction composites. The integration pattern:
 
 - **Deployment**: Docker container with this package installed (built via [Containerfile](Containerfile), image `quay.io/fmi/vprc`)
 - **Airflow tasks**: Use `@task.docker` decorator to invoke Python API
 - **Configuration**: Radar metadata from TOML files ([src/vprc/radar_defaults.toml](src/vprc/radar_defaults.toml)), runtime parameters from Airflow
 - **No DAGs in this repo**: Workflow orchestration lives in the separate Airflow radar production repository
+- **Robustness**: Handle missing/corrupted input files and edge cases gracefully, log processing steps
 
 Example Airflow task (external to this repo):
 ```python

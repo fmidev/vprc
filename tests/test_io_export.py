@@ -232,3 +232,87 @@ class TestWriteWeightsCog:
 
         assert outputs["weight_sum"].name == "test_weight_sum.tif"
         assert outputs["n_radars"].name == "test_n_radars.tif"
+
+
+class TestEmptyCompositeExport:
+    """Tests for exporting empty composites (no precipitation scenario)."""
+
+    def _create_empty_composite(self) -> xr.Dataset:
+        """Create an empty composite with all NaN corrections."""
+        x = np.arange(200_000, 300_000, 10_000)
+        y = np.arange(6_700_000, 6_800_000, 10_000)
+
+        ds = xr.Dataset(
+            {
+                "correction_db": (["y", "x"], np.full((len(y), len(x)), np.nan)),
+                "weight_sum": (["y", "x"], np.zeros((len(y), len(x)))),
+                "n_radars": (["y", "x"], np.zeros((len(y), len(x)), dtype=np.int8)),
+            },
+            coords={
+                "x": x,
+                "y": y,
+            },
+            attrs={
+                "crs": "EPSG:3067",
+                "crs_epsg": 3067,
+                "max_range_km": 0.0,
+                "radar_codes": ["KAN", "VIH"],
+                "empty_composite": True,
+            },
+        )
+        return ds
+
+    def test_empty_composite_creates_valid_cog(self, tmp_path):
+        """Empty composite can be exported to valid COG."""
+        import rasterio
+
+        ds = self._create_empty_composite()
+        output_path = tmp_path / "empty_correction.tif"
+
+        write_correction_cog(ds, output_path)
+
+        assert output_path.exists()
+
+        with rasterio.open(output_path) as src:
+            assert src.driver == "GTiff"
+            assert src.crs.to_epsg() == 3067
+            assert src.count == 1
+            data = src.read(1)
+            # All values should be NaN (nodata)
+            assert np.all(np.isnan(data))
+
+    def test_empty_composite_exports_all_files(self, tmp_path):
+        """write_composite_cogs works with empty composite."""
+        ds = self._create_empty_composite()
+
+        outputs = write_composite_cogs(ds, tmp_path, prefix="empty")
+
+        assert len(outputs) == 3
+        for path in outputs.values():
+            assert path.exists()
+
+    def test_empty_composite_weight_sum_is_zero(self, tmp_path):
+        """Weight sum in empty composite is all zeros."""
+        import rasterio
+
+        ds = self._create_empty_composite()
+        output_path = tmp_path / "weight_sum.tif"
+
+        write_correction_cog(ds, output_path, variable="weight_sum")
+
+        with rasterio.open(output_path) as src:
+            data = src.read(1)
+            assert np.all(data == 0)
+
+    def test_empty_composite_n_radars_is_zero(self, tmp_path):
+        """n_radars in empty composite is all zeros."""
+        import rasterio
+
+        ds = self._create_empty_composite()
+        output_path = tmp_path / "n_radars.tif"
+
+        write_correction_cog(ds, output_path, variable="n_radars")
+
+        with rasterio.open(output_path) as src:
+            data = src.read(1)
+            assert np.all(data == 0)

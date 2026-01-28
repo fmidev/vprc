@@ -9,6 +9,7 @@ from vprc.composite import (
     RadarCorrection,
     compute_radar_distances,
     composite_corrections,
+    create_empty_composite,
     create_radar_correction,
     inverse_distance_weight,
     interpolate_correction_to_grid,
@@ -238,6 +239,92 @@ class TestCompositeCorrections:
 
         # All should be NaN - too far from radar
         assert np.isnan(result["correction_db"].values).all()
+
+
+class TestEmptyComposite:
+    """Tests for handling empty/no-precipitation scenarios."""
+
+    def test_empty_radar_list_returns_valid_dataset(self):
+        """Empty radar list produces valid Dataset with NaN corrections."""
+        grid = CompositeGrid.from_bounds(
+            200_000, 250_000, 6_800_000, 6_850_000, resolution_m=5_000
+        )
+
+        result = composite_corrections([], grid)
+
+        # Should have correct shape
+        assert result["correction_db"].shape == (len(grid.y), len(grid.x))
+
+        # All corrections should be NaN
+        assert np.isnan(result["correction_db"].values).all()
+
+        # Weight sum and n_radars should be zero
+        assert (result["weight_sum"].values == 0).all()
+        assert (result["n_radars"].values == 0).all()
+
+        # Should have empty_composite flag
+        assert result.attrs["empty_composite"] is True
+
+    def test_create_empty_composite_produces_valid_grid(self):
+        """create_empty_composite produces a valid exportable Dataset."""
+        grid = CompositeGrid.from_bounds(
+            100_000, 200_000, 6_700_000, 6_800_000, resolution_m=10_000
+        )
+
+        result = create_empty_composite(grid, radar_codes=["KAN", "VIH"])
+
+        # Check shape matches grid
+        assert result["correction_db"].shape == (len(grid.y), len(grid.x))
+
+        # All corrections should be NaN
+        assert np.isnan(result["correction_db"].values).all()
+
+        # Metadata should be preserved
+        assert result.attrs["empty_composite"] is True
+        assert result.attrs["radar_codes"] == ["KAN", "VIH"]
+        assert "crs_epsg" in result.attrs
+
+    def test_create_empty_composite_has_cog_compatible_structure(self):
+        """Empty composite has required structure for COG export."""
+        grid = CompositeGrid.for_finland(resolution_m=50_000)
+
+        result = create_empty_composite(grid)
+
+        # Required variables exist
+        assert "correction_db" in result
+        assert "weight_sum" in result
+        assert "n_radars" in result
+
+        # Required coordinates exist
+        assert "x" in result.coords
+        assert "y" in result.coords
+
+        # CRS info present
+        assert result.attrs.get("crs_epsg") is not None
+
+    def test_all_radars_zero_quality_produces_nan_composite(self):
+        """When all radars have zero quality, result is all NaN."""
+        grid = CompositeGrid.from_bounds(
+            200_000, 300_000, 6_750_000, 6_850_000, resolution_m=10_000
+        )
+
+        mock_corr = _create_mock_correction(constant_db=5.0)
+        radars = [
+            RadarCorrection("KAN", *RADAR_COORDS["KAN"], mock_corr, 0.0),
+            RadarCorrection("VIH", *RADAR_COORDS["VIH"], mock_corr, 0.0),
+        ]
+
+        result = composite_corrections(radars, grid, max_range_km=300)
+
+        # All corrections should be NaN
+        assert np.isnan(result["correction_db"].values).all()
+
+        # But we still have the radar codes in metadata
+        assert "KAN" in result.attrs["radar_codes"]
+        assert "VIH" in result.attrs["radar_codes"]
+
+        # Not marked as empty_composite (radars were provided, just zero quality)
+        assert result.attrs["empty_composite"] is False
 
 
 class TestWithRealData:
