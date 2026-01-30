@@ -39,6 +39,13 @@ from .composite import (
     create_radar_correction,
     inverse_distance_weight,
 )
+from .config import (
+    get_radar_metadata,
+    get_radar_coords,
+    get_network_config,
+    get_defaults,
+    list_radar_codes,
+)
 
 
 @dataclass
@@ -178,4 +185,9 @@ __all__ = [
     "create_empty_composite",
     "create_radar_correction",
     "inverse_distance_weight",
+    "get_radar_metadata",
+    "get_radar_coords",
+    "get_network_config",
+    "get_defaults",
+    "list_radar_codes",
 ]

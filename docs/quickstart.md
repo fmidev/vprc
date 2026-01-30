@@ -26,18 +26,28 @@ if result.usable_for_vpr:
         print(f"Correction at 100 km: {corr.sel(range_km=100).values:.2f} dB")
 ```
 
-## With Radar Metadata Override
+## Accessing Radar Configuration
 
-Radar-specific parameters can be passed directly or loaded from configuration files. See [configuration.md](configuration.md) for details.
+Use the config API to retrieve radar metadata programmatically:
 
 ```python
+from vprc import get_radar_metadata, get_radar_coords, process_vvp
+
+# Get radar coordinates for compositing
+lat, lon = get_radar_coords('KAN')
+
+# Get all metadata
+meta = get_radar_metadata('VIH')
+print(meta['antenna_height_m'])  # 181
+
+# Override runtime parameters (e.g., freezing level from NWP)
 result = process_vvp(
-    path,
-    antenna_height_m=174,
-    lowest_level_offset_m=126,
+    "202508241100_KAN.VVP_40.txt",
     freezing_level_m=2000,
 )
 ```
+
+See [configuration.md](configuration.md) for details on TOML structure and precedence.
 
 ## Low-Level API
 

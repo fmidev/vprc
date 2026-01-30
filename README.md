@@ -18,7 +18,7 @@ Python implementation of the **Koistinen & Pohjola VPR (Vertical Profile Reflect
 - **VPR correction** – Range-dependent correction factors for CAPPI products and individual elevations
 - **Climatology blending** – Quality weight based climatology fallback for VPR correction
 - **Compositing** - Gridded correction fields for radar composite products
-- **TOML configuration** – Flexible radar metadata management with environment variable support
+- **TOML configuration** – Flexible radar metadata management with programmatic API access
 
 ## Installation
 

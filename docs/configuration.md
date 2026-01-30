@@ -56,12 +56,31 @@ Values are resolved in this order (highest to lowest):
 
 ## Usage Examples
 
-### Basic Usage
+### Accessing Radar Metadata
+
+```python
+from vprc import get_radar_metadata, get_radar_coords, list_radar_codes
+
+# Get all metadata for a radar
+meta = get_radar_metadata('KAN')
+print(meta)  # {'name': 'KANKAANPAA', 'antenna_height_m': 174, ...}
+
+# Get just coordinates
+lat, lon = get_radar_coords('VIH')
+print(f"Vihti radar: {lat}°N, {lon}°E")
+
+# List all configured radars
+for code in list_radar_codes():
+    coords = get_radar_coords(code)
+    print(f"{code}: {coords}")
+```
+
+### Basic VVP Processing
 
 ```python
 from vprc import read_vvp
 
-# Uses package defaults
+# Uses package defaults from radar_defaults.toml
 ds = read_vvp('202508241100_KAN.VVP_40.txt')
 print(ds.attrs['antenna_height_m'])  # 174
 print(ds.attrs['beamwidth_deg'])     # 0.95 (from [defaults])

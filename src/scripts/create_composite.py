@@ -24,6 +24,7 @@ from vprc import (
     CompositeGrid,
     composite_corrections,
     create_empty_composite,
+    get_radar_coords,
 )
 from vprc.composite import RadarCorrection
 from vprc.io import write_composite_cogs, Compression
@@ -34,21 +35,6 @@ DEFAULT_FILES = (
     "tests/data/202308281000_KOR.VVP_40.txt",
     "tests/data/202308281000_VIH.VVP_40.txt",
 )
-
-# Radar coordinates from radar_defaults.toml
-RADAR_COORDS = {
-    "KAN": (61.81085, 22.50204),
-    "KANKAANPAA": (61.81085, 22.50204),
-    "KOR": (60.128469, 21.643379),
-    "VIH": (60.5561915, 24.49558603),
-    "VIHTI": (60.5561915, 24.49558603),
-    "VAN": (60.270620, 24.869024),
-    "VANTAA": (60.270620, 24.869024),
-    "KUO": (62.862598, 27.381468),
-    "KUOPIO": (62.862598, 27.381468),
-    "VIM": (63.104835, 23.82086),
-    "VIMPELI": (63.104835, 23.82086),
-}
 
 
 def extract_radar_code(filepath: Path) -> str:
@@ -157,12 +143,13 @@ def main(
         if verbose:
             click.echo(f"Processing {filepath} (radar: {radar_code})")
 
-        # Get radar coordinates
-        if radar_code not in RADAR_COORDS:
+        # Get radar coordinates from config
+        coords = get_radar_coords(radar_code)
+        if coords is None:
             click.echo(f"Warning: Unknown radar code '{radar_code}', skipping", err=True)
             continue
 
-        lat, lon = RADAR_COORDS[radar_code]
+        lat, lon = coords
         attempted_radars.append((radar_code, lat, lon))
 
         # Process through pipeline

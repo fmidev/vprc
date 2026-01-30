@@ -33,13 +33,25 @@ This is a Python reimplementation of the **Koistinen & Pohjola VPR (Vertical Pro
 
 ### Radar-Specific Metadata
 
-Each radar station has unique characteristics (antenna height, beam angles, horizon obstructions). Pass this metadata via `radar_metadata` dict to `read_vvp()`:
+Each radar station has unique characteristics (antenna height, beam angles, horizon obstructions). Access radar metadata via the config API:
+
+```python
+from vprc import get_radar_metadata, get_radar_coords
+
+# Get all metadata for a radar
+meta = get_radar_metadata('KAN')
+# {'name': 'KANKAANPAA', 'antenna_height_m': 174, ...}
+
+# Get just the coordinates
+lat, lon = get_radar_coords('KAN')
+# (61.81085, 22.50204)
+```
+
+Metadata can be overridden at runtime via `radar_metadata` dict to `read_vvp()`:
 
 ```python
 radar_meta = {
-    'antenna_height_m': 174,      # Antenna elevation above sea level
-    'lowest_level_offset_m': 126,    # Offset from nearest profile level
-    'freezing_level_m': 2000,        # From NWP data
+    'freezing_level_m': 2000,  # From NWP data
 }
 ```
 
@@ -47,6 +59,13 @@ radar_meta = {
 1. Runtime parameters from Airflow (operational deployment)
 2. Static TOML files (development/testing)
 3. Default values from reference implementation (see beginning of `allprof_prodx2.pl`)
+
+**Config API functions** ([config.py](src/vprc/config.py)):
+- `get_radar_metadata(code)` → Full radar dict
+- `get_radar_coords(code)` → (lat, lon) tuple
+- `get_network_config()` → Network-wide settings
+- `get_defaults()` → Default radar parameters
+- `list_radar_codes()` → All configured radar codes
 
 Ship a `radar_defaults.toml` with the package containing canonical radar configurations.
 
@@ -148,6 +167,7 @@ What's currently implemented:
 
 **Core implementation** ([src/vprc/](src/vprc/)):
 - [__init__.py](src/vprc/__init__.py) - Main API and pipeline orchestration
+- [config.py](src/vprc/config.py) - Radar metadata lookup from TOML
 - [io/](src/vprc/io/) - I/O module (VVP parsing and GeoTIFF export)
   - [vvp.py](src/vprc/io/vvp.py) - VVP file parsing
   - [geotiff.py](src/vprc/io/geotiff.py) - GeoTIFF export (Cloud Optimized GeoTIFFs)
