@@ -117,6 +117,85 @@ class CompositeGrid:
             crs=crs,
         )
 
+    @classmethod
+    def for_radars(
+        cls,
+        radar_codes: list[str] | None = None,
+        range_km: float = 251.0,
+        resolution_m: float = 1000.0,
+        crs: CRS | int = 3067,
+    ) -> "CompositeGrid":
+        """Create grid covering specified radars with given range.
+
+        Computes the bounding box that encompasses all specified radar
+        locations plus a margin equal to range_km in all directions.
+
+        Args:
+            radar_codes: List of radar codes to include. If None, uses all
+                configured radars with valid coordinates.
+            range_km: Range around each radar to include (km). Default 251km
+                covers 250km radar range plus 1km margin.
+            resolution_m: Grid cell size in meters
+            crs: Target CRS (default EPSG:3067 ETRS-TM35FIN)
+
+        Returns:
+            CompositeGrid covering all specified radars
+
+        Raises:
+            ValueError: If radar_codes is empty or no radars with valid
+                coordinates are found
+        """
+        from .config import get_radar_coords, list_radar_codes
+
+        if isinstance(crs, int):
+            crs = CRS.from_epsg(crs)
+
+        # Get radar codes if not specified
+        if radar_codes is None:
+            radar_codes = list_radar_codes()
+
+        if not radar_codes:
+            raise ValueError("radar_codes cannot be empty")
+
+        # Collect coordinates (skip radars without coords)
+        coords = []
+        for code in radar_codes:
+            coord = get_radar_coords(code)
+            if coord is not None:
+                coords.append(coord)
+
+        if not coords:
+            raise ValueError(
+                f"No radars with valid coordinates found in: {radar_codes}"
+            )
+
+        # Transform from WGS84 to target CRS
+        transformer = Transformer.from_crs(
+            CRS.from_epsg(4326), crs, always_xy=True
+        )
+
+        xs, ys = [], []
+        for lat, lon in coords:
+            x, y = transformer.transform(lon, lat)  # lon, lat for always_xy
+            xs.append(x)
+            ys.append(y)
+
+        # Compute bounds with range margin
+        margin_m = range_km * 1000
+        xmin = min(xs) - margin_m
+        xmax = max(xs) + margin_m
+        ymin = min(ys) - margin_m
+        ymax = max(ys) + margin_m
+
+        return cls.from_bounds(
+            xmin=xmin,
+            xmax=xmax,
+            ymin=ymin,
+            ymax=ymax,
+            resolution_m=resolution_m,
+            crs=crs,
+        )
+
 
 def inverse_distance_weight(
     distances_m: np.ndarray,

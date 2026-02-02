@@ -60,6 +60,68 @@ class TestCompositeGrid:
         assert grid.x[-1] - grid.x[0] >= 600_000
         assert grid.y[-1] - grid.y[0] >= 1_000_000
 
+    def test_for_radars_all_configured(self):
+        """Grid from all configured radars covers expected area."""
+        grid = CompositeGrid.for_radars(resolution_m=10000)
+
+        # Should cover Finland with margins
+        assert grid.x[-1] - grid.x[0] >= 600_000
+        assert grid.y[-1] - grid.y[0] >= 1_000_000
+        assert grid.crs.to_epsg() == 3067
+
+    def test_for_radars_subset(self):
+        """Grid from subset of radars has appropriate bounds."""
+        # KAN and VIH are ~200km apart
+        grid = CompositeGrid.for_radars(
+            radar_codes=["KAN", "VIH"],
+            range_km=251.0,
+            resolution_m=10000,
+        )
+
+        # Width should be: distance between radars + 2*251km margin
+        # KAN-VIH distance is ~200km, so total ~700km
+        width_km = (grid.x[-1] - grid.x[0]) / 1000
+        height_km = (grid.y[-1] - grid.y[0]) / 1000
+        assert 600 < width_km < 800
+        assert 500 < height_km < 700
+
+    def test_for_radars_single_radar(self):
+        """Grid for single radar is 2*range_km square."""
+        grid = CompositeGrid.for_radars(
+            radar_codes=["KAN"],
+            range_km=100.0,
+            resolution_m=1000,
+        )
+
+        # Should be exactly 200km x 200km (2 * 100km range)
+        width_km = (grid.x[-1] - grid.x[0]) / 1000
+        height_km = (grid.y[-1] - grid.y[0]) / 1000
+        assert 199 <= width_km <= 201
+        assert 199 <= height_km <= 201
+
+    def test_for_radars_empty_list_raises(self):
+        """Empty radar list raises ValueError."""
+        with pytest.raises(ValueError, match="cannot be empty"):
+            CompositeGrid.for_radars(radar_codes=[])
+
+    def test_for_radars_invalid_codes_raises(self):
+        """All invalid radar codes raises ValueError."""
+        with pytest.raises(ValueError, match="No radars with valid coordinates"):
+            CompositeGrid.for_radars(radar_codes=["XXX", "YYY"])
+
+    def test_for_radars_skips_missing_coordinates(self):
+        """Radars without coordinates are silently skipped."""
+        # KER has no coordinates in radar_defaults.toml
+        # Should work as long as at least one valid radar
+        grid = CompositeGrid.for_radars(
+            radar_codes=["KER", "KAN"],
+            range_km=100.0,
+            resolution_m=10000,
+        )
+        # Should create grid based on KAN only
+        assert len(grid.x) > 0
+        assert len(grid.y) > 0
+
 
 class TestInverseDistanceWeight:
     """Tests for IDW weight function."""

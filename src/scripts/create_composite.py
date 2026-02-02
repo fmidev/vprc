@@ -185,44 +185,11 @@ def main(
 
         radar_corrections.append(radar_corr)
 
-    # Determine grid bounds from attempted radars (or use Finland fallback)
-    if attempted_radars:
-        # Use locations of all attempted radars for grid bounds
-        lats = [r[1] for r in attempted_radars]
-        lons = [r[2] for r in attempted_radars]
-        attempted_codes = [r[0] for r in attempted_radars]
-
-        # Transform to ETRS-TM35FIN for grid bounds
-        from pyproj import CRS, Transformer
-        transformer = Transformer.from_crs(CRS.from_epsg(4326), CRS.from_epsg(3067), always_xy=True)
-
-        xs, ys = [], []
-        for lat, lon in zip(lats, lons):
-            x, y = transformer.transform(lon, lat)
-            xs.append(x)
-            ys.append(y)
-
-        # Extend bounds by max range
-        margin = max_range * 1000  # km to m
-        xmin = min(xs) - margin
-        xmax = max(xs) + margin
-        ymin = min(ys) - margin
-        ymax = max(ys) + margin
-
-        if verbose:
-            click.echo(f"\nGrid bounds (ETRS-TM35FIN):")
-            click.echo(f"  X: {xmin:.0f} to {xmax:.0f}")
-            click.echo(f"  Y: {ymin:.0f} to {ymax:.0f}")
-
-        grid = CompositeGrid.from_bounds(
-            xmin, xmax, ymin, ymax,
-            resolution_m=resolution,
-        )
-    else:
-        # No radars at all - use Finland-wide grid as fallback
-        click.echo("Warning: No radar locations available, using Finland-wide grid", err=True)
-        grid = CompositeGrid.for_finland(resolution_m=resolution)
-        attempted_codes = []
+    attempted_codes = [r[0] for r in attempted_radars]
+    grid = CompositeGrid.for_radars(
+        resolution_m=resolution,
+        range_km=max_range + 1,
+    )
 
     click.echo(f"Grid size: {len(grid.x)} x {len(grid.y)} = {len(grid.x) * len(grid.y)} cells")
 
