@@ -17,14 +17,17 @@ from .vvp import (
     VVPHeader,
     read_vvp,
     height_to_sea_level,
-    # Internal functions exposed for testing
+    _parse_vvp_header,
+    _parse_vvp_file,
+    _vvp_dataframe_to_xarray,
+)
+
+# Re-export config functions for backward compatibility
+from ..config import (
     _load_radar_defaults,
     _build_radar_name_to_code_map,
     _radar_name_to_code,
     _get_radar_metadata,
-    _parse_vvp_header,
-    _parse_vvp_file,
-    _vvp_dataframe_to_xarray,
 )
 
 from .geotiff import (

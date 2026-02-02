@@ -22,6 +22,7 @@ from vprc.io import (
     _get_radar_metadata,
     read_vvp,
 )
+from vprc.config import list_radar_codes
 
 
 # Test data path
@@ -455,6 +456,75 @@ class TestRadarConfiguration:
         meta = _get_radar_metadata('KAN', {'beamwidth_deg': 1.0})
 
         assert meta['beamwidth_deg'] == 1.0
+
+    def test_list_radar_codes_returns_enabled_by_default(self):
+        """Test that list_radar_codes returns enabled radars by default."""
+        codes = list_radar_codes()
+
+        # All radars in default config are enabled
+        assert 'KAN' in codes
+        assert 'VAN' in codes
+        assert 'VIH' in codes
+        # Should not include special sections
+        assert 'defaults' not in codes
+        assert 'network' not in codes
+
+    def test_list_radar_codes_enabled_only_false(self):
+        """Test that list_radar_codes(enabled_only=False) returns all radars."""
+        codes_enabled = list_radar_codes(enabled_only=True)
+        codes_all = list_radar_codes(enabled_only=False)
+
+        # With default config, both should be equal
+        assert set(codes_enabled) == set(codes_all)
+
+    def test_list_radar_codes_respects_enabled_flag(self, tmp_path):
+        """Test that disabled radars are excluded when enabled_only=True."""
+        # Create custom config with one disabled radar
+        custom_config = tmp_path / "test_enabled.toml"
+        custom_config.write_text("""
+[defaults]
+enabled = true
+antenna_height_m = 100
+lowest_level_offset_m = 50
+
+[KAN]
+antenna_height_m = 174
+enabled = true
+
+[VAN]
+antenna_height_m = 83
+enabled = false
+
+[VIH]
+antenna_height_m = 181
+# enabled not specified, should inherit from defaults (true)
+""")
+
+        old_env = os.environ.get('VPRC_RADAR_CONFIG')
+        try:
+            os.environ['VPRC_RADAR_CONFIG'] = str(custom_config)
+            _load_radar_defaults.cache_clear()
+            _build_radar_name_to_code_map.cache_clear()
+
+            # enabled_only=True (default) should exclude VAN
+            codes_enabled = list_radar_codes(enabled_only=True)
+            assert 'KAN' in codes_enabled
+            assert 'VIH' in codes_enabled
+            assert 'VAN' not in codes_enabled
+
+            # enabled_only=False should include all
+            codes_all = list_radar_codes(enabled_only=False)
+            assert 'KAN' in codes_all
+            assert 'VIH' in codes_all
+            assert 'VAN' in codes_all
+
+        finally:
+            if old_env is not None:
+                os.environ['VPRC_RADAR_CONFIG'] = old_env
+            else:
+                os.environ.pop('VPRC_RADAR_CONFIG', None)
+            _load_radar_defaults.cache_clear()
+            _build_radar_name_to_code_map.cache_clear()
 
     def test_read_vvp_with_defaults(self):
         """Test that read_vvp loads TOML defaults automatically."""

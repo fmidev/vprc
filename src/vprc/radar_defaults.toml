@@ -25,6 +25,7 @@ antenna_height_m = 198
 lowest_level_offset_m = 102
 beamwidth_deg = 0.95
 max_range_km = 250
+enabled = true  # Whether radar is active in network (for maintenance/decommissioning)
 
 [VAN]  # Vantaa
 name = "VANTAA"

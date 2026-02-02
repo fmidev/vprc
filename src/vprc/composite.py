@@ -132,7 +132,7 @@ class CompositeGrid:
 
         Args:
             radar_codes: List of radar codes to include. If None, uses all
-                configured radars with valid coordinates.
+                enabled radars with valid coordinates from config.
             range_km: Range around each radar to include (km). Default 251km
                 covers 250km radar range plus 1km margin.
             resolution_m: Grid cell size in meters
