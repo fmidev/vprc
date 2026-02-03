@@ -462,3 +462,102 @@ class TestClimatologicalCorrection:
         assert result.quality_weight > 0
         # Quality weight should be stored in result
         assert result.corrections.attrs["quality_weight"] == result.quality_weight
+
+
+class TestClimatologyOnlyCorrection:
+    """Tests for climatology-only VPR correction (no valid echo)."""
+
+    def test_no_echo_returns_climatology_only(self):
+        """When no valid echo exists, returns climatology-only corrections."""
+        # All MDS values - no valid echo
+        dbz_values = [MDS] * 25
+        heights = list(range(100, 100 + STEP * 25, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        result = compute_vpr_correction(
+            ds,
+            freezing_level_m=2000,
+            include_clim=True,
+            clim_weight=0.2,
+        )
+
+        # Should still get usable corrections
+        assert result.usable is True
+        # Quality weight should be clim_weight for compositing
+        assert result.quality_weight == 0.2
+        # Should have all correction variables
+        assert "cappi_correction_db" in result.corrections
+        assert "cappi_clim_correction_db" in result.corrections
+        assert "cappi_blended_correction_db" in result.corrections
+        # Climatology-only flag should be set
+        assert result.corrections.attrs.get("climatology_only") is True
+
+    def test_climatology_only_corrections_are_identical(self):
+        """Climatology-only: instant, clim, and blended are all equal."""
+        dbz_values = [MDS] * 25
+        heights = list(range(100, 100 + STEP * 25, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        result = compute_vpr_correction(
+            ds,
+            freezing_level_m=2000,
+            include_clim=True,
+        )
+
+        corr = result.corrections
+        instant = corr["cappi_correction_db"].values
+        clim = corr["cappi_clim_correction_db"].values
+        blended = corr["cappi_blended_correction_db"].values
+
+        np.testing.assert_array_equal(instant, clim)
+        np.testing.assert_array_equal(blended, clim)
+
+    def test_climatology_only_corrections_are_nonzero(self):
+        """Climatology-only corrections have actual non-zero values at range."""
+        dbz_values = [MDS] * 25
+        heights = list(range(100, 100 + STEP * 25, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        result = compute_vpr_correction(
+            ds,
+            freezing_level_m=2000,
+            include_clim=True,
+        )
+
+        corr = result.corrections
+        # At longer ranges, corrections should be non-zero
+        # (beam samples from higher where clim profile differs from ground)
+        far_range_idx = 100  # ~100 km
+        assert not np.all(corr["cappi_correction_db"].values[far_range_idx, :] == 0)
+
+    def test_no_echo_no_freezing_level_returns_unusable(self):
+        """Without freezing level, no-echo profile returns unusable result."""
+        dbz_values = [MDS] * 25
+        heights = list(range(100, 100 + STEP * 25, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        result = compute_vpr_correction(
+            ds,
+            freezing_level_m=None,
+            include_clim=True,
+        )
+
+        assert result.usable is False
+        assert result.quality_weight == 0.0
+
+    def test_climatology_only_ground_reference_is_clim(self):
+        """Climatology-only profiles use climatological ground reference."""
+        dbz_values = [MDS] * 25
+        heights = list(range(100, 100 + STEP * 25, STEP))
+        ds = make_test_dataset(dbz_values, heights)
+
+        result = compute_vpr_correction(
+            ds,
+            freezing_level_m=2000,
+            include_clim=True,
+        )
+
+        # z_ground_dbz should equal z_ground_clim_dbz
+        assert result.z_ground_dbz == result.z_ground_clim_dbz
+        # Should be the climatological base value: 10 + FL_km * 10 = 10 + 2 * 10 = 30
+        assert abs(result.z_ground_dbz - 30.0) < 0.1

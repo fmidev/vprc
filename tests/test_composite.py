@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import xarray as xr
 from pyproj import CRS
 
 from vprc.composite import (
@@ -512,3 +513,168 @@ def _create_mock_correction(constant_db: float = 2.0) -> VPRCorrectionResult:
         quality_weight=1.0,
         usable=True,
     )
+
+
+def _create_climatology_only_correction(constant_db: float = 1.5) -> VPRCorrectionResult:
+    """Create a mock climatology-only VPR correction result for testing.
+
+    Args:
+        constant_db: Constant correction value to use
+
+    Returns:
+        VPRCorrectionResult with climatology_only=True and clim_weight quality
+    """
+    range_km = np.arange(1, 251)
+    cappi_heights = [500, 1000]
+
+    corr_data = np.full((len(range_km), len(cappi_heights)), constant_db)
+
+    ds = xr.Dataset(
+        {
+            "cappi_correction_db": (["range_km", "cappi_height"], corr_data),
+            "cappi_clim_correction_db": (["range_km", "cappi_height"], corr_data),
+            "cappi_blended_correction_db": (["range_km", "cappi_height"], corr_data),
+        },
+        coords={
+            "range_km": range_km,
+            "cappi_height": cappi_heights,
+        },
+        attrs={
+            "climatology_only": True,
+            "clim_weight": 0.2,
+        },
+    )
+
+    return VPRCorrectionResult(
+        corrections=ds,
+        z_ground_dbz=30.0,  # Climatological base
+        z_ground_clim_dbz=30.0,
+        quality_weight=0.2,  # Uses clim_weight for compositing
+        usable=True,
+    )
+
+
+class TestClimatologyOnlyComposite:
+    """Tests for composite with climatology-only radars."""
+
+    def test_climatology_only_contributes_to_composite(self):
+        """Climatology-only radar corrections contribute to composite."""
+        radar = RadarCorrection(
+            radar_code="KAN",
+            latitude=61.81,
+            longitude=22.50,
+            correction=_create_climatology_only_correction(2.0),
+            quality_weight=0.2,
+        )
+
+        grid = CompositeGrid.from_bounds(
+            200_000, 350_000, 6_750_000, 6_900_000, resolution_m=5_000
+        )
+
+        result = composite_corrections([radar], grid)
+
+        # Should have valid composite values near the radar
+        valid_count = (~np.isnan(result["correction_db"].values)).sum()
+        assert valid_count > 0
+
+    def test_climatology_only_blends_with_observed(self):
+        """Climatology-only correction blends with observed corrections."""
+        # Observed radar with higher quality
+        observed = RadarCorrection(
+            radar_code="KAN",
+            latitude=61.81,
+            longitude=22.50,
+            correction=_create_mock_correction(3.0),
+            quality_weight=1.0,
+        )
+
+        # Climatology-only radar nearby
+        clim_only = RadarCorrection(
+            radar_code="IKA",
+            latitude=61.77,
+            longitude=23.08,
+            correction=_create_climatology_only_correction(1.0),
+            quality_weight=0.2,
+        )
+
+        grid = CompositeGrid.from_bounds(
+            250_000, 350_000, 6_820_000, 6_870_000, resolution_m=5_000
+        )
+
+        result = composite_corrections([observed, clim_only], grid)
+
+        # Should have blended values between the two
+        valid = result["correction_db"].values[~np.isnan(result["correction_db"].values)]
+        assert len(valid) > 0
+
+        # Near the observed radar, values should be closer to 3.0
+        # Overall average should be between 1.0 and 3.0
+        assert valid.mean() > 1.0
+        assert valid.mean() < 3.0
+
+    def test_climatology_only_lower_weight_than_observed(self):
+        """Climatology-only corrections have lower influence than observed."""
+        # Two radars at same location with different sources
+        observed = RadarCorrection(
+            radar_code="KAN",
+            latitude=61.81,
+            longitude=22.50,
+            correction=_create_mock_correction(4.0),
+            quality_weight=1.0,
+        )
+
+        clim_only = RadarCorrection(
+            radar_code="KOR",
+            latitude=61.81,  # Same location
+            longitude=22.50,
+            correction=_create_climatology_only_correction(0.0),
+            quality_weight=0.2,
+        )
+
+        # Grid centered on the radars
+        grid = CompositeGrid.from_bounds(
+            280_000, 290_000, 6_860_000, 6_870_000, resolution_m=1_000
+        )
+
+        result = composite_corrections([observed, clim_only], grid)
+
+        valid = result["correction_db"].values[~np.isnan(result["correction_db"].values)]
+
+        # Blended value should be closer to observed (4.0) than clim (0.0)
+        # With quality weights 1.0 and 0.2, weighted average at same distance
+        # would be (1.0 * 4.0 + 0.2 * 0.0) / (1.0 + 0.2) = 3.33
+        assert valid.mean() > 2.5, f"Expected >2.5, got {valid.mean()}"
+
+    def test_all_climatology_only_composite(self):
+        """Composite with all climatology-only radars works."""
+        radars = [
+            RadarCorrection(
+                radar_code="KAN",
+                latitude=61.81,
+                longitude=22.50,
+                correction=_create_climatology_only_correction(2.0),
+                quality_weight=0.2,
+            ),
+            RadarCorrection(
+                radar_code="VIH",
+                latitude=63.10,
+                longitude=21.70,
+                correction=_create_climatology_only_correction(2.5),
+                quality_weight=0.2,
+            ),
+        ]
+
+        grid = CompositeGrid.from_bounds(
+            200_000, 400_000, 6_750_000, 7_000_000, resolution_m=10_000
+        )
+
+        result = composite_corrections(radars, grid)
+
+        # Should have valid composite values
+        valid_count = (~np.isnan(result["correction_db"].values)).sum()
+        assert valid_count > 0
+
+        # Values should be in the expected range
+        valid = result["correction_db"].values[~np.isnan(result["correction_db"].values)]
+        assert valid.min() >= 1.5
+        assert valid.max() <= 3.0

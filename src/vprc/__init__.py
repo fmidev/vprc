@@ -153,9 +153,11 @@ def process_vvp(
         if bright_band.detected and bright_band.top_height is not None:
             freezing_level_m = float(bright_band.top_height)
 
-    # Step 6: VPR correction (if requested and profile is usable)
+    # Step 6: VPR correction (if requested)
+    # Always compute corrections when freezing level is available - unusable
+    # profiles will get climatology-only corrections (quality_weight=0)
     vpr_result = None
-    if compute_vpr and classification.usable_for_vpr:
+    if compute_vpr and freezing_level_m is not None:
         vpr_result = compute_vpr_correction(
             ds,
             freezing_level_m=freezing_level_m,

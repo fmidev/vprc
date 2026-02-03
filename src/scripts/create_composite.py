@@ -160,16 +160,20 @@ def main(
             continue
 
         if result.vpr_correction is None:
-            click.echo(f"Info: No VPR correction for {radar_code} (profile not usable)", err=True)
+            # This should only happen if freezing_level was not provided
+            click.echo(f"Info: No VPR correction for {radar_code} (no freezing level)", err=True)
             continue
 
         # Create radar correction object
         # Use forced quality weight if specified, otherwise use computed value
+        # Note: climatology-only profiles have quality_weight = clim_weight (0.2)
         quality_weight = (
             force_quality
             if force_quality is not None
             else result.vpr_correction.quality_weight
         )
+
+        is_clim_only = result.vpr_correction.corrections.attrs.get("climatology_only", False)
 
         radar_corr = RadarCorrection(
             radar_code=radar_code,
@@ -180,7 +184,8 @@ def main(
         )
 
         if verbose:
-            click.echo(f"  Quality weight: {radar_corr.quality_weight:.3f}")
+            clim_label = " (climatology-only)" if is_clim_only else ""
+            click.echo(f"  Quality weight: {radar_corr.quality_weight:.3f}{clim_label}")
             click.echo(f"  Ground reference: {result.vpr_correction.z_ground_dbz:.1f} dBZ")
 
         radar_corrections.append(radar_corr)
