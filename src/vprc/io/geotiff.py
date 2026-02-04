@@ -134,14 +134,14 @@ def write_composite_cogs(
     output_dir: str | Path,
     prefix: str = "",
     compress: Compression = DEFAULT_COMPRESSION,
-    include_weights: bool = True,
+    include_weights: bool = False,
 ) -> dict[str, Path]:
-    """Export all composite products as separate COG files.
+    """Export composite products as separate COG files.
 
     Creates separate GeoTIFFs for:
     - correction_db (main composite correction)
-    - weight_sum (total weight at each point)
-    - n_radars (number of contributing radars)
+    - weight_sum (optional; total weight at each point)
+    - n_radars (optional; number of contributing radars)
 
     Args:
         ds: Composite Dataset from composite_corrections()
@@ -155,7 +155,9 @@ def write_composite_cogs(
 
     Example:
         >>> ds = composite_corrections(radars, grid)
-        >>> paths = write_composite_cogs(ds, "/output", prefix="202308281000")
+        >>> paths = write_composite_cogs(
+        ...     ds, "/output", prefix="202308281000", include_weights=True
+        ... )
         >>> print(paths)
         {'correction_db': Path('/output/202308281000_correction_db.tif'),
          'weight_sum': Path('/output/202308281000_weight_sum.tif'),
