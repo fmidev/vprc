@@ -10,10 +10,11 @@ from vprc.classification import (
     ProfileClassification,
     _find_echo_layers,
     _classify_layer,
+    _check_evaporation,
     classify_profile,
     classify_profiles,
 )
-from vprc.constants import MDS, MIN_SAMPLES
+from vprc.constants import MDS, MIN_SAMPLES, EVAPORATION_THRESHOLD_DB
 
 
 def make_test_dataset(
@@ -53,6 +54,29 @@ class TestEchoLayer:
         assert layer.layer_type == LayerType.UNKNOWN
         assert layer.touches_ground is False
         assert layer.has_clutter is False
+        assert layer.evaporation_detected is False
+
+    def test_evaporation_amount(self):
+        """Evaporation amount is computed from max and min below max."""
+        layer = EchoLayer(
+            bottom_height=100,
+            top_height=1000,
+            max_dbz=40.0,
+            max_dbz_height=800,
+            min_dbz_below_max=15.0,
+            min_dbz_height=300,
+        )
+        assert layer.evaporation_amount == 25.0
+
+    def test_evaporation_amount_none_without_min(self):
+        """Evaporation amount is None if min not available."""
+        layer = EchoLayer(
+            bottom_height=100,
+            top_height=1000,
+            max_dbz=40.0,
+            max_dbz_height=800,
+        )
+        assert layer.evaporation_amount is None
 
 
 class TestProfileClassification:
@@ -288,3 +312,112 @@ class TestClassifyProfiles:
         assert results[0].lowest_layer.touches_ground == True
         # Second time: elevated layer
         assert results[1].lowest_layer.touches_ground == False
+
+
+class TestEvaporationCheck:
+    """Tests for evaporation detection.
+
+    Perl logic (lines 1174-1185): If dBZ drops by >20 from max to min below max,
+    precipitation is evaporating before reaching the surface → reclassify as altostratus.
+    """
+
+    def test_no_evaporation_when_max_at_bottom(self):
+        """No evaporation if max dBZ is at or below min height."""
+        layer = EchoLayer(
+            bottom_height=100,
+            top_height=1000,
+            max_dbz=40.0,
+            max_dbz_height=100,  # Max at bottom
+            min_dbz_below_max=None,
+            min_dbz_height=None,
+        )
+        assert _check_evaporation(layer) is False
+
+    def test_no_evaporation_with_small_drop(self):
+        """No evaporation if dBZ drop is within threshold."""
+        layer = EchoLayer(
+            bottom_height=100,
+            top_height=1000,
+            max_dbz=30.0,
+            max_dbz_height=800,
+            min_dbz_below_max=15.0,  # 15 dB drop, below 20 threshold
+            min_dbz_height=300,
+        )
+        assert _check_evaporation(layer) is False
+        assert layer.evaporation_amount == 15.0
+
+    def test_evaporation_detected_with_large_drop(self):
+        """Evaporation detected if dBZ drop exceeds 20 dB."""
+        layer = EchoLayer(
+            bottom_height=100,
+            top_height=1000,
+            max_dbz=40.0,
+            max_dbz_height=800,
+            min_dbz_below_max=15.0,  # 25 dB drop, exceeds 20 threshold
+            min_dbz_height=300,
+        )
+        assert _check_evaporation(layer) is True
+        assert layer.evaporation_amount == 25.0
+
+    def test_evaporation_exactly_at_threshold_not_detected(self):
+        """Evaporation not detected if exactly at 20 dB threshold."""
+        layer = EchoLayer(
+            bottom_height=100,
+            top_height=1000,
+            max_dbz=40.0,
+            max_dbz_height=800,
+            min_dbz_below_max=20.0,  # Exactly 20 dB drop
+            min_dbz_height=300,
+        )
+        assert _check_evaporation(layer) is False
+
+    def test_evaporation_reclassifies_to_altostratus(self):
+        """Profile with strong evaporation is classified as altostratus."""
+        # Create profile with max at top and low values at bottom
+        # Strong drop: 45 dBZ at 900m, 10 dBZ at 100m = 35 dB drop
+        dbz_values = [10, 15, 20, 30, 45]
+        heights = [100, 300, 500, 700, 900]
+        ds = make_test_dataset(dbz_values, heights, freezing_level_m=1500)
+
+        result = classify_profile(ds)
+
+        # Should be classified as altostratus due to evaporation
+        assert result.num_layers == 1
+        assert result.lowest_layer.evaporation_detected is True
+        assert result.profile_type == LayerType.ALTOSTRATUS
+        assert result.usable_for_vpr is False
+
+    def test_profile_without_evaporation_is_precipitation(self):
+        """Profile with normal gradient is classified as precipitation."""
+        # Create profile with max near bottom (no evaporation)
+        # Values decrease upward as expected
+        dbz_values = [30, 28, 25, 22, 18, 15, 12, 10]
+        heights = [100, 300, 500, 700, 900, 1100, 1300, 1500]
+        ds = make_test_dataset(dbz_values, heights, freezing_level_m=800)
+
+        result = classify_profile(ds)
+
+        assert result.num_layers == 1
+        assert result.lowest_layer.evaporation_detected is False
+        # With freezing level at 800m and top at 1500m (700m above FL),
+        # this should be precipitation
+        assert result.lowest_layer.touches_ground
+
+    def test_find_echo_layers_computes_min_below_max(self):
+        """_find_echo_layers correctly identifies min dBZ below max."""
+        # Profile: 10, 15, 40, 25, 20 (max at 500m, min below at 100m)
+        dbz_values = [10.0, 15.0, 40.0, 25.0, 20.0]
+        heights = [100, 300, 500, 700, 900]
+        counts = [100] * 5
+        ds = make_test_dataset(dbz_values, heights, counts)
+
+        dbz = ds["corrected_dbz"]
+        count = ds["sample_count"]
+        layers = _find_echo_layers(dbz, count, np.array(heights))
+
+        assert len(layers) == 1
+        layer = layers[0]
+        assert layer.max_dbz == 40.0
+        assert layer.max_dbz_height == 500
+        assert layer.min_dbz_below_max == 10.0
+        assert layer.min_dbz_height == 100

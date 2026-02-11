@@ -76,7 +76,7 @@ DEFAULT_MAX_RANGE_KM = 250
 DEFAULT_RANGE_STEP_KM = 1
 
 # -----------------------------------------------------------------------------
-# Bright Band Slope Adjustment Constants (from allprof_prodx2.pl lines 1304-1318)
+# Bright Band Slope Adjustment Constants (from allprof_prodx2.pl)
 # -----------------------------------------------------------------------------
 
 # Slope threshold for BB adjustment (dBZ per 200m step)
@@ -133,6 +133,16 @@ LARGE_JUMP_THRESHOLD_DB = 6.0
 # Maximum freezing level for applying clutter correction when no BB detected
 # Perl: `$bb == 0 and $nollaraja <= 1000`
 NO_BB_CLUTTER_FREEZING_LEVEL_M = 1000
+
+# -----------------------------------------------------------------------------
+# Classification constants (from allprof_prodx2.pl)
+# -----------------------------------------------------------------------------
+
+# Maximum allowed dBZ drop from max to min below (dB)
+# If reflectivity decreases by more than this from peak toward ground,
+# precipitation is likely evaporating before reaching surface.
+# Perl: `if ( $evapor > 20 )` (lines 1174-1185)
+EVAPORATION_THRESHOLD_DB = 20.0
 
 # -----------------------------------------------------------------------------
 # Temporal Averaging Constants (from pystycappi_ka.pl)

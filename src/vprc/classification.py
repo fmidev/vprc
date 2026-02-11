@@ -20,7 +20,7 @@ from typing import Sequence
 import numpy as np
 import xarray as xr
 
-from .constants import MDS, MIN_SAMPLES
+from .constants import MDS, MIN_SAMPLES, EVAPORATION_THRESHOLD_DB
 
 
 class LayerType(Enum):
@@ -46,23 +46,36 @@ class EchoLayer:
         top_height: Upper bound of the layer (m above antenna)
         max_dbz: Maximum reflectivity within the layer (dBZ)
         max_dbz_height: Height of maximum reflectivity (m)
+        min_dbz_below_max: Minimum reflectivity between ground and max height (dBZ)
+        min_dbz_height: Height of minimum reflectivity below max (m)
         layer_type: Classification of the layer
         touches_ground: True if layer starts at the lowest profile level
         has_clutter: True if ground clutter was detected in this layer
+        evaporation_detected: True if significant evaporation detected (>20dB drop)
     """
 
     bottom_height: int
     top_height: int
     max_dbz: float = MDS
     max_dbz_height: int | None = None
+    min_dbz_below_max: float | None = None
+    min_dbz_height: int | None = None
     layer_type: LayerType = LayerType.UNKNOWN
     touches_ground: bool = False
     has_clutter: bool = False
+    evaporation_detected: bool = False
 
     @property
     def thickness(self) -> int:
         """Layer thickness in meters."""
         return self.top_height - self.bottom_height
+
+    @property
+    def evaporation_amount(self) -> float | None:
+        """dBZ drop from max to min below max, if calculable."""
+        if self.min_dbz_below_max is not None and self.max_dbz > MDS:
+            return self.max_dbz - self.min_dbz_below_max
+        return None
 
 
 @dataclass
@@ -119,6 +132,8 @@ def _find_echo_layers(
     current_bottom = None
     current_max_dbz = MDS
     current_max_height = None
+    current_max_idx = None
+    layer_start_idx = None
     lowest_height = heights[0] if len(heights) > 0 else None
 
     for i, h in enumerate(heights):
@@ -127,23 +142,31 @@ def _find_echo_layers(
                 # Start new layer
                 in_layer = True
                 current_bottom = int(h)
+                layer_start_idx = i
                 current_max_dbz = float(dbz.values[i])
                 current_max_height = int(h)
+                current_max_idx = i
             else:
                 # Continue layer, update max
                 if dbz.values[i] > current_max_dbz:
                     current_max_dbz = float(dbz.values[i])
                     current_max_height = int(h)
+                    current_max_idx = i
         else:
             if in_layer:
                 # End current layer at previous height
                 top_height = int(heights[i - 1])
-                layer = EchoLayer(
+                layer = _create_layer_with_min_dbz(
+                    dbz=dbz,
+                    heights=heights,
+                    valid=valid,
                     bottom_height=current_bottom,
                     top_height=top_height,
                     max_dbz=current_max_dbz,
                     max_dbz_height=current_max_height,
-                    touches_ground=(current_bottom == lowest_height),
+                    max_idx=current_max_idx,
+                    layer_start_idx=layer_start_idx,
+                    lowest_height=lowest_height,
                 )
                 layers.append(layer)
                 in_layer = False
@@ -151,16 +174,77 @@ def _find_echo_layers(
     # Close final layer if profile ends in echo
     if in_layer:
         top_height = int(heights[-1])
-        layer = EchoLayer(
+        layer = _create_layer_with_min_dbz(
+            dbz=dbz,
+            heights=heights,
+            valid=valid,
             bottom_height=current_bottom,
             top_height=top_height,
             max_dbz=current_max_dbz,
             max_dbz_height=current_max_height,
-            touches_ground=(current_bottom == lowest_height),
+            max_idx=current_max_idx,
+            layer_start_idx=layer_start_idx,
+            lowest_height=lowest_height,
         )
         layers.append(layer)
 
     return layers
+
+
+def _create_layer_with_min_dbz(
+    dbz: xr.DataArray,
+    heights: np.ndarray,
+    valid: np.ndarray,
+    bottom_height: int,
+    top_height: int,
+    max_dbz: float,
+    max_dbz_height: int,
+    max_idx: int,
+    layer_start_idx: int,
+    lowest_height: int | None,
+) -> EchoLayer:
+    """Create an EchoLayer, computing min dBZ below max height.
+
+    The min dBZ below max is used for evaporation detection.
+
+    Args:
+        dbz: Full dBZ array
+        heights: Full heights array
+        valid: Boolean array of valid heights
+        bottom_height: Layer bottom
+        top_height: Layer top
+        max_dbz: Maximum dBZ in layer
+        max_dbz_height: Height of maximum
+        max_idx: Index of maximum dBZ
+        layer_start_idx: Starting index of layer
+        lowest_height: Lowest height in profile (for touches_ground)
+
+    Returns:
+        EchoLayer with min_dbz_below_max computed
+    """
+    min_dbz_below_max = None
+    min_dbz_height = None
+
+    # Find minimum dBZ between layer bottom and max height
+    # Only meaningful if max is above layer bottom
+    if max_idx > layer_start_idx:
+        min_val = float("inf")
+        for idx in range(layer_start_idx, max_idx):
+            if valid[idx] and dbz.values[idx] < min_val:
+                min_val = float(dbz.values[idx])
+                min_dbz_height = int(heights[idx])
+        if min_val < float("inf"):
+            min_dbz_below_max = min_val
+
+    return EchoLayer(
+        bottom_height=bottom_height,
+        top_height=top_height,
+        max_dbz=max_dbz,
+        max_dbz_height=max_dbz_height,
+        min_dbz_below_max=min_dbz_below_max,
+        min_dbz_height=min_dbz_height,
+        touches_ground=(bottom_height == lowest_height),
+    )
 
 
 def _classify_layer(
@@ -177,6 +261,7 @@ def _classify_layer(
     - Thin ground layers or weak echo near boundary layer → CLEAR_AIR
     - Elevated layers detached from ground → ALTOSTRATUS
     - Layers with detected ground clutter → CLUTTER
+    - Layers with significant evaporation (>20dB drop) → ALTOSTRATUS
 
     Args:
         layer: The EchoLayer to classify
@@ -204,6 +289,12 @@ def _classify_layer(
     if thickness <= 200:
         return LayerType.CLEAR_AIR_ECHO
 
+    # Check for significant evaporation (Perl lines 1174-1185)
+    # If dBZ drops by >20 from max to min below max, precipitation is evaporating
+    if _check_evaporation(layer):
+        layer.evaporation_detected = True
+        return LayerType.ALTOSTRATUS
+
     # Check if layer extends well above freezing level (precipitation signature)
     if freezing_level_m is not None and freezing_level_m > 0:
         height_above_fl = layer.top_height - freezing_level_m
@@ -225,6 +316,41 @@ def _classify_layer(
 
     # Default for ambiguous cases: treat as unknown/needs more info
     return LayerType.UNKNOWN
+
+
+def _check_evaporation(layer: EchoLayer) -> bool:
+    """Check if layer shows significant evaporation.
+
+    Evaporation is detected when reflectivity drops significantly from
+    the profile maximum toward the ground, indicating precipitation
+    is not reaching the surface.
+
+    Perl logic (lines 1174-1185 allprof_prodx2.pl):
+        if (max_height > min_height and profile_is_precipitation):
+            evapor = dBZ_at_max - dBZ_at_min_below_max
+            if evapor > 20:
+                not_precipitation (reclassify as altostratus)
+
+    Args:
+        layer: EchoLayer with max_dbz and min_dbz_below_max computed
+
+    Returns:
+        True if significant evaporation detected (>20dB drop)
+    """
+    # Evaporation check requires:
+    # 1. Max dBZ height above min dBZ height (max not at bottom)
+    # 2. Both values are valid
+    if layer.max_dbz_height is None or layer.min_dbz_height is None:
+        return False
+
+    if layer.max_dbz_height <= layer.min_dbz_height:
+        return False
+
+    evap_amount = layer.evaporation_amount
+    if evap_amount is None:
+        return False
+
+    return evap_amount > EVAPORATION_THRESHOLD_DB
 
 
 def classify_profile(
