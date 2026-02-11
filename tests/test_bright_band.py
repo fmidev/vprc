@@ -10,23 +10,42 @@ from vprc.bright_band import (
     detect_bright_band,
     _find_bb_candidates,
     _compute_gradient_sum,
+    _validate_near_surface_bb,
 )
-from vprc.constants import MDS, STEP
+from vprc.constants import (
+    MDS,
+    STEP,
+    NEAR_SURFACE_BB_MIN_ZCOUNT,
+    NEAR_SURFACE_BB_MIN_ZCOUNT_RATIO,
+)
 
 
 def make_test_dataset(
     dbz_values: list[float],
     heights: list[int] | None = None,
     freezing_level_m: float | None = None,
+    zcount_values: list[int] | None = None,
 ) -> xr.Dataset:
-    """Create a minimal test dataset for bright band tests."""
+    """Create a minimal test dataset for bright band tests.
+
+    Args:
+        dbz_values: Reflectivity values per height level
+        heights: Height coordinates (auto-generated if None)
+        freezing_level_m: Freezing level for attrs
+        zcount_values: Sample counts per height level (optional)
+    """
     if heights is None:
         heights = list(range(100, 100 + STEP * len(dbz_values), STEP))
 
+    data_vars = {
+        "corrected_dbz": ("height", dbz_values),
+    }
+
+    if zcount_values is not None:
+        data_vars["zcount"] = ("height", zcount_values)
+
     ds = xr.Dataset(
-        {
-            "corrected_dbz": ("height", dbz_values),
-        },
+        data_vars,
         coords={"height": heights},
         attrs={"freezing_level_m": freezing_level_m},
     )
@@ -299,3 +318,143 @@ class TestRealData:
         # Sanity checks on amplitudes
         assert result.amplitude_below is not None and result.amplitude_below > 5
         assert result.amplitude_above is not None and result.amplitude_above > 10
+
+
+class TestNearSurfaceBBValidation:
+    """Tests for near-surface bright band validation.
+
+    When BB bottom is at the lowest 1-2 levels, the Perl code performs
+    additional validation on sample counts (Zcount) to prevent false
+    detection from ground clutter.
+
+    Perl logic (lines 1051-1075 allprof_prodx2.pl):
+        if ($bbalku == $alintaso or $bbalku == $alintaso + 200):
+            if (Zcount[bbalku] < 500 or Zcount[zyla] < 500
+                or Zcount[zyla]/Zcount[bbalku] < 0.7):
+                bb = 0  # reject
+    """
+
+    def test_valid_near_surface_bb_passes(self):
+        """BB at lowest level with sufficient sample counts passes."""
+        # Heights: 100 (lowest), 300, 500, 700
+        heights = [100, 300, 500, 700]
+        dbz_values = [25.0, 30.0, 25.0, 20.0]
+        # All sample counts >= 500, ratio > 0.7
+        zcount_values = [600, 700, 650, 550]
+
+        ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
+
+        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+
+        assert result is True
+
+    def test_low_zcount_at_bottom_rejects(self):
+        """BB rejected if sample count at bottom < 500."""
+        heights = [100, 300, 500, 700]
+        dbz_values = [25.0, 30.0, 25.0, 20.0]
+        # Bottom zcount too low
+        zcount_values = [400, 700, 650, 550]
+
+        ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
+
+        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+
+        assert result is False
+
+    def test_low_zcount_at_top_rejects(self):
+        """BB rejected if sample count at top < 500."""
+        heights = [100, 300, 500, 700]
+        dbz_values = [25.0, 30.0, 25.0, 20.0]
+        # Top zcount too low
+        zcount_values = [600, 700, 400, 550]
+
+        ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
+
+        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+
+        assert result is False
+
+    def test_low_zcount_ratio_rejects(self):
+        """BB rejected if ratio of top/bottom zcount < 0.7."""
+        heights = [100, 300, 500, 700]
+        dbz_values = [25.0, 30.0, 25.0, 20.0]
+        # Both >= 500, but ratio 510/1000 = 0.51 < 0.7
+        zcount_values = [1000, 700, 510, 550]
+
+        ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
+
+        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+
+        assert result is False
+
+    def test_ratio_exactly_at_threshold_passes(self):
+        """BB passes if ratio exactly equals threshold (0.7)."""
+        heights = [100, 300, 500, 700]
+        dbz_values = [25.0, 30.0, 25.0, 20.0]
+        # Ratio 700/1000 = 0.7 exactly
+        zcount_values = [1000, 800, 700, 550]
+
+        ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
+
+        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+
+        assert result is True
+
+    def test_missing_top_height_rejects(self):
+        """BB rejected if top height is None."""
+        heights = [100, 300, 500, 700]
+        dbz_values = [25.0, 30.0, 25.0, 20.0]
+        zcount_values = [600, 700, 650, 550]
+
+        ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
+
+        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=None)
+
+        assert result is False
+
+    def test_missing_zcount_data_passes(self):
+        """BB passes validation if no zcount data available (graceful fallback)."""
+        heights = [100, 300, 500, 700]
+        dbz_values = [25.0, 30.0, 25.0, 20.0]
+        # No zcount_values -> no 'zcount' in dataset
+
+        ds = make_test_dataset(dbz_values, heights)
+
+        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+
+        # Without data to validate, we don't reject
+        assert result is True
+
+    def test_bb_at_second_lowest_level_validated(self):
+        """BB validation applies when bottom is at second-lowest level too."""
+        heights = [100, 300, 500, 700]
+        dbz_values = [20.0, 25.0, 30.0, 25.0]
+        # Bottom at 300 (second lowest), low zcount
+        zcount_values = [600, 400, 650, 550]
+
+        ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
+
+        # Bottom at 300 (second lowest = 100 + 200)
+        result = _validate_near_surface_bb(ds, bottom_height=300, top_height=700)
+
+        assert result is False
+
+    def test_bb_above_lowest_two_levels_not_validated_here(self):
+        """This function only validates; caller decides when to call it.
+
+        When BB bottom is above lowest 2 levels, the caller (_validate_bright_band)
+        doesn't call this function, so this function isn't responsible for that check.
+        """
+        heights = [100, 300, 500, 700, 900]
+        dbz_values = [15.0, 20.0, 30.0, 25.0, 20.0]
+        # Would fail if validated, but caller won't call us for h=500
+        zcount_values = [600, 700, 100, 100, 550]
+
+        ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
+
+        # If called directly, it validates based on heights given
+        # (even though 500 is not near-surface, the validation still applies)
+        result = _validate_near_surface_bb(ds, bottom_height=500, top_height=900)
+
+        # Zcount at bottom (500) = 100 < 500, so fails
+        assert result is False

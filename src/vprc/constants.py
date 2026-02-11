@@ -95,6 +95,17 @@ BB_SLOPE_HEIGHT_LIMIT_M = 600
 # Perl: `if ( $ylaamp >= 10 and $bbalku == $alintaso )` (lines 1091-1098)
 BB_PEAK_AMPLITUDE_CAP_DB = 10.0
 
+# Minimum linear Z (mm^6/m^3) required for valid near-surface bright band
+# When BB bottom is at lowest 1-2 levels, sample count at both BB bottom and top
+# must exceed this threshold.
+# Perl: `$isotaulu[$bbalku][$j][1] < 500` (lines 1051-1075) where [1] is Zcount
+NEAR_SURFACE_BB_MIN_ZCOUNT = 500
+
+# Minimum ratio of sample count at BB top to BB bottom for valid near-surface BB
+# When BB bottom is at lowest levels, this prevents false detection from clutter.
+# Perl: `$isotaulu[$zyla][$j][1] / $isotaulu[$bbalku][$j][1] < 0.7` (lines 1051-1075)
+NEAR_SURFACE_BB_MIN_ZCOUNT_RATIO = 0.7
+
 # -----------------------------------------------------------------------------
 # Temporal Averaging Constants (from pystycappi_ka.pl)
 # -----------------------------------------------------------------------------

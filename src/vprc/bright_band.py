@@ -14,13 +14,21 @@ Detection approach:
     4. Validate detection using amplitude and gradient thresholds
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 import xarray as xr
 
-from .constants import MDS, STEP
+from .constants import (
+    MDS,
+    STEP,
+    NEAR_SURFACE_BB_MIN_ZCOUNT,
+    NEAR_SURFACE_BB_MIN_ZCOUNT_RATIO,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -228,6 +236,8 @@ def _find_bb_boundaries(
 def _validate_bright_band(
     result: BrightBandResult,
     gradient: xr.DataArray,
+    ds: xr.Dataset,
+    lowest_height: int,
 ) -> bool:
     """Validate a bright band detection.
 
@@ -237,6 +247,8 @@ def _validate_bright_band(
     Args:
         result: Preliminary BB detection result
         gradient: Vertical gradient for additional checks
+        ds: Dataset with 'zcount' variable for sample count validation
+        lowest_height: Lowest height level in the profile (for near-surface check)
 
     Returns:
         True if the detection passes validation
@@ -263,6 +275,95 @@ def _validate_bright_band(
             if grad_above > result.amplitude_above / 2:
                 return False
 
+    # Near-surface BB validation: when BB bottom is at lowest 1-2 levels,
+    # check sample counts (Zcount) are sufficient
+    # Perl: lines 1051-1075 in allprof_prodx2.pl
+    if result.bottom_height is not None and "zcount" in ds:
+        if result.bottom_height in (lowest_height, lowest_height + STEP):
+            if not _validate_near_surface_bb(
+                ds, result.bottom_height, result.top_height
+            ):
+                return False
+
+    return True
+
+
+def _validate_near_surface_bb(
+    ds: xr.Dataset,
+    bottom_height: int,
+    top_height: int | None,
+) -> bool:
+    """Validate bright band when it appears at near-surface levels.
+
+    When the BB bottom is at the lowest 1-2 levels, additional checks
+    on sample counts prevent false detection from ground clutter.
+
+    Perl logic (lines 1051-1075 allprof_prodx2.pl):
+        if ($bbalku == $alintaso or $bbalku == $alintaso + 200):
+            if (Zcount[bbalku] < 500 or Zcount[zyla] < 500
+                or Zcount[zyla]/Zcount[bbalku] < 0.7):
+                bb = 0  # reject
+
+    Args:
+        ds: Dataset with 'zcount' variable
+        bottom_height: BB bottom height
+        top_height: BB top height
+
+    Returns:
+        True if the near-surface BB passes validation
+    """
+    if top_height is None:
+        return False
+
+    if "zcount" not in ds:
+        # No sample count data, can't validate
+        logger.debug("Near-surface BB validation skipped: no zcount data")
+        return True
+
+    heights = ds["height"].values
+    zcount = ds["zcount"]
+
+    # Get sample counts at BB bottom and top
+    if bottom_height not in heights or top_height not in heights:
+        return False
+
+    zcount_bottom = float(zcount.sel(height=bottom_height).values)
+    zcount_top = float(zcount.sel(height=top_height).values)
+
+    # Check minimum sample count at both levels
+    if zcount_bottom < NEAR_SURFACE_BB_MIN_ZCOUNT:
+        logger.debug(
+            "Near-surface BB rejected: Zcount at bottom (%d) < %d",
+            zcount_bottom,
+            NEAR_SURFACE_BB_MIN_ZCOUNT,
+        )
+        return False
+
+    if zcount_top < NEAR_SURFACE_BB_MIN_ZCOUNT:
+        logger.debug(
+            "Near-surface BB rejected: Zcount at top (%d) < %d",
+            zcount_top,
+            NEAR_SURFACE_BB_MIN_ZCOUNT,
+        )
+        return False
+
+    # Check ratio of sample counts
+    if zcount_bottom > 0:
+        ratio = zcount_top / zcount_bottom
+        if ratio < NEAR_SURFACE_BB_MIN_ZCOUNT_RATIO:
+            logger.debug(
+                "Near-surface BB rejected: Zcount ratio (%.2f) < %.2f",
+                ratio,
+                NEAR_SURFACE_BB_MIN_ZCOUNT_RATIO,
+            )
+            return False
+
+    logger.debug(
+        "Near-surface BB validated: Zcount bottom=%d, top=%d, ratio=%.2f",
+        zcount_bottom,
+        zcount_top,
+        zcount_top / zcount_bottom if zcount_bottom > 0 else 0,
+    )
     return True
 
 
@@ -388,8 +489,9 @@ def detect_bright_band(
         freezing_level_m=freezing_level,
     )
 
-    # Validate
-    if not _validate_bright_band(result, gradient):
+    # Validate (pass dataset and lowest height for near-surface checks)
+    lowest_height = int(heights[0])
+    if not _validate_bright_band(result, gradient, ds, lowest_height):
         result.detected = False
 
     return result

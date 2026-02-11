@@ -212,3 +212,4 @@ What's currently implemented:
 - **Zero vs. missing**: Legacy code uses `-45` for missing, not `NaN` or `0`
 - **Radar codes**: Three-letter codes (KAN, VAN, IKA) map to full names (see `allprof_prodx2.pl` line 32+)
 - **Attention to details**: The legacy code handles many edge cases and has specific logic for different profile types. Pay close attention to the Perl code comments and structure when implementing. For example, bright band at or near the surface is an important special case that can cause heavily misguided correction if not handled correctly.
+- **prefer runTests** over running tests with bash command.
