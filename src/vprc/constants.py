@@ -76,6 +76,20 @@ DEFAULT_MAX_RANGE_KM = 250
 DEFAULT_RANGE_STEP_KM = 1
 
 # -----------------------------------------------------------------------------
+# Bright Band Slope Adjustment Constants (from allprof_prodx2.pl lines 1304-1318)
+# -----------------------------------------------------------------------------
+
+# Slope threshold for BB adjustment (dBZ per 200m step)
+# When slope exceeds this, ground reference is adjusted to avoid over-correction
+# Perl variable: $bbkallistus threshold (0.2)
+BB_SLOPE_THRESHOLD = 0.2
+
+# Maximum height for BB lower edge to trigger slope adjustment (meters)
+# Adjustment only applied when BB lower edge (zala) is below this height
+# Perl: condition `$zala < 600`
+BB_SLOPE_HEIGHT_LIMIT_M = 600
+
+# -----------------------------------------------------------------------------
 # Temporal Averaging Constants (from pystycappi_ka.pl)
 # -----------------------------------------------------------------------------
 

@@ -19,11 +19,10 @@ from dataclasses import dataclass
 import numpy as np
 import xarray as xr
 from wradlib.georef import bin_altitude
-from wradlib.trafo import decibel, idecibel
+from wradlib.trafo import idecibel
 
 from .constants import (
     MDS,
-    STEP,
     FINE_GRID_RESOLUTION_M,
     MAX_PROFILE_HEIGHT_M,
     DEFAULT_BEAMWIDTH_DEG,
@@ -32,7 +31,15 @@ from .constants import (
     DEFAULT_CAPPI_HEIGHTS_M,
     DEFAULT_MAX_RANGE_KM,
     DEFAULT_RANGE_STEP_KM,
+    BB_SLOPE_THRESHOLD,
+    BB_SLOPE_HEIGHT_LIMIT_M,
 )
+
+# Import for type annotation only
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .bright_band import BrightBandResult
 
 
 # Quality weight calculation constants (from allprof_prodx2.pl lines 1188-1219)
@@ -350,6 +357,155 @@ def compute_quality_weight(
     return z_sum / normalization
 
 
+def compute_bb_slope(
+    dbz_values: np.ndarray,
+    heights: np.ndarray,
+    bb_bottom_height: int,
+    bb_top_height: int,
+) -> float:
+    """Compute bright band slope in dBZ per 200m step.
+
+    The slope indicates how steep the reflectivity gradient is within the
+    bright band. Steep slopes near the surface can cause over-correction
+    if not handled properly.
+
+    Based on allprof_prodx2.pl line 1307:
+        $bbkallistus = ($kortaulu[$zala][$j][0] - $kortaulu[$zyla][$j][0]) /
+                       ($zyla - $zala) * 200
+
+    Args:
+        dbz_values: Array of dBZ values indexed by height
+        heights: Array of heights (m above antenna)
+        bb_bottom_height: Lower boundary of bright band (m)
+        bb_top_height: Upper boundary of bright band (m)
+
+    Returns:
+        Slope in dBZ per 200m step. Positive values indicate decreasing
+        reflectivity with height (typical BB shape).
+    """
+    # Find indices for BB boundaries
+    bottom_idx = np.argmin(np.abs(heights - bb_bottom_height))
+    top_idx = np.argmin(np.abs(heights - bb_top_height))
+
+    dbz_bottom = dbz_values[bottom_idx]
+    dbz_top = dbz_values[top_idx]
+
+    height_diff = bb_top_height - bb_bottom_height
+    if height_diff == 0:
+        return 0.0
+
+    # Slope in dBZ per 200m
+    return (dbz_bottom - dbz_top) / height_diff * 200
+
+
+def adjust_ground_reference(
+    dbz_values: np.ndarray,
+    heights: np.ndarray,
+    bb_result: "BrightBandResult",
+    lowest_height: int,
+    slope_threshold: float = BB_SLOPE_THRESHOLD,
+    height_limit_m: int = BB_SLOPE_HEIGHT_LIMIT_M,
+) -> tuple[float, bool]:
+    """Adjust ground reference value when bright band is near surface.
+
+    When a steep bright band is close to the surface, the enhanced reflectivity
+    within the BB can cause over-correction. This function adjusts the ground
+    reference to use an extrapolated value from above the BB instead.
+
+    Based on allprof_prodx2.pl lines 1304-1318:
+        - If BB peak is at lowest level: use value at BB top
+        - If BB lower edge < 600m and slope > 0.2: extrapolate from BB top
+        - Cap adjusted value at observed lowest-level dBZ
+
+    Args:
+        dbz_values: Array of dBZ values indexed by height
+        heights: Array of heights (m above antenna)
+        bb_result: BrightBandResult with BB boundaries
+        lowest_height: Lowest profile level height (m)
+        slope_threshold: Minimum slope to trigger adjustment (dBZ/200m)
+        height_limit_m: Maximum BB bottom height for adjustment (m)
+
+    Returns:
+        Tuple of (adjusted_dbz, was_adjusted) where adjusted_dbz is the
+        reference value to use and was_adjusted indicates if adjustment
+        was applied.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Find lowest valid index
+    valid_mask = dbz_values > MDS
+    if not np.any(valid_mask):
+        return MDS, False
+
+    lowest_valid_idx = np.argmax(valid_mask)
+    original_dbz = float(dbz_values[lowest_valid_idx])
+
+    # No BB detected - use original value
+    if not bb_result.detected:
+        return original_dbz, False
+
+    bb_bottom = bb_result.bottom_height
+    bb_top = bb_result.top_height
+    bb_peak = bb_result.peak_height
+
+    if bb_bottom is None or bb_top is None or bb_peak is None:
+        return original_dbz, False
+
+    # Find dBZ at BB top
+    top_idx = np.argmin(np.abs(heights - bb_top))
+    dbz_at_top = float(dbz_values[top_idx])
+
+    # Case 1: BB peak is at the lowest level
+    # Perl: if ($bbhuippu == $alintaso) { $kortaulu[$alintaso][$j][0] = $isotaulu[$zyla][$j][5] }
+    if bb_peak == lowest_height:
+        logger.debug(
+            "BB peak at lowest level (%dm), using BB top value: %.1f dBZ",
+            lowest_height,
+            dbz_at_top,
+        )
+        return dbz_at_top, True
+
+    # Case 2: BB lower edge is above ground but near surface with steep slope
+    # Perl: if ($zala > 0 and $zala < 600 and $bbkallistus > 0.2)
+    if bb_bottom > lowest_height and bb_bottom < height_limit_m:
+        slope = compute_bb_slope(dbz_values, heights, bb_bottom, bb_top)
+
+        if slope > slope_threshold:
+            # Extrapolate from BB top downward
+            # Perl: $kortaulu[$zyla][$j][0] + $zyla / 200 * 0.2
+            adjusted_dbz = dbz_at_top + bb_top / 200 * 0.2
+
+            # Safety cap: don't exceed observed lowest-level value
+            # Perl: if ($isotaulu[$alintaso][$j][5] < $kortaulu[$alintaso][$j][0])
+            if original_dbz < adjusted_dbz:
+                logger.debug(
+                    "BB slope adjustment capped: adjusted %.1f dBZ > observed %.1f dBZ",
+                    adjusted_dbz,
+                    original_dbz,
+                )
+                return original_dbz, False
+
+            logger.debug(
+                "BB slope adjustment applied: bottom=%dm, slope=%.2f dBZ/200m, "
+                "original=%.1f dBZ -> adjusted=%.1f dBZ",
+                bb_bottom,
+                slope,
+                original_dbz,
+                adjusted_dbz,
+            )
+            return adjusted_dbz, True
+        else:
+            logger.debug(
+                "BB near surface but slope %.2f <= threshold %.2f, no adjustment",
+                slope,
+                slope_threshold,
+            )
+
+    return original_dbz, False
+
+
 def compute_vpr_correction(
     ds: xr.Dataset,
     cappi_heights_m: tuple[int, ...] | None = None,
@@ -361,6 +517,7 @@ def compute_vpr_correction(
     freezing_level_m: float | None = None,
     include_clim: bool = True,
     clim_weight: float = 0.2,
+    bb_result: "BrightBandResult | None" = None,
 ) -> VPRCorrectionResult:
     """Compute VPR correction factors vs range for CAPPI heights and elevations.
 
@@ -388,6 +545,8 @@ def compute_vpr_correction(
         include_clim: Whether to compute climatological corrections (default True).
         clim_weight: Fixed weight for climatological correction in blending.
             Default 0.2 (from pystycappi_ka.pl).
+        bb_result: Bright band detection result. If provided, enables slope
+            adjustment when BB is near the surface with steep gradient.
 
     Returns:
         VPRCorrectionResult containing:
@@ -409,6 +568,9 @@ def compute_vpr_correction(
         >>> result.corrections['cappi_blended_correction_db'].sel(cappi_height=500, range_km=100)
     """
     from .climatology import generate_climatological_profile, get_clim_ground_reference
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     if cappi_heights_m is None:
         cappi_heights_m = DEFAULT_CAPPI_HEIGHTS_M
@@ -452,8 +614,20 @@ def compute_vpr_correction(
             clim_weight=clim_weight,
         )
 
-    lowest_valid_idx = np.argmax(valid_mask)
-    z_ground_dbz = float(dbz_values[lowest_valid_idx])
+    # Apply bright band slope adjustment if BB result provided
+    lowest_height = int(heights[0])
+    if bb_result is not None:
+        z_ground_dbz, adjusted = adjust_ground_reference(
+            dbz_values, heights, bb_result, lowest_height
+        )
+        if adjusted:
+            logger.info(
+                "Ground reference adjusted for BB slope: %.1f dBZ", z_ground_dbz
+            )
+    else:
+        lowest_valid_idx = np.argmax(valid_mask)
+        z_ground_dbz = float(dbz_values[lowest_valid_idx])
+
     z_ground = idecibel(z_ground_dbz)
 
     # Create range array

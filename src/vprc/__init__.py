@@ -162,6 +162,7 @@ def process_vvp(
             ds,
             freezing_level_m=freezing_level_m,
             cappi_heights_m=cappi_heights_m,
+            bb_result=bright_band,
         )
 
     return ProcessedProfile(
