@@ -15,12 +15,18 @@ Layer types:
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
+import logging
 
 import numpy as np
 import xarray as xr
 
-from .constants import MDS, MIN_SAMPLES, EVAPORATION_THRESHOLD_DB
+from .constants import MDS, MIN_SAMPLES, EVAPORATION_THRESHOLD_DB, SNOW_FREEZING_LEVEL_THRESHOLD_M
+
+if TYPE_CHECKING:
+    from .bright_band import BrightBandResult
+
+logger = logging.getLogger(__name__)
 
 
 class LayerType(Enum):
@@ -35,6 +41,19 @@ class LayerType(Enum):
     CLEAR_AIR_ECHO = "clear_air_echo"
     GROUND_CLUTTER = "ground_clutter"
     UNKNOWN = "unknown"
+
+
+class PrecipitationType(Enum):
+    """Precipitation phase/type classification.
+
+    Perl: $sade values 2=snow, 3=sleet, 4=rain (lines 1334-1356).
+    Based on bright band detection and freezing level height.
+    """
+
+    UNKNOWN = "unknown"  # Not precipitation or unclassified
+    SNOW = "snow"        # No BB, freezing level < 500m
+    SLEET = "sleet"      # BB detected, bottom at/below ground
+    RAIN = "rain"        # BB with bottom above ground, or FL >= 500m
 
 
 @dataclass
@@ -87,12 +106,14 @@ class ProfileClassification:
         usable_for_vpr: True if profile is suitable for VPR correction
         profile_type: Summary classification based on lowest layer
         freezing_level_m: Freezing level used for classification (if available)
+        precipitation_type: Phase classification (snow/sleet/rain) if precipitation
     """
 
     layers: list[EchoLayer] = field(default_factory=list)
     usable_for_vpr: bool = False
     profile_type: LayerType = LayerType.UNKNOWN
     freezing_level_m: float | None = None
+    precipitation_type: PrecipitationType = PrecipitationType.UNKNOWN
 
     @property
     def num_layers(self) -> int:
@@ -453,3 +474,69 @@ def classify_profiles(
         results.append(classify_profile(ds_t, min_samples))
 
     return results
+
+
+def classify_precipitation_type(
+    bb_result: "BrightBandResult",
+    freezing_level_m: float | None,
+    lowest_profile_height: int,
+) -> PrecipitationType:
+    """Classify precipitation phase based on bright band and freezing level.
+
+    Determines whether precipitation is snow, sleet, or rain based on:
+    - Bright band detection and position relative to ground
+    - Freezing level height when no bright band is detected
+
+    Perl logic (lines 1334-1356 allprof_prodx2.pl):
+    - Snow: no BB and freezing level < 500m
+    - Sleet: BB detected with bottom at/below ground level
+    - Rain: BB with bottom above ground, or freezing level >= 500m without BB
+
+    Args:
+        bb_result: Bright band detection result
+        freezing_level_m: Freezing level in meters above antenna (from NWP)
+        lowest_profile_height: Lowest height in the profile (m above antenna)
+
+    Returns:
+        PrecipitationType indicating precipitation phase
+    """
+    # If freezing level is not available, cannot classify
+    if freezing_level_m is None:
+        logger.debug("Cannot classify precipitation type: no freezing level")
+        return PrecipitationType.UNKNOWN
+
+    if bb_result.detected:
+        # BB detected - check if bottom is at/below ground
+        bb_bottom = bb_result.bottom_height
+        if bb_bottom is not None and bb_bottom <= lowest_profile_height:
+            # BB extends to ground level - sleet/mixed precipitation
+            logger.debug(
+                "Precipitation type: SLEET (BB bottom %d <= ground %d)",
+                bb_bottom,
+                lowest_profile_height,
+            )
+            return PrecipitationType.SLEET
+        else:
+            # BB above ground - rain
+            logger.debug(
+                "Precipitation type: RAIN (BB bottom %s > ground %d)",
+                bb_bottom,
+                lowest_profile_height,
+            )
+            return PrecipitationType.RAIN
+    else:
+        # No BB detected - use freezing level threshold
+        if freezing_level_m < SNOW_FREEZING_LEVEL_THRESHOLD_M:
+            logger.debug(
+                "Precipitation type: SNOW (no BB, FL %.0f < %d)",
+                freezing_level_m,
+                SNOW_FREEZING_LEVEL_THRESHOLD_M,
+            )
+            return PrecipitationType.SNOW
+        else:
+            logger.debug(
+                "Precipitation type: RAIN (no BB, FL %.0f >= %d)",
+                freezing_level_m,
+                SNOW_FREEZING_LEVEL_THRESHOLD_M,
+            )
+            return PrecipitationType.RAIN

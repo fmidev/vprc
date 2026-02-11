@@ -26,7 +26,13 @@ import xarray as xr
 from .io import read_vvp  # Used internally by process_vvp
 from .clutter import remove_ground_clutter
 from .smoothing import smooth_spikes
-from .classification import classify_profile, ProfileClassification, LayerType
+from .classification import (
+    classify_profile,
+    ProfileClassification,
+    LayerType,
+    PrecipitationType,
+    classify_precipitation_type,
+)
 from .bright_band import (
     detect_bright_band,
     BrightBandResult,
@@ -165,6 +171,20 @@ def process_vvp(
         if bright_band.detected and bright_band.top_height is not None:
             freezing_level_m = float(bright_band.top_height)
 
+    # Step 5d: Precipitation type classification
+    lowest_height = int(ds["height"].values[0])
+    precip_type = classify_precipitation_type(
+        bright_band, freezing_level_m, lowest_height
+    )
+    # Update classification with precipitation type
+    classification = ProfileClassification(
+        layers=classification.layers,
+        usable_for_vpr=classification.usable_for_vpr,
+        profile_type=classification.profile_type,
+        freezing_level_m=classification.freezing_level_m,
+        precipitation_type=precip_type,
+    )
+
     # Step 6: VPR correction (if requested)
     # Always compute corrections when freezing level is available - unusable
     # profiles will get climatology-only corrections (quality_weight=0)
@@ -190,6 +210,8 @@ __all__ = [
     "ProcessedProfile",
     "ProfileClassification",
     "LayerType",
+    "PrecipitationType",
+    "classify_precipitation_type",
     "BrightBandResult",
     "BBRejectionReason",
     "apply_post_bb_clutter_correction",

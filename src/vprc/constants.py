@@ -149,6 +149,11 @@ BB_SPIKE_RESTORATION_OFFSETS = (-2*STEP, -STEP, 0, STEP, 2*STEP)
 # Perl: `if ( $evapor > 20 )` (lines 1174-1185)
 EVAPORATION_THRESHOLD_DB = 20.0
 
+# Freezing level threshold for snow classification when no BB detected (meters)
+# If freezing level < this and no BB, precipitation is snow
+# Perl: `if ( $kerrostaulu[1][$j][7] == 0 and $nollaraja_ps < 500 )` (line 1337)
+SNOW_FREEZING_LEVEL_THRESHOLD_M = 500
+
 # -----------------------------------------------------------------------------
 # Temporal Averaging Constants (from pystycappi_ka.pl)
 # -----------------------------------------------------------------------------

@@ -7,14 +7,17 @@ import xarray as xr
 from vprc.classification import (
     EchoLayer,
     LayerType,
+    PrecipitationType,
     ProfileClassification,
     _find_echo_layers,
     _classify_layer,
     _check_evaporation,
     classify_profile,
     classify_profiles,
+    classify_precipitation_type,
 )
-from vprc.constants import MDS, MIN_SAMPLES, EVAPORATION_THRESHOLD_DB
+from vprc.constants import MDS, MIN_SAMPLES, EVAPORATION_THRESHOLD_DB, SNOW_FREEZING_LEVEL_THRESHOLD_M
+from vprc.bright_band import BrightBandResult
 
 
 def make_test_dataset(
@@ -421,3 +424,123 @@ class TestEvaporationCheck:
         assert layer.max_dbz_height == 500
         assert layer.min_dbz_below_max == 10.0
         assert layer.min_dbz_height == 100
+
+
+class TestClassifyPrecipitationType:
+    """Tests for precipitation phase classification.
+
+    Perl logic (lines 1334-1356 allprof_prodx2.pl):
+    - Snow ($sade=2): no BB and freezing level < 500m
+    - Sleet ($sade=3): BB detected with bottom at/below ground
+    - Rain ($sade=4): BB above ground or freezing level >= 500m without BB
+    """
+
+    def test_snow_no_bb_low_freezing_level(self):
+        """Snow when no BB detected and freezing level < 500m."""
+        bb = BrightBandResult(detected=False)
+        result = classify_precipitation_type(
+            bb, freezing_level_m=300, lowest_profile_height=100
+        )
+        assert result == PrecipitationType.SNOW
+
+    def test_snow_boundary_freezing_level(self):
+        """Snow at threshold boundary (< 500m)."""
+        bb = BrightBandResult(detected=False)
+        result = classify_precipitation_type(
+            bb, freezing_level_m=499, lowest_profile_height=100
+        )
+        assert result == PrecipitationType.SNOW
+
+    def test_rain_no_bb_high_freezing_level(self):
+        """Rain when no BB and freezing level >= 500m."""
+        bb = BrightBandResult(detected=False)
+        result = classify_precipitation_type(
+            bb, freezing_level_m=500, lowest_profile_height=100
+        )
+        assert result == PrecipitationType.RAIN
+
+    def test_rain_no_bb_well_above_threshold(self):
+        """Rain when no BB and freezing level well above threshold."""
+        bb = BrightBandResult(detected=False)
+        result = classify_precipitation_type(
+            bb, freezing_level_m=2000, lowest_profile_height=100
+        )
+        assert result == PrecipitationType.RAIN
+
+    def test_sleet_bb_at_ground(self):
+        """Sleet when BB bottom is at ground level."""
+        bb = BrightBandResult(
+            detected=True,
+            peak_height=300,
+            bottom_height=100,  # Same as lowest_profile_height
+            top_height=500,
+        )
+        result = classify_precipitation_type(
+            bb, freezing_level_m=600, lowest_profile_height=100
+        )
+        assert result == PrecipitationType.SLEET
+
+    def test_sleet_bb_below_ground(self):
+        """Sleet when BB bottom would be below profile lowest level."""
+        bb = BrightBandResult(
+            detected=True,
+            peak_height=200,
+            bottom_height=50,  # Below lowest profile height
+            top_height=400,
+        )
+        result = classify_precipitation_type(
+            bb, freezing_level_m=500, lowest_profile_height=100
+        )
+        assert result == PrecipitationType.SLEET
+
+    def test_rain_bb_above_ground(self):
+        """Rain when BB is clearly above ground."""
+        bb = BrightBandResult(
+            detected=True,
+            peak_height=1500,
+            bottom_height=1100,  # Well above ground
+            top_height=1900,
+        )
+        result = classify_precipitation_type(
+            bb, freezing_level_m=2000, lowest_profile_height=100
+        )
+        assert result == PrecipitationType.RAIN
+
+    def test_rain_bb_just_above_ground(self):
+        """Rain when BB bottom is just above ground level."""
+        bb = BrightBandResult(
+            detected=True,
+            peak_height=500,
+            bottom_height=300,  # One step above ground
+            top_height=700,
+        )
+        result = classify_precipitation_type(
+            bb, freezing_level_m=800, lowest_profile_height=100
+        )
+        assert result == PrecipitationType.RAIN
+
+    def test_unknown_when_no_freezing_level(self):
+        """Unknown type when freezing level is not available."""
+        bb = BrightBandResult(detected=True, peak_height=1000)
+        result = classify_precipitation_type(
+            bb, freezing_level_m=None, lowest_profile_height=100
+        )
+        assert result == PrecipitationType.UNKNOWN
+
+    def test_bb_detected_but_no_bottom_height(self):
+        """Rain when BB detected but bottom_height is None."""
+        bb = BrightBandResult(
+            detected=True,
+            peak_height=1000,
+            bottom_height=None,  # Not determined
+            top_height=1200,
+        )
+        result = classify_precipitation_type(
+            bb, freezing_level_m=1500, lowest_profile_height=100
+        )
+        # Without bottom height, cannot determine sleet, defaults to rain
+        assert result == PrecipitationType.RAIN
+
+    def test_threshold_matches_constant(self):
+        """Verify threshold matches the constant value."""
+        assert SNOW_FREEZING_LEVEL_THRESHOLD_M == 500
