@@ -107,6 +107,34 @@ NEAR_SURFACE_BB_MIN_ZCOUNT = 500
 NEAR_SURFACE_BB_MIN_ZCOUNT_RATIO = 0.7
 
 # -----------------------------------------------------------------------------
+# Post-BB Ground Clutter Correction Constants (from allprof_prodx2.pl)
+# -----------------------------------------------------------------------------
+
+# Maximum dBZ increase allowed between adjacent levels for clutter correction
+# If lower level > upper level + this threshold, lower is capped
+# Perl: `$isotaulu[$i - 200][$j][0] > $isotaulu[$i][$j][0] + 1`
+POST_BB_CLUTTER_THRESHOLD_DB = 1.0
+
+# BB bottom height threshold for triggering post-BB clutter correction (meters)
+# When BB bottom <= this value, clutter correction is applied below BB
+# Perl: `if ( $zala <= 800 and $bb == 1 )`
+LOW_BB_HEIGHT_M = 800
+
+# Height range above lowest level for post-BB clutter correction (meters)
+# Correction is applied from lowest level to lowest + this value
+# Perl: `for ( $i = $alintaso + 600 ; $i > $alintaso ; $i = $i - 200 )`
+POST_BB_CLUTTER_HEIGHT_M = 600
+
+# Threshold for large dBZ jump smoothing in post-BB correction (dB)
+# If jump between levels > this, apply additional smoothing
+# Perl: `if ( $isotaulu[ $i + 200 ][$j][5] - $isotaulu[$i][$j][5] > 6 )`
+LARGE_JUMP_THRESHOLD_DB = 6.0
+
+# Maximum freezing level for applying clutter correction when no BB detected
+# Perl: `$bb == 0 and $nollaraja <= 1000`
+NO_BB_CLUTTER_FREEZING_LEVEL_M = 1000
+
+# -----------------------------------------------------------------------------
 # Temporal Averaging Constants (from pystycappi_ka.pl)
 # -----------------------------------------------------------------------------
 

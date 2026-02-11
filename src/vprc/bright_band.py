@@ -16,6 +16,7 @@ Detection approach:
 
 import logging
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 import numpy as np
@@ -26,9 +27,28 @@ from .constants import (
     STEP,
     NEAR_SURFACE_BB_MIN_ZCOUNT,
     NEAR_SURFACE_BB_MIN_ZCOUNT_RATIO,
+    POST_BB_CLUTTER_THRESHOLD_DB,
+    LOW_BB_HEIGHT_M,
+    POST_BB_CLUTTER_HEIGHT_M,
+    LARGE_JUMP_THRESHOLD_DB,
+    NO_BB_CLUTTER_FREEZING_LEVEL_M,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class BBRejectionReason(Enum):
+    """Reason for bright band detection rejection.
+
+    Used to determine which post-BB clutter correction to apply.
+    """
+
+    NOT_REJECTED = "not_rejected"
+    NO_CANDIDATES = "no_candidates"
+    LAYER_TOO_LOW = "layer_too_low"
+    FREEZING_LEVEL_INVALID = "freezing_level_invalid"
+    VALIDATION_FAILED = "validation_failed"
+    NEAR_SURFACE_ZCOUNT = "near_surface_zcount"  # Triggers clutter correction
 
 
 @dataclass
@@ -44,6 +64,8 @@ class BrightBandResult:
         amplitude_below: dBZ difference from bottom to peak
         amplitude_above: dBZ difference from peak to top
         freezing_level_m: Freezing level used for detection (if available)
+        rejection_reason: Why BB was rejected (if not detected)
+        clutter_correction_applied: True if post-BB clutter correction was applied
     """
 
     detected: bool = False
@@ -54,6 +76,8 @@ class BrightBandResult:
     amplitude_below: float | None = None
     amplitude_above: float | None = None
     freezing_level_m: float | None = None
+    rejection_reason: BBRejectionReason = BBRejectionReason.NOT_REJECTED
+    clutter_correction_applied: bool = False
 
     @property
     def thickness(self) -> int | None:
@@ -238,7 +262,7 @@ def _validate_bright_band(
     gradient: xr.DataArray,
     ds: xr.Dataset,
     lowest_height: int,
-) -> bool:
+) -> BBRejectionReason | None:
     """Validate a bright band detection.
 
     Applies quality checks from the Perl implementation to reject
@@ -251,18 +275,18 @@ def _validate_bright_band(
         lowest_height: Lowest height level in the profile (for near-surface check)
 
     Returns:
-        True if the detection passes validation
+        None if validation passes, or BBRejectionReason if rejected
     """
     if result.top_height is None:
-        return False
+        return BBRejectionReason.VALIDATION_FAILED
 
     # Check thickness is reasonable (not too thin)
     if result.thickness is not None and result.thickness < 400:
-        return False
+        return BBRejectionReason.VALIDATION_FAILED
 
     # Check amplitude above is meaningful
     if result.amplitude_above is not None and result.amplitude_above < 1.0:
-        return False
+        return BBRejectionReason.VALIDATION_FAILED
 
     # Gradient check above BB top should show continued decrease
     # Perl: if ($isotaulu[$zyla][$j][3] * 200 > $ylaamp / 2) -> reject
@@ -273,7 +297,7 @@ def _validate_bright_band(
         if not np.isnan(grad_above) and result.amplitude_above is not None:
             # grad_above is dBZ/step; if positive and > half the amplitude, reject
             if grad_above > result.amplitude_above / 2:
-                return False
+                return BBRejectionReason.VALIDATION_FAILED
 
     # Near-surface BB validation: when BB bottom is at lowest 1-2 levels,
     # check sample counts (Zcount) are sufficient
@@ -283,9 +307,9 @@ def _validate_bright_band(
             if not _validate_near_surface_bb(
                 ds, result.bottom_height, result.top_height
             ):
-                return False
+                return BBRejectionReason.NEAR_SURFACE_ZCOUNT
 
-    return True
+    return None
 
 
 def _validate_near_surface_bb(
@@ -432,12 +456,16 @@ def detect_bright_band(
     # Skip detection if freezing level is not positive or layer too low
     if freezing_level is not None and freezing_level <= 0:
         return BrightBandResult(
-            detected=False, freezing_level_m=freezing_level
+            detected=False,
+            freezing_level_m=freezing_level,
+            rejection_reason=BBRejectionReason.FREEZING_LEVEL_INVALID,
         )
 
     if layer_top < 1300:
         return BrightBandResult(
-            detected=False, freezing_level_m=freezing_level
+            detected=False,
+            freezing_level_m=freezing_level,
+            rejection_reason=BBRejectionReason.LAYER_TOO_LOW,
         )
 
     # Compute gradient (dBZ per step, not per meter)
@@ -448,7 +476,9 @@ def detect_bright_band(
 
     if not candidates:
         return BrightBandResult(
-            detected=False, freezing_level_m=freezing_level
+            detected=False,
+            freezing_level_m=freezing_level,
+            rejection_reason=BBRejectionReason.NO_CANDIDATES,
         )
 
     # Select best candidate based on proximity to freezing level
@@ -468,7 +498,9 @@ def detect_bright_band(
 
     if best_candidate is None:
         return BrightBandResult(
-            detected=False, freezing_level_m=freezing_level
+            detected=False,
+            freezing_level_m=freezing_level,
+            rejection_reason=BBRejectionReason.NO_CANDIDATES,
         )
 
     # Find boundaries
@@ -491,7 +523,171 @@ def detect_bright_band(
 
     # Validate (pass dataset and lowest height for near-surface checks)
     lowest_height = int(heights[0])
-    if not _validate_bright_band(result, gradient, ds, lowest_height):
+    rejection_reason = _validate_bright_band(result, gradient, ds, lowest_height)
+    if rejection_reason is not None:
         result.detected = False
+        result.rejection_reason = rejection_reason
 
     return result
+
+
+def apply_post_bb_clutter_correction(
+    ds: xr.Dataset,
+    bb_result: BrightBandResult,
+) -> tuple[xr.Dataset, BrightBandResult]:
+    """Apply ground clutter correction after BB detection/rejection.
+
+    This function handles three scenarios from allprof_prodx2.pl (lines 1051-1144):
+
+    1. Near-surface BB rejected due to zcount validation (lines 1051-1075):
+       Apply clutter correction in lowest 600m above antenna.
+
+    2. Valid BB with low bottom height ≤800m (lines 1104-1118):
+       Apply clutter correction from BB bottom down to lowest level.
+
+    3. No BB detected + low freezing level ≤1000m, OR valid BB with bottom >800m
+       (lines 1121-1144): Apply clutter correction in lowest 600m with smoothing.
+
+    The correction caps lower level values to upper level + 1 dB when the lower
+    level exceeds this threshold, preventing artificial enhancement from clutter.
+
+    Args:
+        ds: Dataset with 'corrected_dbz' after initial processing
+        bb_result: Result from detect_bright_band()
+
+    Returns:
+        Tuple of (corrected dataset, updated BrightBandResult with clutter flag)
+    """
+    heights = ds["height"].values
+    lowest_height = int(heights[0])
+    freezing_level = bb_result.freezing_level_m
+
+    # Determine which correction scenario applies
+    scenario = _determine_clutter_scenario(bb_result, freezing_level)
+
+    if scenario is None:
+        # No correction needed
+        return ds, bb_result
+
+    logger.debug("Applying post-BB clutter correction: scenario %s", scenario)
+
+    # Make a copy to avoid modifying original
+    ds = ds.copy(deep=True)
+    corrected = ds["corrected_dbz"].values.copy()
+    original = ds["corrected_dbz"].values.copy()  # Keep original for reference
+
+    # Determine correction range based on scenario
+    if scenario == "near_surface_rejected":
+        # Scenario A: Rejected near-surface BB -> correct lowest 600m
+        correction_top = lowest_height + POST_BB_CLUTTER_HEIGHT_M
+        correction_bottom = lowest_height
+        use_corrected_reference = False  # Use original values as reference
+    elif scenario == "low_bb_bottom":
+        # Scenario B: Valid BB with low bottom -> correct below BB
+        correction_top = bb_result.bottom_height
+        correction_bottom = lowest_height
+        use_corrected_reference = True  # Use corrected values as reference
+    else:
+        # Scenario C: High BB or no BB with low freezing -> correct lowest 600m with smoothing
+        correction_top = lowest_height + POST_BB_CLUTTER_HEIGHT_M
+        correction_bottom = lowest_height
+        use_corrected_reference = True
+        # This scenario also applies smoothing for large jumps
+
+    # Apply correction from top down
+    height_indices = {int(h): i for i, h in enumerate(heights)}
+
+    for h in range(int(correction_top), int(correction_bottom), -STEP):
+        h_below = h - STEP
+        if h not in height_indices or h_below not in height_indices:
+            continue
+
+        idx = height_indices[h]
+        idx_below = height_indices[h_below]
+
+        # Get reference value (original or corrected depending on scenario)
+        if use_corrected_reference:
+            ref_value = corrected[idx]
+        else:
+            ref_value = original[idx]
+
+        # Check if lower level exceeds threshold
+        if original[idx_below] > ref_value + POST_BB_CLUTTER_THRESHOLD_DB:
+            corrected[idx_below] = ref_value + POST_BB_CLUTTER_THRESHOLD_DB
+            logger.debug(
+                "Clutter correction at %dm: %.1f -> %.1f dBZ",
+                h_below,
+                original[idx_below],
+                corrected[idx_below],
+            )
+
+            # Scenario C: Apply additional smoothing for large jumps
+            if scenario == "high_bb_or_no_bb":
+                h_above = h + STEP
+                if h_above in height_indices:
+                    idx_above = height_indices[h_above]
+                    if corrected[idx_above] - corrected[idx] > LARGE_JUMP_THRESHOLD_DB:
+                        # Average the middle level
+                        corrected[idx] = (corrected[idx] + corrected[idx_above]) / 2
+                        corrected[idx_below] = corrected[idx] + POST_BB_CLUTTER_THRESHOLD_DB
+                        logger.debug(
+                            "Smoothing large jump at %dm: new value %.1f dBZ",
+                            h,
+                            corrected[idx],
+                        )
+        else:
+            # Keep original value (no correction needed)
+            corrected[idx_below] = original[idx_below]
+
+    # Update dataset
+    ds["corrected_dbz"].values = corrected
+
+    # Update BB result with clutter correction flag
+    bb_result = BrightBandResult(
+        detected=bb_result.detected,
+        peak_height=bb_result.peak_height,
+        bottom_height=bb_result.bottom_height,
+        top_height=bb_result.top_height,
+        peak_dbz=bb_result.peak_dbz,
+        amplitude_below=bb_result.amplitude_below,
+        amplitude_above=bb_result.amplitude_above,
+        freezing_level_m=bb_result.freezing_level_m,
+        rejection_reason=bb_result.rejection_reason,
+        clutter_correction_applied=True,
+    )
+
+    return ds, bb_result
+
+
+def _determine_clutter_scenario(
+    bb_result: BrightBandResult,
+    freezing_level: float | None,
+) -> str | None:
+    """Determine which post-BB clutter correction scenario applies.
+
+    Args:
+        bb_result: BB detection result
+        freezing_level: Freezing level in meters (above antenna)
+
+    Returns:
+        Scenario name or None if no correction needed
+    """
+    # Scenario A: Near-surface BB rejected due to zcount
+    if bb_result.rejection_reason == BBRejectionReason.NEAR_SURFACE_ZCOUNT:
+        return "near_surface_rejected"
+
+    # Scenario B: Valid BB with low bottom height
+    if bb_result.detected and bb_result.bottom_height is not None:
+        if bb_result.bottom_height <= LOW_BB_HEIGHT_M:
+            return "low_bb_bottom"
+
+    # Scenario C: Valid BB with high bottom, OR no BB with low freezing level
+    if bb_result.detected and bb_result.bottom_height is not None:
+        if bb_result.bottom_height > LOW_BB_HEIGHT_M:
+            return "high_bb_or_no_bb"
+
+    if not bb_result.detected:
+        if freezing_level is not None and freezing_level <= NO_BB_CLUTTER_FREEZING_LEVEL_M:
+            return "high_bb_or_no_bb"
+
+    return None

@@ -27,7 +27,12 @@ from .io import read_vvp  # Used internally by process_vvp
 from .clutter import remove_ground_clutter
 from .smoothing import smooth_spikes
 from .classification import classify_profile, ProfileClassification, LayerType
-from .bright_band import detect_bright_band, BrightBandResult
+from .bright_band import (
+    detect_bright_band,
+    BrightBandResult,
+    BBRejectionReason,
+    apply_post_bb_clutter_correction,
+)
 from .vpr_correction import compute_vpr_correction, VPRCorrectionResult
 from .temporal import average_corrections
 from .climatology import generate_climatological_profile, get_clim_ground_reference
@@ -148,6 +153,9 @@ def process_vvp(
 
     bright_band = detect_bright_band(ds, layer_top=layer_top)
 
+    # Step 5b: Post-BB clutter correction (based on BB result)
+    ds, bright_band = apply_post_bb_clutter_correction(ds, bright_band)
+
     # Use provided freezing level, else detected if allowed and available
     if freezing_level_m is None and fallback_detected_freezing_level:
         if bright_band.detected and bright_band.top_height is not None:
@@ -179,6 +187,8 @@ __all__ = [
     "ProfileClassification",
     "LayerType",
     "BrightBandResult",
+    "BBRejectionReason",
+    "apply_post_bb_clutter_correction",
     "VPRCorrectionResult",
     "compute_vpr_correction",
     "average_corrections",
