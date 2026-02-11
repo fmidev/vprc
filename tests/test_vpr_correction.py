@@ -781,3 +781,127 @@ class TestBrightBandSlopeAdjustment:
         # Just verify pipeline runs without error
         # The BB result is now passed to VPR correction
         assert result.vpr_correction is not None
+
+
+class TestBBPeakAmplitudeCap:
+    """Tests for bright band peak amplitude cap at surface.
+
+    When BB peak is at the lowest level with excessive amplitude (>10 dBZ),
+    the peak dBZ is reduced to cap effective amplitude.
+
+    Based on allprof_prodx2.pl lines 1091-1098.
+    """
+
+    def test_cap_bb_peak_amplitude_no_bb(self):
+        """No BB detected - returns unchanged dataset."""
+        from vprc.vpr_correction import cap_bb_peak_amplitude
+        from vprc.bright_band import BrightBandResult
+
+        dbz_values = [35.0, 30.0, 25.0]
+        heights = [100, 300, 500]
+        ds = make_test_dataset(dbz_values, heights)
+        bb_result = BrightBandResult(detected=False)
+
+        result = cap_bb_peak_amplitude(ds, bb_result)
+
+        np.testing.assert_array_equal(
+            result["corrected_dbz"].values, ds["corrected_dbz"].values
+        )
+
+    def test_cap_bb_peak_amplitude_not_at_surface(self):
+        """BB peak not at lowest level - returns unchanged dataset."""
+        from vprc.vpr_correction import cap_bb_peak_amplitude
+        from vprc.bright_band import BrightBandResult
+
+        dbz_values = [30.0, 40.0, 25.0, 20.0]  # Peak at 300m
+        heights = [100, 300, 500, 700]
+        ds = make_test_dataset(dbz_values, heights)
+        bb_result = BrightBandResult(
+            detected=True,
+            peak_height=300,
+            bottom_height=100,
+            top_height=500,
+            amplitude_above=15.0,  # High amplitude, but not at surface
+        )
+
+        result = cap_bb_peak_amplitude(ds, bb_result)
+
+        np.testing.assert_array_equal(
+            result["corrected_dbz"].values, ds["corrected_dbz"].values
+        )
+
+    def test_cap_bb_peak_amplitude_below_threshold(self):
+        """BB at surface but amplitude below cap - returns unchanged dataset."""
+        from vprc.vpr_correction import cap_bb_peak_amplitude
+        from vprc.bright_band import BrightBandResult
+
+        dbz_values = [38.0, 30.0, 25.0]  # Peak at surface
+        heights = [100, 300, 500]
+        ds = make_test_dataset(dbz_values, heights)
+        bb_result = BrightBandResult(
+            detected=True,
+            peak_height=100,  # At lowest level
+            bottom_height=100,
+            top_height=300,
+            amplitude_above=8.0,  # Below 10 dB cap
+        )
+
+        result = cap_bb_peak_amplitude(ds, bb_result)
+
+        np.testing.assert_array_equal(
+            result["corrected_dbz"].values, ds["corrected_dbz"].values
+        )
+
+    def test_cap_bb_peak_amplitude_exceeds_threshold(self):
+        """BB at surface with high amplitude - peak is reduced."""
+        from vprc.vpr_correction import cap_bb_peak_amplitude
+        from vprc.bright_band import BrightBandResult
+
+        dbz_values = [45.0, 30.0, 25.0]  # Peak at surface with 15 dB amplitude
+        heights = [100, 300, 500]
+        ds = make_test_dataset(dbz_values, heights)
+        bb_result = BrightBandResult(
+            detected=True,
+            peak_height=100,  # At lowest level
+            bottom_height=100,
+            top_height=300,
+            peak_dbz=45.0,
+            amplitude_above=15.0,  # Exceeds 10 dB cap
+        )
+
+        result = cap_bb_peak_amplitude(ds, bb_result)
+
+        # Peak should be reduced by (15 - 10) = 5 dB
+        # New peak: 45 - 5 = 40 dBZ
+        expected_peak = 45.0 - (15.0 - 10.0)
+        assert result["corrected_dbz"].sel(height=100).values == expected_peak
+
+        # Other values unchanged
+        assert result["corrected_dbz"].sel(height=300).values == 30.0
+        assert result["corrected_dbz"].sel(height=500).values == 25.0
+
+    def test_cap_bb_peak_amplitude_custom_threshold(self):
+        """Custom amplitude cap threshold is respected."""
+        from vprc.vpr_correction import cap_bb_peak_amplitude
+        from vprc.bright_band import BrightBandResult
+
+        dbz_values = [40.0, 30.0, 25.0]  # 10 dB amplitude
+        heights = [100, 300, 500]
+        ds = make_test_dataset(dbz_values, heights)
+        bb_result = BrightBandResult(
+            detected=True,
+            peak_height=100,
+            bottom_height=100,
+            top_height=300,
+            peak_dbz=40.0,
+            amplitude_above=10.0,
+        )
+
+        # With default cap (10), no reduction
+        result_default = cap_bb_peak_amplitude(ds, bb_result)
+        assert result_default["corrected_dbz"].sel(height=100).values == 40.0
+
+        # With lower cap (5), peak is reduced
+        result_lower = cap_bb_peak_amplitude(ds, bb_result, amplitude_cap_db=5.0)
+        expected_peak = 40.0 - (10.0 - 5.0)  # 35 dBZ
+        assert result_lower["corrected_dbz"].sel(height=100).values == expected_peak

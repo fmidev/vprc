@@ -89,6 +89,12 @@ BB_SLOPE_THRESHOLD = 0.2
 # Perl: condition `$zala < 600`
 BB_SLOPE_HEIGHT_LIMIT_M = 600
 
+# Maximum allowed BB amplitude above peak when BB is at surface (dBZ)
+# When BB peak is at lowest level and amplitude_above exceeds this,
+# the peak value is reduced to cap effective amplitude at this threshold.
+# Perl: `if ( $ylaamp >= 10 and $bbalku == $alintaso )` (lines 1091-1098)
+BB_PEAK_AMPLITUDE_CAP_DB = 10.0
+
 # -----------------------------------------------------------------------------
 # Temporal Averaging Constants (from pystycappi_ka.pl)
 # -----------------------------------------------------------------------------

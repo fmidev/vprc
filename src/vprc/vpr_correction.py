@@ -33,6 +33,7 @@ from .constants import (
     DEFAULT_RANGE_STEP_KM,
     BB_SLOPE_THRESHOLD,
     BB_SLOPE_HEIGHT_LIMIT_M,
+    BB_PEAK_AMPLITUDE_CAP_DB,
 )
 
 # Import for type annotation only
@@ -506,6 +507,79 @@ def adjust_ground_reference(
     return original_dbz, False
 
 
+def cap_bb_peak_amplitude(
+    ds: xr.Dataset,
+    bb_result: "BrightBandResult",
+    amplitude_cap_db: float = BB_PEAK_AMPLITUDE_CAP_DB,
+) -> xr.Dataset:
+    """Cap bright band peak amplitude when BB is at surface level.
+
+    When a bright band sits at the lowest profile level with very high
+    amplitude (difference from peak to top), this can cause excessive
+    VPR correction. This function reduces the peak dBZ value to cap the
+    effective amplitude.
+
+    Based on allprof_prodx2.pl lines 1091-1098:
+        if ( $ylaamp >= 10 and $bbalku == $alintaso ) {
+            $isotaulu[$bbalku][$j][5] = $isotaulu[$bbalku][$j][0] - ( $ylaamp - 10 );
+        }
+
+    Args:
+        ds: Dataset with 'corrected_dbz' indexed by 'height'
+        bb_result: BrightBandResult with detection info
+        amplitude_cap_db: Maximum allowed amplitude above peak (default 10 dB)
+
+    Returns:
+        Dataset with potentially modified corrected_dbz at BB peak.
+        Returns original dataset if no capping needed.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    if not bb_result.detected:
+        return ds
+
+    peak_height = bb_result.peak_height
+    amplitude_above = bb_result.amplitude_above
+
+    if peak_height is None or amplitude_above is None:
+        return ds
+
+    # Check if BB peak is at lowest level
+    heights = ds["height"].values
+    lowest_height = int(heights.min())
+
+    if peak_height != lowest_height:
+        return ds
+
+    # Check if amplitude exceeds cap
+    if amplitude_above < amplitude_cap_db:
+        return ds
+
+    # Cap the peak amplitude by reducing the peak dBZ
+    # Perl: $isotaulu[$bbalku][$j][5] = $isotaulu[$bbalku][$j][0] - ( $ylaamp - 10 )
+    reduction = amplitude_above - amplitude_cap_db
+
+    ds = ds.copy(deep=True)
+    original_peak_dbz = float(ds["corrected_dbz"].sel(height=peak_height).values)
+    capped_peak_dbz = original_peak_dbz - reduction
+
+    ds["corrected_dbz"].loc[dict(height=peak_height)] = capped_peak_dbz
+
+    logger.debug(
+        "BB peak amplitude capped at surface: amplitude_above=%.1f dBZ > cap=%.1f dBZ, "
+        "peak reduced from %.1f to %.1f dBZ (reduction=%.1f dBZ)",
+        amplitude_above,
+        amplitude_cap_db,
+        original_peak_dbz,
+        capped_peak_dbz,
+        reduction,
+    )
+
+    return ds
+
+
 def compute_vpr_correction(
     ds: xr.Dataset,
     cappi_heights_m: tuple[int, ...] | None = None,
@@ -588,6 +662,11 @@ def compute_vpr_correction(
     # Get freezing level for climatological profile
     if freezing_level_m is None:
         freezing_level_m = ds.attrs.get("freezing_level_m")
+
+    # Apply BB peak amplitude cap if BB is at surface with high amplitude
+    # This modifies the profile before interpolation/correction calculation
+    if bb_result is not None:
+        ds = cap_bb_peak_amplitude(ds, bb_result)
 
     # Compute quality weight
     quality_weight = compute_quality_weight(ds)
