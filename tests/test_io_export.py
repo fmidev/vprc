@@ -170,7 +170,7 @@ class TestWriteCompositeCogs:
         """All expected files are created."""
         ds = _create_mock_composite()
 
-        outputs = write_composite_cogs(ds, tmp_path)
+        outputs = write_composite_cogs(ds, tmp_path, include_weights=True)
 
         assert len(outputs) == 3
         assert "correction_db" in outputs
@@ -285,7 +285,7 @@ class TestEmptyCompositeExport:
         """write_composite_cogs works with empty composite."""
         ds = self._create_empty_composite()
 
-        outputs = write_composite_cogs(ds, tmp_path, prefix="empty")
+        outputs = write_composite_cogs(ds, tmp_path, prefix="empty", include_weights=True)
 
         assert len(outputs) == 3
         for path in outputs.values():
