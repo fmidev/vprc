@@ -32,6 +32,7 @@ from .bright_band import (
     BrightBandResult,
     BBRejectionReason,
     apply_post_bb_clutter_correction,
+    restore_bb_spike,
 )
 from .vpr_correction import compute_vpr_correction, VPRCorrectionResult
 from .temporal import average_corrections
@@ -156,6 +157,9 @@ def process_vvp(
     # Step 5b: Post-BB clutter correction (based on BB result)
     ds, bright_band = apply_post_bb_clutter_correction(ds, bright_band)
 
+    # Step 5c: Restore BB spike (smoothing may have altered real BB enhancement)
+    ds = restore_bb_spike(ds, bright_band)
+
     # Use provided freezing level, else detected if allowed and available
     if freezing_level_m is None and fallback_detected_freezing_level:
         if bright_band.detected and bright_band.top_height is not None:
@@ -189,6 +193,7 @@ __all__ = [
     "BrightBandResult",
     "BBRejectionReason",
     "apply_post_bb_clutter_correction",
+    "restore_bb_spike",
     "VPRCorrectionResult",
     "compute_vpr_correction",
     "average_corrections",

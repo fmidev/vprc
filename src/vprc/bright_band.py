@@ -32,6 +32,7 @@ from .constants import (
     POST_BB_CLUTTER_HEIGHT_M,
     LARGE_JUMP_THRESHOLD_DB,
     NO_BB_CLUTTER_FREEZING_LEVEL_M,
+    BB_SPIKE_RESTORATION_OFFSETS,
 )
 
 logger = logging.getLogger(__name__)
@@ -691,3 +692,62 @@ def _determine_clutter_scenario(
             return "high_bb_or_no_bb"
 
     return None
+
+
+def restore_bb_spike(ds: xr.Dataset, bb_result: BrightBandResult) -> xr.Dataset:
+    """Restore original dBZ values around bright band peak after spike smoothing.
+
+    Spike smoothing may have smoothed the BB peak because it looks like a
+    positive spike. However, the BB is a real physical enhancement, not noise.
+    This function restores the original `lin_dbz` values at heights around the
+    BB peak to preserve the true VPR shape for correction calculation.
+
+    Based on allprof_prodx2.pl lines 1079-1101:
+    "Korjataan mahdollisesti tasoitettu BB:n aiheuttama piikki
+     takaisin alkuperäisiin arvoihin"
+    (Restore the possibly smoothed spike caused by BB back to original values)
+
+    Note: The separate cap_bb_peak_amplitude() function in vpr_correction.py
+    handles the special case of surface BB with large amplitude (>10 dB).
+
+    Args:
+        ds: Dataset with 'corrected_dbz' and 'lin_dbz' variables
+        bb_result: Result from detect_bright_band()
+
+    Returns:
+        Dataset with original values restored around BB peak
+    """
+    if not bb_result.detected or bb_result.peak_height is None:
+        return ds
+
+    peak = bb_result.peak_height
+    heights = ds["height"].values
+    lowest_height = int(heights[0])
+
+    # Make a copy to avoid modifying original
+    ds = ds.copy(deep=True)
+
+    # Restore original lin_dbz values at heights around BB peak
+    restored_count = 0
+    for offset in BB_SPIKE_RESTORATION_OFFSETS:
+        h = peak + offset
+        if h in heights and h >= lowest_height:
+            original_value = float(ds["lin_dbz"].sel(height=h).values)
+            current_value = float(ds["corrected_dbz"].sel(height=h).values)
+
+            if original_value != current_value:
+                ds["corrected_dbz"].loc[{"height": h}] = original_value
+                restored_count += 1
+                logger.debug(
+                    "Restored BB spike at %dm: %.1f -> %.1f dBZ",
+                    h,
+                    current_value,
+                    original_value,
+                )
+
+    if restored_count > 0:
+        logger.debug(
+            "Restored %d values around BB peak at %dm", restored_count, peak
+        )
+
+    return ds

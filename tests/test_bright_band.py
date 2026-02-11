@@ -10,6 +10,7 @@ from vprc.bright_band import (
     compute_dbz_gradient_per_step,
     detect_bright_band,
     apply_post_bb_clutter_correction,
+    restore_bb_spike,
     _find_bb_candidates,
     _compute_gradient_sum,
     _validate_near_surface_bb,
@@ -19,6 +20,7 @@ from vprc.constants import (
     MDS,
     STEP,
     POST_BB_CLUTTER_THRESHOLD_DB,
+    BB_SPIKE_RESTORATION_OFFSETS,
 )
 
 
@@ -704,3 +706,137 @@ class TestApplyPostBBClutterCorrection:
         assert bb_out.rejection_reason == bb_result.rejection_reason
         # New field updated
         assert bb_out.clutter_correction_applied is True
+
+
+class TestRestoreBBSpike:
+    """Tests for BB spike restoration after smoothing.
+
+    After spike smoothing, the BB peak may have been smoothed because it looks
+    like a positive spike. This function restores original values around the
+    BB peak to preserve the true VPR shape.
+
+    Perl logic (lines 1079-1101 allprof_prodx2.pl):
+    "Korjataan mahdollisesti tasoitettu BB:n aiheuttama piikki
+     takaisin alkuperäisiin arvoihin"
+    """
+
+    def _make_smoothed_dataset(
+        self,
+        lin_dbz: list[float],
+        corrected_dbz: list[float],
+        heights: list[int] | None = None,
+    ) -> xr.Dataset:
+        """Create dataset where smoothing has modified corrected_dbz."""
+        if heights is None:
+            heights = list(range(100, 100 + STEP * len(lin_dbz), STEP))
+
+        return xr.Dataset(
+            {
+                "lin_dbz": ("height", lin_dbz),
+                "corrected_dbz": ("height", corrected_dbz),
+            },
+            coords={"height": heights},
+        )
+
+    def test_no_change_when_bb_not_detected(self):
+        """No restoration when BB is not detected."""
+        lin_dbz = [20.0, 25.0, 30.0, 25.0, 20.0]
+        corrected_dbz = [18.0, 23.0, 28.0, 23.0, 18.0]  # Smoothed
+        ds = self._make_smoothed_dataset(lin_dbz, corrected_dbz)
+
+        bb_result = BrightBandResult(detected=False)
+
+        ds_out = restore_bb_spike(ds, bb_result)
+
+        # No changes
+        np.testing.assert_allclose(ds_out["corrected_dbz"].values, corrected_dbz)
+
+    def test_restores_values_around_bb_peak(self):
+        """Original values restored at 5 heights around BB peak."""
+        # Heights: 100, 300, 500, 700, 900, 1100, 1300
+        heights = [100, 300, 500, 700, 900, 1100, 1300]
+        # Original values with BB peak at 700m
+        lin_dbz = [20.0, 22.0, 25.0, 35.0, 28.0, 22.0, 18.0]
+        # Smoothed values - peak has been reduced
+        corrected_dbz = [20.0, 22.0, 25.0, 30.0, 28.0, 22.0, 18.0]
+
+        ds = self._make_smoothed_dataset(lin_dbz, corrected_dbz, heights)
+
+        bb_result = BrightBandResult(
+            detected=True,
+            peak_height=700,
+            bottom_height=500,
+            top_height=900,
+        )
+
+        ds_out = restore_bb_spike(ds, bb_result)
+
+        # Values around peak (700 ± 400m) should be restored to lin_dbz
+        # Heights in restoration range: 300, 500, 700, 900, 1100
+        for h in [300, 500, 700, 900, 1100]:
+            original = lin_dbz[heights.index(h)]
+            restored = float(ds_out["corrected_dbz"].sel(height=h).values)
+            assert restored == original, f"Height {h} not restored"
+
+        # Heights outside restoration range unchanged
+        assert ds_out["corrected_dbz"].sel(height=100).values == corrected_dbz[0]
+        assert ds_out["corrected_dbz"].sel(height=1300).values == corrected_dbz[6]
+
+    def test_handles_bb_near_boundary(self):
+        """Restoration works when BB peak is near profile boundary."""
+        heights = [100, 300, 500, 700, 900]
+        lin_dbz = [35.0, 30.0, 25.0, 20.0, 15.0]  # Peak at lowest level
+        corrected_dbz = [32.0, 30.0, 25.0, 20.0, 15.0]  # Peak smoothed
+
+        ds = self._make_smoothed_dataset(lin_dbz, corrected_dbz, heights)
+
+        bb_result = BrightBandResult(
+            detected=True,
+            peak_height=100,  # At lowest level
+        )
+
+        ds_out = restore_bb_spike(ds, bb_result)
+
+        # Only heights within range and >= lowest should be restored
+        # Peak=100, so offsets give: -300, -100, 100, 300, 500
+        # Only 100, 300, 500 are valid
+        assert ds_out["corrected_dbz"].sel(height=100).values == lin_dbz[0]
+        assert ds_out["corrected_dbz"].sel(height=300).values == lin_dbz[1]
+        assert ds_out["corrected_dbz"].sel(height=500).values == lin_dbz[2]
+
+    def test_no_change_when_values_already_equal(self):
+        """No modification when corrected_dbz already equals lin_dbz."""
+        heights = [100, 300, 500, 700, 900]
+        values = [20.0, 25.0, 30.0, 25.0, 20.0]
+        ds = self._make_smoothed_dataset(values, values.copy(), heights)
+
+        bb_result = BrightBandResult(
+            detected=True,
+            peak_height=500,
+        )
+
+        ds_out = restore_bb_spike(ds, bb_result)
+
+        # Values unchanged (were already equal)
+        np.testing.assert_allclose(ds_out["corrected_dbz"].values, values)
+
+    def test_does_not_modify_original_dataset(self):
+        """Original dataset is not modified."""
+        heights = [100, 300, 500, 700, 900]
+        lin_dbz = [20.0, 25.0, 35.0, 25.0, 20.0]
+        corrected_dbz = [20.0, 25.0, 30.0, 25.0, 20.0]
+
+        ds = self._make_smoothed_dataset(lin_dbz, corrected_dbz, heights)
+        original_corrected = ds["corrected_dbz"].values.copy()
+
+        bb_result = BrightBandResult(detected=True, peak_height=500)
+
+        _ = restore_bb_spike(ds, bb_result)
+
+        # Original dataset unchanged
+        np.testing.assert_allclose(ds["corrected_dbz"].values, original_corrected)
+
+    def test_restoration_offsets_match_constant(self):
+        """Verify restoration uses the configured offsets."""
+        # The default offsets are (-400, -200, 0, 200, 400)
+        assert BB_SPIKE_RESTORATION_OFFSETS == (-400, -200, 0, 200, 400)
