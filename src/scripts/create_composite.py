@@ -146,8 +146,7 @@ def main(
         # Get radar coordinates from config
         coords = get_radar_coords(radar_code)
         if coords is None:
-            click.echo(f"Warning: Unknown radar code '{radar_code}', skipping", err=True)
-            continue
+            raise click.ClickException(f"No coordinates configured for radar '{radar_code}'")
 
         lat, lon = coords
         attempted_radars.append((radar_code, lat, lon))
@@ -155,14 +154,13 @@ def main(
         # Process through pipeline
         try:
             result = process_vvp(filepath, freezing_level_m=freezing_level)
-        except Exception as e:
-            click.echo(f"Error processing {filepath}: {e}", err=True)
-            continue
+        except (OSError, ValueError) as e:
+            raise click.ClickException(f"Error processing {filepath}: {e}") from e
 
         if result.vpr_correction is None:
-            # This should only happen if freezing_level was not provided
-            click.echo(f"Info: No VPR correction for {radar_code} (no freezing level)", err=True)
-            continue
+            raise click.ClickException(
+                f"No VPR correction for {radar_code} despite a supplied freezing level"
+            )
 
         # Create radar correction object
         # Use forced quality weight if specified, otherwise use computed value

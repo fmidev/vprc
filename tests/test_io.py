@@ -57,6 +57,13 @@ class TestParseVVPHeader:
         with pytest.raises(ValueError, match="Invalid header"):
             _parse_vvp_header(header_line)
 
+    @pytest.mark.parametrize("angles", ["0.7 invalid", "nan", "inf"])
+    def test_invalid_elevations_raise(self, angles):
+        with pytest.raises(ValueError):
+            _parse_vvp_header(
+                f"KANKAANPAA VVP_40 PPI1_A 2025 08 24 11 00 ELEVS: {angles}"
+            )
+
 
 class TestParseVVPFile:
     """Tests for parse_vvp_file function."""
@@ -322,11 +329,43 @@ class TestParseVVPToXarray:
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
-    def test_empty_dataframe_handling(self):
-        """Test handling of edge case with minimal valid data."""
-        # This tests behavior when file structure is valid but data is minimal
-        # Implementation depends on how you want to handle such cases
-        pass
+    def test_no_levels_above_antenna_raises(self):
+        header, df = _parse_vvp_file(SAMPLE_VVP_FILE)
+        with pytest.raises(ValueError, match="no levels above"):
+            _vvp_dataframe_to_xarray(df.iloc[:0], header)
+
+    @pytest.mark.parametrize("freezing_level", [float("nan"), float("inf"), "2000", True])
+    def test_invalid_freezing_level_raises(self, freezing_level):
+        with pytest.raises(ValueError, match="freezing_level_m must be finite"):
+            read_vvp(SAMPLE_VVP_FILE, {"freezing_level_m": freezing_level})
+
+    @pytest.mark.parametrize(
+        ("row", "message"),
+        [
+            ("100 30 40", "Expected 19 columns"),
+            ("100 30 40 0 0 0 0 0 0 nan 0 0 0 0 0 0 0 0 0", "lin_dbz"),
+            ("100.5 30 40 0 0 0 0 0 0 10 0 0 0 0 0 0 0 0 0", "integer meters"),
+        ],
+    )
+    def test_corrupt_profile_data_raises(self, tmp_path, row, message):
+        path = tmp_path / "invalid.txt"
+        path.write_text(
+            "KANKAANPAA VVP_40 PPI1_A 2025 08 24 11 00 ELEVS: 0.7\n\n"
+            "Height Count ZCnt ...\n" + row + "\n"
+        )
+        with pytest.raises(ValueError, match=message):
+            read_vvp(path)
+
+    def test_reflectivity_count_is_not_wind_count(self, tmp_path):
+        path = tmp_path / "counts.txt"
+        path.write_text(
+            "KANKAANPAA VVP_40 PPI1_A 2025 08 24 11 00 ELEVS: 0.7\n\n"
+            "Height Count ZCnt ...\n"
+            "300 0 1000 0 0 0 0 0 0 20 0 0 0 0 0 0 0 0 0\n"
+        )
+        ds = read_vvp(path)
+        assert ds.sample_count.item() == 0
+        assert ds.zcount.item() == 1000
 
     def test_pathlib_path_input(self):
         """Test that both Path and str inputs work."""

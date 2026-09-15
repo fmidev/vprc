@@ -2,9 +2,11 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from numbers import Real
 from pathlib import Path
 from typing import List, Tuple
 
+import numpy as np
 import pandas as pd
 import xarray as xr
 
@@ -57,10 +59,12 @@ def _parse_vvp_header(header_line: str) -> VVPHeader:
     minute = int(parts[7])
 
     # Find ELEVS: keyword and extract elevation angles
-    try:
+    if 'ELEVS:' in parts:
         elevs_idx = parts.index('ELEVS:')
         elevation_angles = [float(x) for x in parts[elevs_idx + 1:]]
-    except (ValueError, IndexError):
+        if not all(np.isfinite(elevation_angles)):
+            raise ValueError("Elevation angles must be finite")
+    else:
         elevation_angles = []
 
     timestamp = datetime(year, month, day, hour, minute)
@@ -127,7 +131,7 @@ def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
     # Assign column names based on the structure:
     # Height Count ZCnt  Wind-Speed(2) Direction(2) Vertical(2) Linear-dBZ(2) Log-dBZ(2)
     # Divergence(2) Deformation(2) Axis-of-Dil(2)
-    # Total: 1 + 2 + 2*10 = 23 columns
+    # Total: 3 + 2*8 = 19 columns
 
     expected_cols = [
         'height',
@@ -142,16 +146,24 @@ def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
         'axis_of_dil', 'axis_of_dil_std'
     ]
 
-    # Verify column count
     if len(df.columns) != len(expected_cols):
-        # Fallback: use generic names
-        print(f"Warning: Expected {len(expected_cols)} columns, got {len(df.columns)}")
-        df.columns = [f'col_{i}' for i in range(len(df.columns))]
-    else:
-        df.columns = expected_cols
+        raise ValueError(
+            f"Expected {len(expected_cols)} columns in {filepath}, got {len(df.columns)}"
+        )
+    df.columns = expected_cols
+    if df.empty:
+        raise ValueError(f"No profile data in {filepath}")
+    for column in ('height', 'count', 'zcount', 'lin_dbz'):
+        df[column] = pd.to_numeric(df[column], errors='raise')
+        if not np.isfinite(df[column]).all():
+            raise ValueError(f"Non-finite or missing {column} values in {filepath}")
 
     # Ensure height is integer
+    if (df['height'] % 1 != 0).any():
+        raise ValueError(f"Profile heights must be integer meters in {filepath}")
     df['height'] = df['height'].astype(int)
+    if df['height'].duplicated().any():
+        raise ValueError(f"Duplicate profile heights in {filepath}")
 
     # Sort by height ascending (files go high->low)
     df = df.sort_values('height').reset_index(drop=True)
@@ -212,6 +224,8 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     # Drop levels below antenna (negative heights)
     # Legacy: if ($Height < $alintaso) { $Height = 0; } but actually skips them
     df = df[df['height'] > 0].copy()
+    if df.empty:
+        raise ValueError("VVP profile has no levels above the antenna")
 
     # Convert DataFrame to xarray using height as the index/coordinate
     ds = df.set_index('height').to_xarray()
@@ -219,6 +233,9 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     # Rename 'count' to 'sample_count' for consistency with processing modules
     if 'count' in ds:
         ds = ds.rename({'count': 'sample_count'})
+        ds['sample_count'].attrs['long_name'] = 'Wind sample count (Count)'
+    if 'zcount' in ds:
+        ds['zcount'].attrs['long_name'] = 'Reflectivity sample count (ZCnt)'
 
     # Add corrected_dbz as a copy of lin_dbz (will be modified by processing)
     ds['corrected_dbz'] = ds['lin_dbz'].copy()
@@ -243,7 +260,9 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     metadata_copy = metadata.copy()
     if 'freezing_level_m' in metadata_copy:
         fl = metadata_copy['freezing_level_m']
-        if fl is not None and isinstance(fl, (int, float)):
+        if fl is not None:
+            if not isinstance(fl, Real) or isinstance(fl, bool) or not np.isfinite(fl):
+                raise ValueError("freezing_level_m must be finite meters ASL or None")
             if fl <= 0:
                 # Explicitly no freezing layer (or below surface)
                 metadata_copy['freezing_level_m'] = 0
@@ -252,7 +271,6 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
                 # If result is ≤0, freezing level is at/below antenna → no melting visible
                 fl_above_antenna = fl - antenna_height_m
                 metadata_copy['freezing_level_m'] = max(0, fl_above_antenna)
-        # else: None stays None (unknown)
 
     attrs.update(metadata_copy)
 
@@ -303,7 +321,7 @@ def read_vvp(filepath: Path | str,
         >>> ds = read_vvp('202508241100_KAN.VVP_40.txt',
         ...               {'freezing_level_m': 2000})
         >>> ds.attrs['freezing_level_m']
-        2000
+        1826
         >>>
         >>> # Use custom config file
         >>> import os
