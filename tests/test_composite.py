@@ -15,7 +15,7 @@ from vprc.composite import (
     inverse_distance_weight,
     interpolate_correction_to_grid,
 )
-from vprc import process_vvp
+from vprc import process_vvp, average_corrections
 from vprc.vpr_correction import VPRCorrectionResult
 
 
@@ -409,8 +409,25 @@ class TestWithRealData:
 
     def test_can_process_all_three_radars(self, processed_radars):
         """All three test radars can be processed."""
-        # At least some should succeed
-        assert len(processed_radars) > 0
+        assert set(processed_radars) == {"KAN", "KOR", "VIH"}
+
+    def test_identical_profiles_preserve_composite_after_averaging(self):
+        correction = process_vvp(KAN_FILE, freezing_level_m=3000).vpr_correction
+        assert correction is not None
+        assert correction.quality_weight > 0
+        averaged = average_corrections([correction, correction])
+        grid = CompositeGrid.for_radars(["KAN"], range_km=20, resolution_m=10_000)
+        lat, lon = RADAR_COORDS["KAN"]
+
+        original = composite_corrections(
+            [create_radar_correction("KAN", lat, lon, correction)], grid
+        )
+        result = composite_corrections(
+            [create_radar_correction("KAN", lat, lon, averaged)], grid
+        )
+
+        assert np.isfinite(result.correction_db).all()
+        xr.testing.assert_allclose(result, original)
 
     def test_composite_from_real_data(self, processed_radars):
         """Composite can be created from real radar data."""

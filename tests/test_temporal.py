@@ -309,6 +309,80 @@ class TestAverageCorrections:
         with pytest.raises(ValueError, match="must match"):
             average_corrections([r1, r2], timestamps=[datetime.now()])
 
+    def test_preserves_blends_and_quality(self):
+        t1 = datetime(2025, 8, 24, 10)
+        t2 = t1 + timedelta(hours=1)
+        results = [
+            make_test_correction(2.0, timestamp=t1, elevation_angles=[0.5]),
+            make_test_correction(8.0, timestamp=t2, elevation_angles=[0.5]),
+        ]
+        for result, quality in zip(results, [0.2, 1.0]):
+            result.quality_weight = quality
+            result.z_ground_clim_dbz = 30.0
+            result.corrections.attrs["quality_weight"] = quality
+            for prefix in ("cappi", "elev"):
+                observed = result.corrections[f"{prefix}_correction_db"]
+                result.corrections[f"{prefix}_clim_correction_db"] = observed * 0 + 1
+                result.corrections[f"{prefix}_blended_correction_db"] = (
+                    observed * quality + 0.2
+                ) / (quality + 0.2)
+
+        averaged = average_corrections(results)
+
+        assert set(averaged.corrections.data_vars) == set(results[0].corrections.data_vars)
+        assert averaged.quality_weight == pytest.approx((0.2 * 0.2 + 1.0) / 1.2)
+        assert averaged.z_ground_clim_dbz == 30.0
+        for name in results[0].corrections.data_vars:
+            expected = (
+                results[0].corrections[name] * 0.2 + results[1].corrections[name]
+            ) / 1.2
+            xr.testing.assert_allclose(averaged.corrections[name], expected)
+
+    def test_mixed_observed_and_climatology_metadata(self):
+        results = [make_test_correction(), make_test_correction()]
+        for result in results:
+            result.quality_weight = 0.2
+        results[0].corrections.attrs.update(quality_weight=0.4, climatology_only=False)
+        results[1].corrections.attrs.update(quality_weight=0.0, climatology_only=True)
+
+        averaged = average_corrections(results)
+
+        assert averaged.quality_weight == pytest.approx(0.2)
+        assert averaged.corrections.attrs["quality_weight"] == pytest.approx(0.2)
+        assert averaged.corrections.attrs["climatology_only"] is False
+
+    def test_different_range_coordinates_raise(self):
+        results = [
+            make_test_correction(6.0, range_km=[1, 2]),
+            make_test_correction(6.0, range_km=[2, 3]),
+        ]
+        with pytest.raises(ValueError, match="align"):
+            average_corrections(results)
+
+    def test_missing_blended_variable_raises(self):
+        results = [make_test_correction(), make_test_correction()]
+        results[0].corrections["cappi_blended_correction_db"] = (
+            results[0].corrections.cappi_correction_db
+        )
+        with pytest.raises(ValueError, match="incompatible correction variables"):
+            average_corrections(results)
+
+    @pytest.mark.parametrize("value", [np.nan, np.inf])
+    def test_nonfinite_correction_raises(self, value):
+        results = [make_test_correction(), make_test_correction(value)]
+        with pytest.raises(ValueError, match="non-finite"):
+            average_corrections(results)
+
+    def test_single_profile_explicit_timestamp(self):
+        result = make_test_correction()
+        original_timestamp = result.corrections.attrs["timestamp"]
+        timestamp = datetime(2026, 1, 1)
+
+        averaged = average_corrections([result], timestamps=[timestamp])
+
+        assert averaged.corrections.attrs["timestamp"] == timestamp.isoformat()
+        assert result.corrections.attrs["timestamp"] == original_timestamp
+
 
 class TestExtractTimestamps:
     """Tests for _extract_timestamps helper."""

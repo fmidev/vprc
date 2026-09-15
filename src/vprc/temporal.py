@@ -45,14 +45,16 @@ def average_corrections(
 
     Args:
         results: VPRCorrectionResult objects to average. Must have
-            at least one result. All must have compatible coordinates
-            (same range_km, cappi_height, elevation dimensions).
+            at least one result. All must have identical correction variables
+            and coordinates (range_km, cappi_height, elevation), with finite
+            values. Blended products are averaged after per-profile blending.
         timestamps: Observation time for each result. If None, timestamps
             are extracted from each result's corrections.attrs['timestamp'].
 
     Returns:
         VPRCorrectionResult with time-averaged corrections. The returned
-        result has usable=True if any input was usable.
+        result has usable=True if any input was usable. Quality weights and
+        ground references are averaged with the same temporal weights.
 
     Example:
         >>> from vprc import process_vvp, average_corrections
@@ -82,9 +84,49 @@ def average_corrections(
     sorted_results = [r for _, r in sorted_pairs]
     n = len(sorted_results)
 
-    # Single profile: return as-is
+    reference = sorted_results[0].corrections
+    for i, result in enumerate(sorted_results):
+        ds = result.corrections
+        if set(ds.data_vars) != set(reference.data_vars):
+            raise ValueError(f"Result {i} has incompatible correction variables")
+        if set(ds.coords) != set(reference.coords):
+            raise ValueError(f"Result {i} has incompatible coordinates")
+        for name in reference.data_vars:
+            if ds[name].dims != reference[name].dims:
+                raise ValueError(f"Result {i} has incompatible dimensions for {name}")
+            if not np.isfinite(ds[name].values).all():
+                raise ValueError(f"Result {i} contains non-finite values in {name}")
+        if not np.isfinite(result.quality_weight) or result.quality_weight < 0:
+            raise ValueError(f"Result {i} has invalid quality_weight")
+        observed_quality = ds.attrs.get("quality_weight", result.quality_weight)
+        if not np.isfinite(observed_quality) or observed_quality < 0:
+            raise ValueError(f"Result {i} has invalid observed quality_weight")
+        if not np.isfinite(result.z_ground_dbz):
+            raise ValueError(f"Result {i} has invalid z_ground_dbz")
+        if (result.z_ground_clim_dbz is None) != (
+            sorted_results[0].z_ground_clim_dbz is None
+        ):
+            raise ValueError("Results must have compatible climatological references")
+        if result.z_ground_clim_dbz is not None and not np.isfinite(
+            result.z_ground_clim_dbz
+        ):
+            raise ValueError(f"Result {i} has invalid z_ground_clim_dbz")
+
+    # Reject coordinate unions rather than diluting missing ranges with zeros.
+    aligned = xr.align(*(r.corrections for r in sorted_results), join="exact")
+
+    # Single profile: preserve values, but respect an explicit timestamp.
     if n == 1:
-        return sorted_results[0]
+        result = sorted_results[0]
+        ds = result.corrections.copy()
+        ds.attrs["timestamp"] = sorted_pairs[0][0].isoformat()
+        return VPRCorrectionResult(
+            corrections=ds,
+            z_ground_dbz=result.z_ground_dbz,
+            z_ground_clim_dbz=result.z_ground_clim_dbz,
+            quality_weight=result.quality_weight,
+            usable=result.usable,
+        )
 
     # Compute time-delta-based weights
     # Newest profile gets weight 1.0, oldest gets MIN_AGE_WEIGHT
@@ -95,38 +137,51 @@ def average_corrections(
 
     # Stack all correction datasets and compute weighted average
     stacked = xr.concat(
-        [r.corrections for r in sorted_results],
+        aligned,
         dim="time",
+        join="exact",
     )
 
     # Apply weights along time dimension
     weights_da = xr.DataArray(weights, dims=["time"])
 
-    # Weighted average for each variable
-    correction_vars = ["cappi_correction_db", "cappi_beam_height_m"]
-    if "elev_correction_db" in stacked:
-        correction_vars.extend(["elev_correction_db", "elev_beam_height_m"])
-
-    averaged_data = {}
-    for var in correction_vars:
-        if var in stacked:
-            weighted = (stacked[var] * weights_da).sum(dim="time") / weight_sum
-            averaged_data[var] = weighted
-
-    # Build output dataset preserving coordinates
-    avg_ds = xr.Dataset(
-        averaged_data,
-        coords={k: v for k, v in stacked.coords.items() if k != "time"},
-    )
+    avg_ds = stacked.weighted(weights_da).mean(dim="time", skipna=False)
 
     # Weighted average of z_ground_dbz
     z_grounds = np.array([r.z_ground_dbz for r in sorted_results])
     avg_z_ground = float((z_grounds * weights).sum() / weight_sum)
+    avg_quality = float(
+        np.average([r.quality_weight for r in sorted_results], weights=weights)
+    )
+    avg_z_ground_clim = None
+    if sorted_results[0].z_ground_clim_dbz is not None:
+        clim_references = [
+            r.z_ground_clim_dbz
+            for r in sorted_results
+            if r.z_ground_clim_dbz is not None
+        ]
+        avg_z_ground_clim = float(
+            np.average(clim_references, weights=weights)
+        )
 
     # Copy attrs from newest profile, update timestamp to latest
     avg_ds.attrs = dict(sorted_results[-1].corrections.attrs)
     avg_ds.attrs["timestamp"] = sorted_pairs[-1][0].isoformat()
     avg_ds.attrs["z_ground_dbz"] = avg_z_ground
+    avg_ds.attrs["z_ground_clim_dbz"] = avg_z_ground_clim
+    # Dataset quality describes observations; result quality includes fallback.
+    avg_ds.attrs["quality_weight"] = float(
+        np.average(
+            [
+                r.corrections.attrs.get("quality_weight", r.quality_weight)
+                for r in sorted_results
+            ],
+            weights=weights,
+        )
+    )
+    avg_ds.attrs["climatology_only"] = all(
+        r.corrections.attrs.get("climatology_only", False) for r in sorted_results
+    )
     avg_ds.attrs["averaged_from_n"] = n
 
     # Result is usable if any input was usable
@@ -135,6 +190,8 @@ def average_corrections(
     return VPRCorrectionResult(
         corrections=avg_ds,
         z_ground_dbz=avg_z_ground,
+        z_ground_clim_dbz=avg_z_ground_clim,
+        quality_weight=avg_quality,
         usable=any_usable,
     )
 
