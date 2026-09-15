@@ -54,6 +54,8 @@ See [tests/README.md](tests/README.md) for details on test structure and coverag
 
 Contributions are welcome through Github.
 
+Coding agents: see [AGENTS.md](AGENTS.md) for development guidance.
+
 
 ## References
 
