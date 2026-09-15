@@ -4,14 +4,12 @@ These parsers read the output files from allprof_prodx2.pl for comparison
 with the Python reimplementation.
 """
 
-from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import xarray as xr
-
-from vprc.constants import MDS
 
 
 @dataclass
@@ -29,10 +27,8 @@ class LegacyProfileHeader:
 class LegacyProfileFooter:
     """Parsed footer metadata from .profile file.
 
-    Based on the Finnish column headers in the legacy output:
-    kerros, alaraja, yläraja, maxdbz, maakaiku, KIK, As, sade, Unclf, BB,
-    BB korkeus, BB amplitudi, 0-rajan korkeus, bb:n alaraja, bb:n yläraja,
-    haihtuminen, laatupaino, pv, kk, vv, h, min
+    Heights are meters above antenna. The Finnish column description omits
+    the upper/lower bright-band amplitudes printed before evaporation.
     """
 
     layer_num: int
@@ -42,7 +38,7 @@ class LegacyProfileFooter:
     ground_clutter: int  # boolean flag
     clear_air_echo: int  # KIK = boolean flag
     altostratus: int  # As = boolean flag
-    precipitation: int  # sade = precipitation type (0=none, 1=snow, 2=rain, 3=sleet)
+    precipitation: int  # sade: 0=none, 1=untyped, 2=snow, 3=sleet, 4=rain
     unclassified: int  # Unclf = boolean flag
     bright_band: int  # BB = boolean flag
     bb_height: float
@@ -50,6 +46,8 @@ class LegacyProfileFooter:
     freezing_level: float  # 0-rajan korkeus
     bb_bottom: float
     bb_top: float
+    bb_upper_amplitude: float  # ylaamp
+    bb_lower_amplitude: float  # alaamp
     evaporation: float  # haihtuminen
     quality_weight: float  # laatupaino
     day: int
@@ -65,30 +63,36 @@ def parse_legacy_profile(path: str | Path) -> tuple[xr.Dataset, LegacyProfileHea
     The .profile format consists of:
     - Line 1: Header with radar name, product, step, MDS, date, time
     - Lines 2-N: Data rows with height, lin_dbz, log_dbz, corrected_dbz,
-                 kor_profile, gradient, sample_count
+                 kor_profile, clim_dbz, zcount
     - Line N+1: Column description (Finnish)
-    - Line N+2: Footer with classification/metadata values
+    - Following lines: One classification/metadata footer per layer
+    - Optional final section: "BB ehdokkaat" and bright-band candidates
 
     Args:
         path: Path to the .profile file
 
     Returns:
         Tuple of (dataset, header, footer) where dataset contains the
-        profile data with 'height' as coordinate.
+        profile data with 'height' as coordinate. The footer describes the
+        first (lowest) layer, which drives the legacy VPR correction.
     """
     path = Path(path)
-    lines = path.read_text().strip().split('\n')
+    lines = path.read_text().strip().splitlines()
 
     # Parse header (first line)
     header = _parse_header(lines[0])
 
-    # Parse footer (last line, skip the column description line before it)
-    footer = _parse_footer(lines[-1])
-
-    # Parse data lines (everything between header and footer description)
-    # Skip header (1 line) and footer (2 lines: description + data)
-    data_lines = lines[1:-2]
-    ds = _parse_data(data_lines, header)
+    footer_start = next(
+        (i for i, line in enumerate(lines) if line.lstrip().startswith("kerros,")),
+        None,
+    )
+    if footer_start is None:
+        raise ValueError("Missing layer footer description in legacy profile")
+    footer_lines = [line for line in lines[footer_start + 1 :] if line.strip()]
+    if not footer_lines or footer_lines[0].strip() == "BB ehdokkaat":
+        raise ValueError("Missing layer footer in legacy profile")
+    footer = _parse_footer(footer_lines[0])
+    ds = _parse_data(lines[1:footer_start], header)
 
     return ds, header, footer
 
@@ -130,6 +134,8 @@ def _parse_footer(line: str) -> LegacyProfileFooter:
     Indices:0 1   2    3    4 5 6 7 8 9 10 11 12 13 14 15  16  17  18   19 20 21  22 23
     """
     parts = line.split()
+    if len(parts) != 24:
+        raise ValueError(f"Expected 24 layer footer columns, got {len(parts)}")
 
     return LegacyProfileFooter(
         layer_num=int(parts[0]),
@@ -147,8 +153,9 @@ def _parse_footer(line: str) -> LegacyProfileFooter:
         freezing_level=float(parts[12]),
         bb_bottom=float(parts[13]),
         bb_top=float(parts[14]),
-        evaporation=float(parts[15]),
-        # parts[16] and parts[17] are additional fields (unclear meaning)
+        bb_upper_amplitude=float(parts[15]),
+        bb_lower_amplitude=float(parts[16]),
+        evaporation=float(parts[17]),
         quality_weight=float(parts[18]),
         day=int(parts[19]),
         month=int(parts[20]),
@@ -161,28 +168,33 @@ def _parse_footer(line: str) -> LegacyProfileFooter:
 def _parse_data(lines: list[str], header: LegacyProfileHeader) -> xr.Dataset:
     """Parse the data lines into an xarray Dataset.
 
-    Columns: height lin_dbz log_dbz corrected_dbz kor_profile gradient sample_count
+    Columns: height lin_dbz log_dbz corrected_dbz kor_profile clim_dbz zcount
+
+    The count is IRIS ZCnt (reflectivity samples), not the separate IRIS
+    Count column. It is not capped by the legacy algorithm.
     """
     heights = []
     lin_dbz = []
     log_dbz = []
     corrected_dbz = []
     kor_profile = []
-    gradient = []
-    sample_count = []
+    clim_dbz = []
+    zcount = []
 
     for line in lines:
         parts = line.split()
-        if len(parts) < 7:
+        if not parts:
             continue
+        if len(parts) != 7:
+            raise ValueError(f"Expected 7 profile columns, got {len(parts)}")
 
         heights.append(int(parts[0]))
         lin_dbz.append(float(parts[1]))
         log_dbz.append(float(parts[2]))
         corrected_dbz.append(float(parts[3]))
         kor_profile.append(float(parts[4]))
-        gradient.append(float(parts[5]))
-        sample_count.append(int(parts[6]))
+        clim_dbz.append(float(parts[5]))
+        zcount.append(int(parts[6]))
 
     height_arr = np.array(heights)
 
@@ -192,8 +204,8 @@ def _parse_data(lines: list[str], header: LegacyProfileHeader) -> xr.Dataset:
             'log_dbz': (['height'], np.array(log_dbz)),
             'corrected_dbz': (['height'], np.array(corrected_dbz)),
             'kor_profile': (['height'], np.array(kor_profile)),
-            'gradient': (['height'], np.array(gradient)),
-            'sample_count': (['height'], np.array(sample_count)),
+            'clim_dbz': (['height'], np.array(clim_dbz)),
+            'zcount': (['height'], np.array(zcount)),
         },
         coords={'height': height_arr},
         attrs={
@@ -220,12 +232,12 @@ class LegacyCorHeader:
     step: int
     mds: float
     timestamp: datetime
-    precip_type: str  # 'sade' = rain
-    precip_code: int  # 0=none, 1=snow, 2=rain, 3=sleet
+    precip_type: str  # 'sade' = precipitation
+    precip_code: int  # 0=none, 1=untyped, 2=snow, 3=sleet, 4=rain
     max_dbz: float
     max_height: int
     quality_weight: float
-    bb_flag: int
+    freezing_level_m: float  # nollaraja_ps, meters above antenna
     elevation_angles: list[float]
 
 
@@ -241,7 +253,7 @@ def parse_legacy_cor(path: str | Path) -> tuple[xr.Dataset, LegacyCorHeader]:
 
     Returns:
         Tuple of (dataset, header) where dataset contains correction factors
-        with dimensions (range_km, elevation).
+        with dimensions (range_km, correction_type).
     """
     path = Path(path)
     lines = path.read_text().strip().split('\n')
@@ -285,9 +297,9 @@ def _parse_cor_header(line: str) -> LegacyCorHeader:
     max_height_idx = parts.index('max_height') + 1
     max_height = int(parts[max_height_idx])
 
-    # Quality weight and BB flag follow max_height
+    # Quality weight and freezing height above antenna follow max_height.
     quality_weight = float(parts[max_height_idx + 1])
-    bb_flag = int(parts[max_height_idx + 2])
+    freezing_level_m = float(parts[max_height_idx + 2])
 
     # Elevation angles after 'ELEVS'
     elevs_idx = parts.index('ELEVS') + 1
@@ -304,7 +316,7 @@ def _parse_cor_header(line: str) -> LegacyCorHeader:
         max_dbz=max_dbz,
         max_height=max_height,
         quality_weight=quality_weight,
-        bb_flag=bb_flag,
+        freezing_level_m=freezing_level_m,
         elevation_angles=elevation_angles,
     )
 
@@ -312,7 +324,7 @@ def _parse_cor_header(line: str) -> LegacyCorHeader:
 def _parse_cor_data(lines: list[str], header: LegacyCorHeader) -> xr.Dataset:
     """Parse the data lines of .cor file into an xarray Dataset.
 
-    The .cor format has 6 triplets per line (for rain cases):
+    The .cor format has 6 triplets per line (for precipitation cases):
     1. CAPPI 500m: (correction_klim, correction_rain, beam_height)
     2. CAPPI 1000m: (correction_klim, correction_rain, beam_height)
     3-6. Elevation angles 1-4: (correction_klim, correction_rain, beam_height)
@@ -343,11 +355,11 @@ def _parse_cor_data(lines: list[str], header: LegacyCorHeader) -> xr.Dataset:
         for i in range(n_triplets):
             base_idx = 1 + i * 3
             if has_precip:
-                # For rain: (klim, rain, height)
+                # "rain" denotes measured precipitation, including snow/sleet.
                 row_corr_klim.append(float(parts[base_idx]))
                 row_corr_rain.append(float(parts[base_idx + 1]))
             else:
-                # For non-rain: (klim, ref=100, height)
+                # Without precipitation: (klim, ref=100, height)
                 row_corr_klim.append(float(parts[base_idx]))
                 row_corr_rain.append(np.nan)
             row_height.append(int(parts[base_idx + 2]))
@@ -375,6 +387,7 @@ def _parse_cor_data(lines: list[str], header: LegacyCorHeader) -> xr.Dataset:
             'max_dbz': header.max_dbz,
             'max_height': header.max_height,
             'quality_weight': header.quality_weight,
+            'freezing_level_m': header.freezing_level_m,
             'timestamp': header.timestamp.isoformat(),
             'elevation_angles': header.elevation_angles,
         },
@@ -388,7 +401,7 @@ class LegacyCoraveHeader:
     """Parsed header from .corave file.
 
     Format: VIMPELI VVP_40 200 -45 17 08 2022 12 45 0 ELEVS 0.3 0.7 1.5 3.0
-    Note: nollaraja_ps (freezing level indicator) replaces the precip info.
+    Note: nollaraja_ps (freezing height above antenna) replaces the precip info.
     """
 
     radar_name: str
@@ -396,7 +409,7 @@ class LegacyCoraveHeader:
     step: int
     mds: float
     timestamp: datetime
-    freezing_level_flag: int
+    freezing_level_m: float
     elevation_angles: list[float]
 
 
@@ -445,8 +458,7 @@ def _parse_corave_header(line: str) -> LegacyCoraveHeader:
     minute = int(parts[8])
     timestamp = datetime(year, month, day, hour, minute)
 
-    # Freezing level flag
-    freezing_level_flag = int(parts[9])
+    freezing_level_m = float(parts[9])
 
     # Elevation angles after 'ELEVS'
     elevs_idx = parts.index('ELEVS') + 1
@@ -458,7 +470,7 @@ def _parse_corave_header(line: str) -> LegacyCoraveHeader:
         step=step,
         mds=mds,
         timestamp=timestamp,
-        freezing_level_flag=freezing_level_flag,
+        freezing_level_m=freezing_level_m,
         elevation_angles=elevation_angles,
     )
 
@@ -528,6 +540,7 @@ def _parse_corave_data(lines: list[str], header: LegacyCoraveHeader) -> xr.Datas
             'product': header.product,
             'timestamp': header.timestamp.isoformat(),
             'elevation_angles': header.elevation_angles,
+            'freezing_level_m': header.freezing_level_m,
         },
     )
 
