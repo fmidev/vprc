@@ -142,6 +142,7 @@ def process_vvp(
 
     # Step 1: Read VVP file
     ds = read_vvp(path, radar_metadata=radar_metadata if radar_metadata else None)
+    freezing_level_m = ds.attrs.get("freezing_level_m")
 
     # Step 2: Ground clutter removal
     ds = remove_ground_clutter(ds)
