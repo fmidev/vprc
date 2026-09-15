@@ -383,6 +383,39 @@ class TestAverageCorrections:
         assert averaged.corrections.attrs["timestamp"] == timestamp.isoformat()
         assert result.corrections.attrs["timestamp"] == original_timestamp
 
+    def test_legacy_rank_weights_are_opt_in(self):
+        results = [
+            make_test_correction(0.0, timestamp=datetime(2025, 1, 1)),
+            make_test_correction(3.0, timestamp=datetime(2025, 1, 2)),
+        ]
+        legacy = average_corrections(results, weighting="legacy")
+        elapsed = average_corrections(results)
+        np.testing.assert_allclose(legacy.corrections.cappi_correction_db, 2.0)
+        np.testing.assert_allclose(elapsed.corrections.cappi_correction_db, 2.5)
+
+    def test_invalid_weighting_raises(self):
+        with pytest.raises(ValueError, match="weighting must"):
+            average_corrections([make_test_correction()], weighting="unknown")
+
+    @pytest.mark.parametrize("quality", [-0.1, np.nan, np.inf])
+    def test_invalid_quality_raises(self, quality):
+        result = make_test_correction()
+        result.quality_weight = quality
+        with pytest.raises(ValueError, match="invalid quality_weight"):
+            average_corrections([result])
+
+    def test_mixed_climatological_references_raise(self):
+        results = [make_test_correction(), make_test_correction()]
+        results[0].z_ground_clim_dbz = 30.0
+        with pytest.raises(ValueError, match="compatible climatological references"):
+            average_corrections(results)
+
+    def test_missing_coordinate_raises(self):
+        results = [make_test_correction(), make_test_correction()]
+        results[0].corrections = results[0].corrections.drop_vars("range_km")
+        with pytest.raises(ValueError, match="incompatible coordinates"):
+            average_corrections(results)
+
 
 class TestExtractTimestamps:
     """Tests for _extract_timestamps helper."""

@@ -22,6 +22,7 @@ Algorithm:
 """
 
 from datetime import datetime
+from typing import Literal
 
 import numpy as np
 import xarray as xr
@@ -37,6 +38,7 @@ def average_corrections(
     results: list[VPRCorrectionResult],
     *,
     timestamps: list[datetime] | None = None,
+    weighting: Literal["elapsed", "legacy"] = "elapsed",
 ) -> VPRCorrectionResult:
     """Compute time-weighted average of VPR correction profiles.
 
@@ -50,6 +52,9 @@ def average_corrections(
             values. Blended products are averaged after per-profile blending.
         timestamps: Observation time for each result. If None, timestamps
             are extracted from each result's corrections.attrs['timestamp'].
+        weighting: "elapsed" retains elapsed-time weighting with an oldest
+            weight of 0.2. "legacy" uses rank weights (j + 1) / n, matching
+            pystycappi_ka.pl after sorting from oldest to newest.
 
     Returns:
         VPRCorrectionResult with time-averaged corrections. The returned
@@ -68,6 +73,8 @@ def average_corrections(
     """
     if not results:
         raise ValueError("results must not be empty")
+    if weighting not in ("elapsed", "legacy"):
+        raise ValueError("weighting must be 'elapsed' or 'legacy'")
 
     # Extract timestamps if not provided
     if timestamps is None:
@@ -132,7 +139,11 @@ def average_corrections(
     # Newest profile gets weight 1.0, oldest gets MIN_AGE_WEIGHT
     # Linear interpolation based on actual temporal position
     sorted_timestamps = [t for t, _ in sorted_pairs]
-    weights = _compute_age_weights(sorted_timestamps)
+    weights = (
+        _compute_age_weights(sorted_timestamps)
+        if weighting == "elapsed"
+        else np.arange(1, n + 1, dtype=float) / n
+    )
     weight_sum = weights.sum()
 
     # Stack all correction datasets and compute weighted average
@@ -183,6 +194,7 @@ def average_corrections(
         r.corrections.attrs.get("climatology_only", False) for r in sorted_results
     )
     avg_ds.attrs["averaged_from_n"] = n
+    avg_ds.attrs["temporal_weighting"] = weighting
 
     # Result is usable if any input was usable
     any_usable = any(r.usable for r in sorted_results)

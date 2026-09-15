@@ -23,7 +23,8 @@ if result.usable_for_vpr:
     # VPR correction factors by range
     if result.vpr_correction:
         corr = result.vpr_correction.corrections
-        print(f"Correction at 100 km: {corr.sel(range_km=100).values:.2f} dB")
+        value = corr.cappi_blended_correction_db.sel(range_km=100, cappi_height=500)
+        print(f"Correction at 100 km: {float(value):.2f} dB")
 ```
 
 ## Accessing Radar Configuration
@@ -49,6 +50,29 @@ result = process_vvp(
 
 See [configuration.md](configuration.md) for details on TOML structure and precedence.
 
+Freezing levels passed to `process_vvp()` or `read_vvp()` are meters above sea
+level. Dataset heights and the low-level correction API use meters above the
+antenna. CAPPI target heights are above sea level.
+
+## Temporal Averaging
+
+```python
+from vprc import average_corrections
+
+# Results must have identical correction variables and range/height coordinates.
+averaged = average_corrections(correction_results)
+
+# Opt in to pystycappi_ka.pl's oldest-to-newest rank weights.
+legacy_averaged = average_corrections(correction_results, weighting="legacy")
+```
+
+The default `"elapsed"` weighting retains actual-time decay with oldest weight
+0.2; `"legacy"` uses `(j + 1) / n` after sorting by timestamp. Both average the
+already-blended corrections in dB, preserve climatological products, and average
+quality weights for compositing. Non-finite values and incompatible grids are
+errors. Select the desired observation window in the calling workflow; the
+legacy operational window was six hours.
+
 ## Low-Level API
 
 For finer control, use the individual processing functions:
@@ -62,15 +86,21 @@ from vprc.bright_band import detect_bright_band
 from vprc.vpr_correction import compute_vpr_correction
 
 # Step through the pipeline manually
-ds = read_vvp("profile.txt")
+ds = read_vvp("profile.txt", radar_metadata={"freezing_level_m": 2500})
 ds = remove_ground_clutter(ds)
 ds = smooth_spikes(ds)
 classification = classify_profile(ds)
 bright_band = detect_bright_band(ds)
 
 if classification.usable_for_vpr:
-    vpr_result = compute_vpr_correction(ds)
+    vpr_result = compute_vpr_correction(
+        ds, freezing_level_m=ds.attrs["freezing_level_m"], bb_result=bright_band
+    )
 ```
+
+The composite creation command exits with an error for unreadable/corrupt inputs,
+missing radar coordinates, or processing failures. These failures must not be
+interpreted as valid no-precipitation products.
 
 ## Airflow Integration
 

@@ -4,15 +4,15 @@ These tests validate that the Python temporal averaging implementation
 produces results compatible with pystycappi_ka.pl.
 
 Test data: tests/data/202208171*_VIM.VVP_40.* files
-- .txt: Input VVP profiles (7 timesteps: 11:00-12:45 at 15-min intervals)
+- .txt: Input VVP profiles (7 timesteps: 11:00-12:45, missing 11:45)
 - .cor: Individual VPR corrections from pystycappi.pl
 - .corave: Time-averaged corrections from pystycappi_ka.pl
 
 Important notes:
-- The Python implementation uses time-delta-based weighting (newer = heavier)
-- The legacy Perl uses index-based weighting: weight = (j+1)/n
-- For equally-spaced data (like this test set), the weights differ slightly
-- This test validates the overall approach rather than exact numerical match
+- Default Python weighting uses actual elapsed time.
+- Opt-in legacy weighting uses rank: weight = (j+1)/n.
+- Tests isolate temporal arithmetic using the checked-in instantaneous
+  corrections, comparing all products/ranges against the averaged reference.
 """
 
 from datetime import datetime
@@ -24,6 +24,7 @@ import xarray as xr
 
 from vprc import process_vvp, average_corrections
 from vprc.temporal import MIN_AGE_WEIGHT
+from vprc.vpr_correction import VPRCorrectionResult
 
 from .legacy_parser import parse_legacy_cor, parse_legacy_corave
 
@@ -84,48 +85,33 @@ class TestTemporalAveragingE2E:
         assert np.all(cappi_corr >= -30), "Corrections should not be below -30 dB"
         assert np.all(cappi_corr <= 30), "Corrections should not exceed 30 dB"
 
-    def test_compare_cappi_500_trend_with_legacy(self):
-        """Compare CAPPI 500m correction trend with legacy output.
-
-        The Python implementation uses different weighting than Perl,
-        so we compare trends rather than exact values.
-        """
-        # Process all profiles
+    def test_numerical_temporal_average_against_legacy(self):
+        """Match every blended and rain-only value within output rounding."""
         results = []
-        for vvp_file in VIM_FILES:
-            result = process_vvp(vvp_file)
-            if result.vpr_correction:
-                results.append(result.vpr_correction)
+        for path in VIM_COR_FILES:
+            ds, header = parse_legacy_cor(path)
+            blended = (
+                ds.correction_klim_db * 0.2
+                + ds.correction_rain_db * header.quality_weight
+            ) / (0.2 + header.quality_weight)
+            corrections = xr.Dataset(
+                {
+                    "correction_avg_db": blended,
+                    "correction_rain_db": ds.correction_rain_db,
+                },
+                attrs={"timestamp": header.timestamp.isoformat()},
+            )
+            results.append(VPRCorrectionResult(corrections, z_ground_dbz=0.0))
 
-        # Python temporal average
-        py_averaged = average_corrections(results)
-        py_cappi_500 = py_averaged.corrections['cappi_correction_db'].sel(cappi_height=500)
-
-        # Legacy output
-        legacy_ds, _ = parse_legacy_corave(VIM_CORAVE)
-        legacy_cappi_500 = legacy_ds['correction_avg_db'].sel(correction_type='cappi_500')
-
-        # Both should have corrections that decrease with range (negative trend)
-        # as beam goes higher into weaker echo
-        py_ranges = py_cappi_500.range_km.values
-        legacy_ranges = legacy_ds.range_km.values
-
-        # Compare at common ranges
-        common_ranges = np.intersect1d(py_ranges, legacy_ranges)
-        assert len(common_ranges) > 100, "Should have 100+ common range bins"
-
-        # Get values at range 50km and 150km
-        py_at_50 = float(py_cappi_500.sel(range_km=50, method='nearest'))
-        py_at_150 = float(py_cappi_500.sel(range_km=150, method='nearest'))
-        legacy_at_50 = float(legacy_cappi_500.sel(range_km=50, method='nearest'))
-        legacy_at_150 = float(legacy_cappi_500.sel(range_km=150, method='nearest'))
-
-        # Both should show same trend direction
-        py_trend = py_at_150 - py_at_50
-        legacy_trend = legacy_at_150 - legacy_at_50
-
-        assert np.sign(py_trend) == np.sign(legacy_trend) or abs(py_trend) < 1, \
-            f"Trend direction mismatch: Python {py_trend:.2f} vs Legacy {legacy_trend:.2f}"
+        averaged = average_corrections(results, weighting="legacy").corrections
+        expected, _ = parse_legacy_corave(VIM_CORAVE)
+        for name in ("correction_avg_db", "correction_rain_db"):
+            np.testing.assert_allclose(
+                averaged[name].sel(range_km=expected.range_km),
+                expected[name],
+                atol=0.051,
+                rtol=0,
+            )
 
     def test_sample_count_matches(self):
         """Verify sample counts from processed profiles."""
