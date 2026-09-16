@@ -57,3 +57,24 @@ def test_unknown_radar_is_an_error(command, tmp_path):
     assert result.exit_code != 0
     assert "No coordinates configured" in result.output
     assert not output.exists()
+
+
+def test_no_echo_is_a_valid_climatology_product(command, tmp_path):
+    path = tmp_path / KAN_FILE.name
+    lines = KAN_FILE.read_text().splitlines()
+    for i in range(3, len(lines)):
+        fields = lines[i].split()
+        if fields:
+            fields[2] = "0"
+            fields[9] = "-45"
+            lines[i] = " ".join(fields)
+    path.write_text("\n".join(lines) + "\n")
+    output = tmp_path / "output"
+
+    result = CliRunner().invoke(
+        command,
+        [str(path), "--output-dir", str(output), "--resolution", "100000"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(list(output.glob("*.tif"))) == 1

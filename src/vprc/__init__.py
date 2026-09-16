@@ -18,7 +18,7 @@ Individual processing steps:
     climatology.generate_climatological_profile() - Generate fallback profile
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import xarray as xr
@@ -32,6 +32,7 @@ from .classification import (
     LayerType,
     PrecipitationType,
     classify_precipitation_type,
+    finalize_profile_classification,
 )
 from .bright_band import (
     detect_bright_band,
@@ -40,7 +41,11 @@ from .bright_band import (
     apply_post_bb_clutter_correction,
     restore_bb_spike,
 )
-from .vpr_correction import compute_vpr_correction, VPRCorrectionResult
+from .vpr_correction import (
+    compute_vpr_correction,
+    VPRCorrectionResult,
+    cap_bb_peak_amplitude,
+)
 from .temporal import average_corrections
 from .climatology import generate_climatological_profile, get_clim_ground_reference
 from .composite import (
@@ -161,11 +166,18 @@ def process_vvp(
 
     bright_band = detect_bright_band(ds, layer_top=layer_top)
 
-    # Step 5b: Post-BB clutter correction (based on BB result)
-    ds, bright_band = apply_post_bb_clutter_correction(ds, bright_band)
-
-    # Step 5c: Restore BB spike (smoothing may have altered real BB enhancement)
+    # Restore the measured band before applying surface and clutter corrections.
     ds = restore_bb_spike(ds, bright_band)
+    ds = cap_bb_peak_amplitude(ds, bright_band)
+    ds, bright_band = apply_post_bb_clutter_correction(ds, bright_band)
+    classification = finalize_profile_classification(classification, ds, bright_band)
+    if (
+        classification.lowest_layer is not None
+        and classification.lowest_layer.evaporation_detected
+    ):
+        bright_band = replace(
+            bright_band, detected=False, rejection_reason=BBRejectionReason.EVAPORATION
+        )
 
     # Use provided freezing level, else detected if allowed and available
     if freezing_level_m is None and fallback_detected_freezing_level:
@@ -174,21 +186,17 @@ def process_vvp(
 
     # Step 5d: Precipitation type classification
     lowest_height = int(ds["height"].values[0])
-    precip_type = classify_precipitation_type(
-        bright_band, freezing_level_m, lowest_height
+    precip_type = (
+        classify_precipitation_type(bright_band, freezing_level_m, lowest_height)
+        if classification.usable_for_vpr
+        else PrecipitationType.UNKNOWN
     )
     # Update classification with precipitation type
-    classification = ProfileClassification(
-        layers=classification.layers,
-        usable_for_vpr=classification.usable_for_vpr,
-        profile_type=classification.profile_type,
-        freezing_level_m=classification.freezing_level_m,
-        precipitation_type=precip_type,
-    )
+    classification = replace(classification, precipitation_type=precip_type)
 
     # Step 6: VPR correction (if requested)
     # Always compute corrections when freezing level is available - unusable
-    # profiles will get climatology-only corrections (quality_weight=0)
+    # profiles will get climatology-only corrections (observed quality=0).
     vpr_result = None
     if compute_vpr and freezing_level_m is not None:
         vpr_result = compute_vpr_correction(
@@ -196,6 +204,13 @@ def process_vvp(
             freezing_level_m=freezing_level_m,
             cappi_heights_m=cappi_heights_m,
             bb_result=bright_band,
+            is_precipitation=classification.usable_for_vpr,
+            layer_top_height_m=layer_top,
+            min_elevation_deg=(
+                min(float(angle) for angle in ds.attrs["elevation_angles"])
+                if ds.attrs.get("elevation_angles")
+                else 0.5
+            ),
         )
 
     return ProcessedProfile(
@@ -213,6 +228,7 @@ __all__ = [
     "LayerType",
     "PrecipitationType",
     "classify_precipitation_type",
+    "finalize_profile_classification",
     "BrightBandResult",
     "BBRejectionReason",
     "apply_post_bb_clutter_correction",

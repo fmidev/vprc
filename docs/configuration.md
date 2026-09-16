@@ -11,6 +11,7 @@ The `vprc` package uses TOML-based configuration for radar station metadata. All
 antenna_height_m = 198
 lowest_level_offset_m = 102
 beamwidth_deg = 0.95
+horizon_angle_deg = 0.0
 
 [KAN]  # Three-letter code (section key)
 name = "KANKAANPAA"  # Full radar name from VVP file headers
@@ -29,6 +30,9 @@ lowest_level_offset_m = 17
 - `beamwidth_deg` (float): One-way half-power beamwidth in degrees
   - Defined in `[defaults]` section
   - Can be overridden per-radar
+- `horizon_angle_deg` (float): Lowest unblocked beam angle in degrees
+  - Defined in `[defaults]` section
+  - Can be overridden per-radar for terrain-blocked or below-horizontal coverage
 
 **Required (per-radar):**
 - `name` (string): Full radar name for VVP header matching (case-insensitive)
@@ -37,6 +41,7 @@ lowest_level_offset_m = 17
 
 **Optional (per-radar):**
 - `beamwidth_deg` (float): Override default beamwidth for this specific radar
+- `horizon_angle_deg` (float): Override the default terrain horizon
 
 **Optional (runtime):**
 - `freezing_level_m` (int | None): Freezing level from NWP data (meters ASL)

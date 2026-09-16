@@ -24,6 +24,7 @@ default_grid_resolution_m = 1000
 antenna_height_m = 198
 lowest_level_offset_m = 102
 beamwidth_deg = 0.95
+horizon_angle_deg = 0.0
 max_range_km = 250
 enabled = true  # Whether radar is active in network (for maintenance/decommissioning)
 
@@ -100,6 +101,7 @@ longitude = 26.318877
 name = "LUOSTO"
 antenna_height_m = 530
 lowest_level_offset_m = 170
+horizon_angle_deg = -0.1
 latitude = 67.139096
 longitude = 26.896916
 
