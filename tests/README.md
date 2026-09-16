@@ -69,6 +69,13 @@ Each test file corresponds to a module in `src/vprc/`:
 | `test_bright_band.py` | `bright_band.py` | Bright band detection |
 | `test_vpr_correction.py` | `vpr_correction.py` | VPR correction calculation |
 | `test_legacy_comparison.py` | – | End-to-end validation against Perl output |
+| `test_legacy_parser.py` | `legacy_parser.py` | Reference fields, multiple layers and BB candidate sections |
+| `test_pipeline.py` | `__init__.py` | Public pipeline metadata and stage integration |
+| `test_temporal.py` | `temporal.py` | Weighting, product preservation and input compatibility |
+| `test_temporal_e2e.py` | `temporal.py` | Numerical temporal comparison against `.corave` |
+| `test_composite.py` | `composite.py` | Spatial weights and temporal-to-composite integration |
+| `test_io_export.py` | `io/geotiff.py` | COG output |
+| `test_create_composite.py` | `scripts/create_composite.py` | Processing errors versus valid climatology fallback |
 
 ## Test Data
 
@@ -85,6 +92,24 @@ Used by `test_legacy_comparison.py` to validate against the original Perl implem
 
 - `*.profile` – Processed profile output from `allprof_prodx2.pl`
 - `*.cor` – Correction factors from `pystycappi.pl`
+
+### Reference Validation
+
+The temporal numerical test feeds the checked-in instantaneous `.cor` values
+through `average_corrections(weighting="legacy")` and compares all six products
+at every reference range. Its 0.051 dB tolerance accounts for the reference
+output's one-decimal rounding. Default elapsed-time weights are tested
+separately; they intentionally differ from legacy rank weights.
+
+Synthetic profiles must distinguish wind `sample_count` from reflectivity
+`zcount`, and raw `lin_dbz` from working `corrected_dbz`. Keeping those fields
+identical in every test hides important algorithm errors. Assert detection,
+classification, and numerical corrections directly, not just metadata,
+plausible ranges, or trend direction.
+
+The legacy sources are optional, read-only local references. Tests should use
+checked-in outputs or explicit analytical expectations and must not require
+modifying or running scripts in the legacy working directory.
 
 ## Adding New Tests
 
