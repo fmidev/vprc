@@ -15,6 +15,8 @@ from vprc.bright_band import (
     _compute_gradient_sum,
     _validate_near_surface_bb,
     _determine_clutter_scenario,
+    _validate_bright_band,
+    _refine_peak_height,
 )
 from vprc.constants import (
     MDS,
@@ -43,6 +45,7 @@ def make_test_dataset(
 
     data_vars = {
         "corrected_dbz": ("height", dbz_values),
+        "lin_dbz": ("height", dbz_values),
     }
 
     if zcount_values is not None:
@@ -202,8 +205,10 @@ class TestDetectBrightBand:
 
         result = detect_bright_band(ds, layer_top=2300)
 
-        # Should detect something, though exact behavior depends on thresholds
-        # The key is that this profile has the right shape
+        assert result.detected
+        assert result.peak_height == 1500
+        assert result.bottom_height == 700
+        assert result.top_height == 1900
         assert result.freezing_level_m == 1500
 
     def test_bb_result_has_freezing_level(self):
@@ -467,6 +472,12 @@ class TestNearSurfaceBBValidation:
 class TestBBRejectionReason:
     """Tests for BB rejection reason tracking."""
 
+    def test_evaporation_has_explicit_rejection_reason(self):
+        result = BrightBandResult(
+            detected=False, rejection_reason=BBRejectionReason.EVAPORATION
+        )
+        assert result.rejection_reason.value == "evaporation"
+
     def test_detected_bb_has_not_rejected_reason(self):
         """Successfully detected BB has NOT_REJECTED reason."""
         # Create a profile with clear BB signature
@@ -478,9 +489,8 @@ class TestBBRejectionReason:
 
         result = detect_bright_band(ds, layer_top=2300)
 
-        # If detected, reason should be NOT_REJECTED
-        if result.detected:
-            assert result.rejection_reason == BBRejectionReason.NOT_REJECTED
+        assert result.detected
+        assert result.rejection_reason == BBRejectionReason.NOT_REJECTED
 
     def test_layer_too_low_reason(self):
         """BB rejected due to low layer has correct reason."""
@@ -625,10 +635,9 @@ class TestApplyPostBBClutterCorrection:
         # Clutter correction applied flag
         assert bb_out.clutter_correction_applied is True
 
-        # At 100m: original=30, above (300)=28, threshold=28+1=29
-        # 30 > 29, so should be corrected to 29
+        # Rejection correction is followed by the no-BB/low-FL correction.
         corrected = ds_out["corrected_dbz"].values
-        assert corrected[0] <= dbz_values[1] + POST_BB_CLUTTER_THRESHOLD_DB
+        np.testing.assert_allclose(corrected, [25, 24, 23, 22, 20])
 
     def test_low_bb_bottom_applies_correction_below_bb(self):
         """Scenario B: Correction below BB when BB bottom is low."""
@@ -840,3 +849,146 @@ class TestRestoreBBSpike:
         """Verify restoration uses the configured offsets."""
         # The default offsets are (-400, -200, 0, 200, 400)
         assert BB_SPIKE_RESTORATION_OFFSETS == (-400, -200, 0, 200, 400)
+
+
+@pytest.mark.parametrize(
+    "values,peak,bottom,top",
+    [
+        ([35, 30, 25, 20, 18, 16, 14, 12, 10, 8, 6, 4], 100, -1, 700),
+        ([20, 35, 25, 20, 18, 16, 14, 12, 10, 8, 6, 4], 300, 100, 500),
+    ],
+)
+def test_actual_near_surface_bright_band_detection(values, peak, bottom, top):
+    from vprc.smoothing import smooth_spikes
+
+    ds = make_test_dataset(values, freezing_level_m=300, zcount_values=[1000] * len(values))
+    bb = detect_bright_band(smooth_spikes(ds))
+    assert bb.detected
+    assert (bb.peak_height, bb.bottom_height, bb.top_height) == (peak, bottom, top)
+    if peak == 300:
+        assert bb.refined_peak_height == pytest.approx(372.797134498126)
+    else:
+        assert bb.refined_peak_height == 100
+
+
+def test_near_surface_count_validation_uses_peak_not_bottom():
+    values = [20, 35, 25, 20, 18, 16, 14, 12, 10, 8, 6, 4]
+    counts = [100, 1000, 1000] + [1000] * 9
+    ds = make_test_dataset(values, freezing_level_m=300, zcount_values=counts)
+    bb = detect_bright_band(ds)
+    assert bb.detected  # Low count at bottom=100 is not the peak=300 test.
+    ds["zcount"][1] = 400
+    rejected = detect_bright_band(ds)
+    assert not rejected.detected
+    assert rejected.rejection_reason == BBRejectionReason.NEAR_SURFACE_ZCOUNT
+
+
+@pytest.mark.parametrize("difference,rejected", [(6, False), (-6, True)])
+def test_validation_uses_upward_positive_outer_gradient(difference, rejected):
+    ds = make_test_dataset([20] * 8)
+    gradient = xr.DataArray(
+        [0, 0, 0, 0, difference, 0, 0, 0],
+        coords={"height": ds.height}, dims="height",
+    )
+    bb = BrightBandResult(
+        detected=True, peak_height=700, bottom_height=500,
+        top_height=900, amplitude_above=8,
+    )
+    assert (_validate_bright_band(bb, gradient, ds, 100) is not None) == rejected
+
+
+def test_four_hundred_metre_band_requires_outer_gradient_check():
+    ds = make_test_dataset([20] * 8)
+    gradient = xr.DataArray(
+        [0, 3, 0, 0, 3, 0, 0, 0],
+        coords={"height": ds.height}, dims="height",
+    )
+    bb = BrightBandResult(
+        detected=True, peak_height=700, bottom_height=500,
+        top_height=900, amplitude_above=8,
+    )
+    assert _validate_bright_band(bb, gradient, ds, 100) == BBRejectionReason.VALIDATION_FAILED
+
+
+def test_candidate_must_be_within_five_hundred_metres_of_freezing_level():
+    values = [10, 12, 15, 18, 22, 26, 30, 35, 28, 22, 18, 15]
+    far = detect_bright_band(make_test_dataset(values, freezing_level_m=3500))
+    assert not far.detected
+    unknown = detect_bright_band(make_test_dataset(values, freezing_level_m=None))
+    assert unknown.detected
+
+
+def test_smoothed_bright_band_retains_raw_boundaries_and_amplitudes():
+    from vprc.smoothing import smooth_spikes
+
+    values = [10, 10, 10, 10, 10, 15, 35, 15, 10, 8, 6, 4, 2, 0]
+    ds = make_test_dataset(values, freezing_level_m=1300, zcount_values=[1000] * len(values))
+    smoothed = smooth_spikes(ds)
+    assert float(smoothed.corrected_dbz.sel(height=1300)) == 15
+    bb = detect_bright_band(smoothed)
+    assert bb.detected
+    assert (bb.peak_height, bb.bottom_height, bb.top_height) == (1300, 1100, 1500)
+    assert bb.peak_dbz == 35
+    assert bb.amplitude_above == bb.amplitude_below == 20
+
+
+def test_low_bb_threshold_uses_raw_upper_level_not_corrected_upper():
+    ds = make_test_dataset([30, 30, 20, 20, 20])
+    bb = BrightBandResult(detected=True, bottom_height=500, freezing_level_m=700)
+    corrected, _ = apply_post_bb_clutter_correction(ds, bb)
+    np.testing.assert_allclose(corrected.corrected_dbz, [30, 21, 20, 20, 20])
+
+
+def test_rejected_surface_bb_correction_reads_raw_profile():
+    ds = make_test_dataset([35, 30, 25, 20, 18])
+    ds["corrected_dbz"] = ("height", [23, 22, 21, 20, 18])
+    bb = BrightBandResult(
+        detected=False, freezing_level_m=1500,
+        rejection_reason=BBRejectionReason.NEAR_SURFACE_ZCOUNT,
+    )
+    corrected, _ = apply_post_bb_clutter_correction(ds, bb)
+    np.testing.assert_allclose(corrected.corrected_dbz, [31, 26, 21, 20, 18])
+
+
+def test_no_spurious_clutter_flag_when_post_bb_does_not_correct():
+    ds = make_test_dataset([20, 21, 22, 23, 24])
+    bb = BrightBandResult(detected=False, freezing_level_m=500)
+    corrected, bb = apply_post_bb_clutter_correction(ds, bb)
+    assert not bb.clutter_correction_applied
+    assert not corrected.attrs["clutter_detected"]
+
+
+def test_weighted_height_does_not_change_restoration_centre():
+    values = [20, 35, 25, 20, 18, 16, 14, 12, 10, 8, 6, 4]
+    ds = make_test_dataset(values, freezing_level_m=300, zcount_values=[1000] * len(values))
+    bb = detect_bright_band(ds)
+    ds["corrected_dbz"] = ds.corrected_dbz.astype(float) - 2
+    restored = restore_bb_spike(ds, bb)
+    assert float(restored.corrected_dbz.sel(height=300)) == 35
+    assert float(restored.corrected_dbz.sel(height=700)) == 20
+    assert float(restored.corrected_dbz.sel(height=900)) == 16
+
+
+def test_five_point_refinement_uses_linear_reflectivity_weights():
+    values = [10, 12, 15, 18, 22, 26, 30, 35, 28, 22, 18, 15]
+    ds = make_test_dataset(values)
+    heights = np.array([1100, 1300, 1500, 1700, 1900])
+    weights = 10 ** (np.array([26, 30, 35, 28, 22]) / 10)
+    assert _refine_peak_height(ds, 1500) == pytest.approx(np.average(heights, weights=weights))
+    ds["corrected_dbz"].loc[{"height": 1100}] = 33
+    assert _refine_peak_height(ds, 1500) == 1500  # Outer increase >= 2 dB.
+
+
+def test_invalid_outer_gradient_rejects_bb_using_zcount_not_wind_count():
+    values = [10, 10, 10, 10, 10, 15, 35, 15, 10, 8, 6, 4, 2, 0]
+    ds = make_test_dataset(values, freezing_level_m=1300, zcount_values=[1000] * len(values))
+    ds["sample_count"] = ("height", [1000] * len(values))
+    ds["zcount"].loc[{"height": 1700}] = 30
+    bb = detect_bright_band(ds)
+    assert not bb.detected
+    assert bb.rejection_reason == BBRejectionReason.VALIDATION_FAILED
+
+
+def test_surface_bb_thickness_starts_at_zero_not_negative_sentinel():
+    bb = BrightBandResult(detected=True, bottom_height=-1, top_height=700)
+    assert bb.thickness == 700

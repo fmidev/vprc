@@ -13,9 +13,9 @@ Layer types:
     - GROUND_CLUTTER: Ground clutter contaminated echo
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 import logging
 
 import numpy as np
@@ -128,13 +128,15 @@ class ProfileClassification:
 
 def _find_echo_layers(
     dbz: xr.DataArray,
-    count: xr.DataArray,
+    count: xr.DataArray | None,
     heights: np.ndarray,
     min_samples: int = MIN_SAMPLES,
 ) -> list[EchoLayer]:
     """Segment a 1D profile into contiguous echo layers.
 
-    Layers are separated by gaps (heights with dbz <= MDS or insufficient samples).
+    Layers are separated by missing corrected reflectivity. Sample counts
+    have already been applied by smoothing; reapplying them would discard
+    successfully interpolated gaps. ``count`` is retained for compatibility.
 
     Args:
         dbz: Reflectivity values along height dimension
@@ -146,7 +148,7 @@ def _find_echo_layers(
         List of EchoLayer objects, ordered from lowest to highest
     """
     # Determine valid echo at each height
-    valid = (dbz.values > MDS) & (count.values >= min_samples)
+    valid = np.isfinite(dbz.values) & (dbz.values > MDS)
 
     layers = []
     in_layer = False
@@ -274,15 +276,13 @@ def _classify_layer(
     freezing_level_m: float | None,
     lowest_profile_height: int,
     has_clutter_flag: bool = False,
+    third_to_sixth_difference: float | None = None,
 ) -> LayerType:
     """Classify a single echo layer.
 
-    Classification logic derived from allprof_prodx2.pl:
-    - Ground-attached thick layers with echo above freezing level → PRECIPITATION
-    - Thin ground layers or weak echo near boundary layer → CLEAR_AIR
-    - Elevated layers detached from ground → ALTOSTRATUS
-    - Layers with detected ground clutter → CLUTTER
-    - Layers with significant evaporation (>20dB drop) → ALTOSTRATUS
+    Apply the legacy layer-height, freezing-level and low-level-gradient gates.
+    Clutter is retained as an independent flag; corrected precipitation may
+    still contain clutter. Evaporation is checked only after BB processing.
 
     Args:
         layer: The EchoLayer to classify
@@ -294,49 +294,61 @@ def _classify_layer(
     Returns:
         Classified LayerType
     """
-    # Clutter flag from upstream processing takes precedence
-    if has_clutter_flag and layer.touches_ground:
-        layer.has_clutter = True
-        return LayerType.GROUND_CLUTTER
+    layer.has_clutter = has_clutter_flag and layer.bottom_height < 1000
+    result = LayerType.GROUND_CLUTTER if layer.has_clutter else LayerType.UNKNOWN
+    if layer_index > 0 or layer.bottom_height > 500:
+        result = LayerType.ALTOSTRATUS
+    elif layer.bottom_height < 500 and layer.top_height > 500:
+        result = LayerType.CLEAR_AIR_ECHO
+    if layer.touches_ground and layer.thickness <= 200:
+        result = LayerType.CLEAR_AIR_ECHO
 
-    # Elevated layers (not touching ground or not the lowest) are altostratus
-    if layer_index > 0 or layer.bottom_height > lowest_profile_height + 400:
-        return LayerType.ALTOSTRATUS
+    # Unknown NWP retains the documented heuristic fallback, not an invented FL.
+    if freezing_level_m is None:
+        if layer_index == 0 and layer.touches_ground and layer.thickness >= 1000:
+            return (
+                LayerType.PRECIPITATION if layer.max_dbz >= 5
+                else LayerType.CLEAR_AIR_ECHO
+            )
+        return result
 
-    # Ground-attached layer analysis
-    thickness = layer.thickness
+    freezing_level = max(0.0, freezing_level_m)
+    if (
+        (not has_clutter_flag and layer_index == 0)
+        or (has_clutter_flag and layer_index == 1)
+    ):
+        if (
+            layer.bottom_height < 1500
+            and layer.top_height < 3000
+            and layer.max_dbz < 5
+            and layer.top_height - freezing_level < 1000
+        ):
+            result = LayerType.CLEAR_AIR_ECHO
 
-    # Very thin ground layer (≤200m) is likely clutter or CAE
-    if thickness <= 200:
-        return LayerType.CLEAR_AIR_ECHO
-
-    # Check for significant evaporation (Perl lines 1174-1185)
-    # If dBZ drops by >20 from max to min below max, precipitation is evaporating
-    if _check_evaporation(layer):
-        layer.evaporation_detected = True
-        return LayerType.ALTOSTRATUS
-
-    # Check if layer extends well above freezing level (precipitation signature)
-    if freezing_level_m is not None and freezing_level_m > 0:
-        height_above_fl = layer.top_height - freezing_level_m
-        if height_above_fl >= 1200:
-            return LayerType.PRECIPITATION
-        if height_above_fl < 0 and layer.top_height < 2000:
-            return LayerType.CLEAR_AIR_ECHO
-
-    # Thick ground-attached layer with significant extent
-    if layer.touches_ground and thickness >= 1000:
-        # Weak echo suggests CAE even if thick
-        if layer.max_dbz < 5:
-            return LayerType.CLEAR_AIR_ECHO
-        return LayerType.PRECIPITATION
-
-    # Moderate thickness without clear precipitation signature
-    if layer.top_height < 800:
-        return LayerType.CLEAR_AIR_ECHO
-
-    # Default for ambiguous cases: treat as unknown/needs more info
-    return LayerType.UNKNOWN
+    if layer_index == 0:
+        above_freezing = layer.top_height - freezing_level
+        if (
+            layer.touches_ground
+            and above_freezing >= 1200
+            and (
+                freezing_level > 0
+                or (
+                    third_to_sixth_difference is not None
+                    and third_to_sixth_difference <= 5.5
+                    and layer.top_height > 1200
+                )
+            )
+        ):
+            result = LayerType.PRECIPITATION
+        if layer.top_height < 2000 and (
+            (above_freezing < 1200 and layer.touches_ground)
+            or (
+                third_to_sixth_difference is not None
+                and third_to_sixth_difference >= 5.5
+            )
+        ):
+            result = LayerType.CLEAR_AIR_ECHO
+    return result
 
 
 def _check_evaporation(layer: EchoLayer) -> bool:
@@ -384,7 +396,7 @@ def classify_profile(
     each layer based on its characteristics and position.
 
     Args:
-        ds: xarray Dataset with 'corrected_dbz' and 'sample_count' variables,
+        ds: Previously smoothed xarray Dataset with 'corrected_dbz',
             indexed by 'height'. Must have 'freezing_level_m' in attrs
             (can be None).
 
@@ -403,12 +415,18 @@ def classify_profile(
     """
     heights = ds["height"].values
     dbz = ds["corrected_dbz"]
-    count = ds["sample_count"]
+    count = ds.get("zcount")
     freezing_level = ds.attrs.get("freezing_level_m", None)
     lowest_height = int(heights[0]) if len(heights) > 0 else 0
 
     # Check if clutter was detected upstream (could be stored in attrs)
     has_clutter = ds.attrs.get("clutter_detected", False)
+    third_to_sixth = None
+    if lowest_height + 400 in heights and lowest_height + 1000 in heights:
+        third_to_sixth = float(
+            dbz.sel(height=lowest_height + 400)
+            - dbz.sel(height=lowest_height + 1000)
+        )
 
     # Find contiguous layers
     layers = _find_echo_layers(dbz, count, heights, min_samples)
@@ -420,7 +438,8 @@ def classify_profile(
             layer_index=i,
             freezing_level_m=freezing_level,
             lowest_profile_height=lowest_height,
-            has_clutter_flag=has_clutter and i == 0,
+            has_clutter_flag=has_clutter,
+            third_to_sixth_difference=third_to_sixth,
         )
 
     # Determine overall profile classification
@@ -436,7 +455,6 @@ def classify_profile(
         if (
             lowest.layer_type == LayerType.PRECIPITATION
             and lowest.touches_ground
-            and lowest.thickness >= 800
         ):
             usable_for_vpr = True
 
@@ -446,6 +464,59 @@ def classify_profile(
         profile_type=profile_type,
         freezing_level_m=freezing_level,
     )
+
+
+def finalize_profile_classification(
+    classification: ProfileClassification,
+    ds: xr.Dataset,
+    bb_result: "BrightBandResult",
+) -> ProfileClassification:
+    """Refresh first-layer statistics and reject evaporation after BB correction.
+
+    Call after restoring/capping the BB and applying post-BB clutter correction.
+    Layer boundaries and preliminary layer types are retained. The BB enhancement
+    is excluded from the evaporation maximum, as in ``$evayla = $zala``.
+    Neither the input classification nor the dataset is modified.
+    """
+    result = replace(
+        classification,
+        layers=[replace(layer) for layer in classification.layers],
+    )
+    if not result.layers:
+        return result
+    layer = result.layers[0]
+    upper = layer.top_height
+    if (
+        bb_result.detected
+        and bb_result.bottom_height is not None
+        and bb_result.bottom_height > 0
+    ):
+        upper = bb_result.bottom_height
+    profile = ds["corrected_dbz"].sel(height=slice(layer.bottom_height, upper))
+    valid = profile.where(np.isfinite(profile) & (profile > MDS), drop=True)
+    layer.evaporation_detected = False
+    layer.min_dbz_below_max = None
+    layer.min_dbz_height = None
+    if valid.size:
+        max_index = int(np.argmax(valid.values))
+        layer.max_dbz = float(valid.values[max_index])
+        layer.max_dbz_height = int(valid.height.values[max_index])
+        below = valid.sel(height=slice(None, layer.max_dbz_height))
+        min_index = int(np.argmin(below.values))
+        layer.min_dbz_below_max = float(below.values[min_index])
+        layer.min_dbz_height = int(below.height.values[min_index])
+    else:
+        layer.max_dbz = MDS
+        layer.max_dbz_height = None
+        result.usable_for_vpr = False
+    layer.has_clutter = bool(ds.attrs.get("clutter_detected", layer.has_clutter))
+    if layer.layer_type == LayerType.PRECIPITATION and _check_evaporation(layer):
+        layer.evaporation_detected = True
+        layer.layer_type = LayerType.ALTOSTRATUS
+        result.profile_type = LayerType.ALTOSTRATUS
+        result.usable_for_vpr = False
+        result.precipitation_type = PrecipitationType.UNKNOWN
+    return result
 
 
 def classify_profiles(
@@ -484,18 +555,19 @@ def classify_precipitation_type(
     """Classify precipitation phase based on bright band and freezing level.
 
     Determines whether precipitation is snow, sleet, or rain based on:
-    - Bright band detection and position relative to ground
+    - Bright band detection and position relative to antenna height zero
     - Freezing level height when no bright band is detected
 
     Perl logic (lines 1334-1356 allprof_prodx2.pl):
     - Snow: no BB and freezing level < 500m
-    - Sleet: BB detected with bottom at/below ground level
+    - Sleet: BB detected with bottom <= 0 (including surface sentinel -1)
     - Rain: BB with bottom above ground, or freezing level >= 500m without BB
 
     Args:
         bb_result: Bright band detection result
         freezing_level_m: Freezing level in meters above antenna (from NWP)
-        lowest_profile_height: Lowest height in the profile (m above antenna)
+        lowest_profile_height: Retained for compatibility; positive observation
+            heights must not be treated as the surface sentinel
 
     Returns:
         PrecipitationType indicating precipitation phase
@@ -508,10 +580,10 @@ def classify_precipitation_type(
     if bb_result.detected:
         # BB detected - check if bottom is at/below ground
         bb_bottom = bb_result.bottom_height
-        if bb_bottom is not None and bb_bottom <= lowest_profile_height:
+        if bb_bottom is not None and bb_bottom <= 0:
             # BB extends to ground level - sleet/mixed precipitation
             logger.debug(
-                "Precipitation type: SLEET (BB bottom %d <= ground %d)",
+                "Precipitation type: SLEET (BB bottom %d <= zero; lowest %d)",
                 bb_bottom,
                 lowest_profile_height,
             )
@@ -519,7 +591,7 @@ def classify_precipitation_type(
         else:
             # BB above ground - rain
             logger.debug(
-                "Precipitation type: RAIN (BB bottom %s > ground %d)",
+                "Precipitation type: RAIN (BB bottom %s > zero; lowest %d)",
                 bb_bottom,
                 lowest_profile_height,
             )

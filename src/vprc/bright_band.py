@@ -15,13 +15,13 @@ Detection approach:
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Optional
 
 import numpy as np
 import xarray as xr
 
+from .clutter import compute_gradient
 from .constants import (
     MDS,
     STEP,
@@ -50,6 +50,7 @@ class BBRejectionReason(Enum):
     FREEZING_LEVEL_INVALID = "freezing_level_invalid"
     VALIDATION_FAILED = "validation_failed"
     NEAR_SURFACE_ZCOUNT = "near_surface_zcount"  # Triggers clutter correction
+    EVAPORATION = "evaporation"
 
 
 @dataclass
@@ -58,8 +59,8 @@ class BrightBandResult:
 
     Attributes:
         detected: True if a valid bright band was found
-        peak_height: Height of maximum reflectivity in BB (m above antenna)
-        bottom_height: Lower boundary of the melting layer (m)
+        peak_height: Discrete BB peak used for restoration (legacy bbalku)
+        bottom_height: Lower boundary (m above antenna), or -1 for a surface BB
         top_height: Upper boundary of the melting layer (m)
         peak_dbz: Reflectivity at the bright band peak (dBZ)
         amplitude_below: dBZ difference from bottom to peak
@@ -67,6 +68,7 @@ class BrightBandResult:
         freezing_level_m: Freezing level used for detection (if available)
         rejection_reason: Why BB was rejected (if not detected)
         clutter_correction_applied: True if post-BB clutter correction was applied
+        refined_peak_height: Reflectivity-weighted peak height (legacy bbhuippu)
     """
 
     detected: bool = False
@@ -79,12 +81,13 @@ class BrightBandResult:
     freezing_level_m: float | None = None
     rejection_reason: BBRejectionReason = BBRejectionReason.NOT_REJECTED
     clutter_correction_applied: bool = False
+    refined_peak_height: float | None = None
 
     @property
     def thickness(self) -> int | None:
         """Bright band thickness in meters, if detected."""
         if self.top_height is not None and self.bottom_height is not None:
-            return self.top_height - self.bottom_height
+            return self.top_height - max(0, self.bottom_height)
         return None
 
 
@@ -125,9 +128,9 @@ def _find_bb_candidates(
     """Find candidate bright band peak heights.
 
     The BB signature is identified by:
-    - Valid (>MDS) data at 5 consecutive levels centered on candidate
-    - Positive gradient sum at candidate (reflectivity increasing from below)
-    - Non-positive gradient sum below candidate (relatively flat or decreasing below)
+    - Valid (>MDS) data around the candidate; below-ground levels are optional
+    - Positive gradient sum above the candidate (reflectivity decreasing upward)
+    - Non-positive gradient sum below the candidate (increasing toward the peak)
 
     Args:
         dbz: Corrected reflectivity values
@@ -149,20 +152,29 @@ def _find_bb_candidates(
         # Need 5 consecutive valid levels: h-400, h-200, h, h+200, h+400
         required = [h - 2 * step, h - step, h, h + step, h + 2 * step]
 
-        # Check heights exist in array (skip if near boundaries)
-        if not all(hr in heights for hr in required):
+        # A surface melting peak does not require below-ground observations.
+        if not all(hr in heights or hr < 0 for hr in required):
             continue
 
         # Check all levels have valid data
-        valid = all(float(dbz.sel(height=hr).values) > MDS for hr in required)
+        valid = all(
+            hr < 0 or float(dbz.sel(height=hr).values) > MDS
+            for hr in required
+        )
         if not valid:
             continue
 
         # Compute gradient pattern
         # Gradient sum at h and h+step (looking at gradient from h to h+200 and h+200 to h+400)
         grad_sum_here = _compute_gradient_sum(gradient, h)
-        grad_sum_below = _compute_gradient_sum(gradient, h - 2 * step)
-        grad_sum_below2 = _compute_gradient_sum(gradient, h - step)
+        grad_sum_below = (
+            0.0 if h - 2 * step < 0
+            else _compute_gradient_sum(gradient, h - 2 * step)
+        )
+        grad_sum_below2 = (
+            0.0 if h - step < 0
+            else _compute_gradient_sum(gradient, h - step)
+        )
 
         if np.isnan(grad_sum_here):
             continue
@@ -193,7 +205,7 @@ def _find_bb_boundaries(
     to rain below and snow above.
 
     Args:
-        dbz: Corrected reflectivity values
+        dbz: Original reflectivity values
         gradient: Vertical gradient
         peak_height: Height of the BB peak
         heights: Array of height values
@@ -205,18 +217,18 @@ def _find_bb_boundaries(
     peak_dbz = float(dbz.sel(height=peak_height).values)
 
     # Find bottom: look for maximum gradient change below peak
-    bottom_height = None
+    bottom_height = -1 if peak_height == int(heights[0]) else None
     max_grad_diff_below = 0.0
-    amplitude_below = None
+    amplitude_below = 0.0 if bottom_height == -1 else None
 
     for k in range(peak_height, max(peak_height - 800, 0), -step):
         k_below = k - step
         k_below2 = k - 2 * step
 
-        if k_below not in heights or k_below2 not in heights:
+        if k_below not in heights or (k_below2 not in heights and k_below2 >= 0):
             continue
 
-        g1 = float(gradient.sel(height=k_below2).values) if k_below2 in heights else np.nan
+        g1 = float(gradient.sel(height=k_below2).values) if k_below2 in heights else 0.0
         g2 = float(gradient.sel(height=k_below).values) if k_below in heights else np.nan
 
         if np.isnan(g1) or np.isnan(g2):
@@ -255,6 +267,12 @@ def _find_bb_boundaries(
             dbz_at_top = float(dbz.sel(height=k_above).values)
             amplitude_above = peak_dbz - dbz_at_top
 
+    # The legacy comment specifies an 800-m fallback. Its loop-exit $k + 800
+    # accidentally adds that distance twice; retain the stated physical limit.
+    if top_height is None and peak_height + 800 in heights:
+        top_height = peak_height + 800
+        amplitude_above = peak_dbz - float(dbz.sel(height=top_height))
+
     return bottom_height, top_height, amplitude_below, amplitude_above
 
 
@@ -278,35 +296,39 @@ def _validate_bright_band(
     Returns:
         None if validation passes, or BBRejectionReason if rejected
     """
-    if result.top_height is None:
+    if result.top_height is None or result.bottom_height is None:
         return BBRejectionReason.VALIDATION_FAILED
 
-    # Check thickness is reasonable (not too thin)
-    if result.thickness is not None and result.thickness < 400:
-        return BBRejectionReason.VALIDATION_FAILED
-
-    # Check amplitude above is meaningful
-    if result.amplitude_above is not None and result.amplitude_above < 1.0:
-        return BBRejectionReason.VALIDATION_FAILED
-
-    # Gradient check above BB top should show continued decrease
-    # Perl: if ($isotaulu[$zyla][$j][3] * 200 > $ylaamp / 2) -> reject
-    # Perl gradient is dBZ/m, so *200 converts to dBZ/step.
-    # Python gradient is already dBZ/step, so no multiplication needed.
-    if result.top_height in gradient["height"].values:
-        grad_above = float(gradient.sel(height=result.top_height).values)
+    # Outer checks use the original, ZCnt-qualified [3] gradient, unlike
+    # candidate matching's [4] gradient gated by the corrected echo mask.
+    outer_gradient = -compute_gradient(ds) * STEP if "zcount" in ds else gradient
+    if result.top_height in outer_gradient["height"].values:
+        grad_above = float(outer_gradient.sel(height=result.top_height).values)
+        if not np.isfinite(grad_above):
+            return BBRejectionReason.VALIDATION_FAILED
         if not np.isnan(grad_above) and result.amplitude_above is not None:
-            # grad_above is dBZ/step; if positive and > half the amplitude, reject
-            if grad_above > result.amplitude_above / 2:
+            # Convert downward-positive differences to Perl's upward sign.
+            if -grad_above > result.amplitude_above / 2:
                 return BBRejectionReason.VALIDATION_FAILED
 
-    # Near-surface BB validation: when BB bottom is at lowest 1-2 levels,
+    # For a 400-m band, reject steeply falling gradients on both outer sides.
+    below = result.bottom_height - STEP
+    if (
+        result.thickness == 400
+        and below in outer_gradient.height.values
+        and result.top_height in outer_gradient.height.values
+        and float(outer_gradient.sel(height=result.top_height)) > 2
+        and float(outer_gradient.sel(height=below)) > 2
+    ):
+        return BBRejectionReason.VALIDATION_FAILED
+
+    # Near-surface BB validation: when the discrete peak is at lowest 1-2 levels,
     # check sample counts (Zcount) are sufficient
     # Perl: lines 1051-1075 in allprof_prodx2.pl
-    if result.bottom_height is not None and "zcount" in ds:
-        if result.bottom_height in (lowest_height, lowest_height + STEP):
+    if result.peak_height is not None:
+        if result.peak_height in (lowest_height, lowest_height + STEP):
             if not _validate_near_surface_bb(
-                ds, result.bottom_height, result.top_height
+                ds, result.peak_height, result.top_height
             ):
                 return BBRejectionReason.NEAR_SURFACE_ZCOUNT
 
@@ -320,7 +342,7 @@ def _validate_near_surface_bb(
 ) -> bool:
     """Validate bright band when it appears at near-surface levels.
 
-    When the BB bottom is at the lowest 1-2 levels, additional checks
+    When the BB peak is at the lowest 1-2 levels, additional checks
     on sample counts prevent false detection from ground clutter.
 
     Perl logic (lines 1051-1075 allprof_prodx2.pl):
@@ -331,7 +353,7 @@ def _validate_near_surface_bb(
 
     Args:
         ds: Dataset with 'zcount' variable
-        bottom_height: BB bottom height
+        bottom_height: Discrete BB peak height (historical argument name)
         top_height: BB top height
 
     Returns:
@@ -348,7 +370,7 @@ def _validate_near_surface_bb(
     heights = ds["height"].values
     zcount = ds["zcount"]
 
-    # Get sample counts at BB bottom and top
+    # The retained argument name predates correcting bbalku to mean peak.
     if bottom_height not in heights or top_height not in heights:
         return False
 
@@ -356,17 +378,17 @@ def _validate_near_surface_bb(
     zcount_top = float(zcount.sel(height=top_height).values)
 
     # Check minimum sample count at both levels
-    if zcount_bottom < NEAR_SURFACE_BB_MIN_ZCOUNT:
+    if not np.isfinite(zcount_bottom) or zcount_bottom < NEAR_SURFACE_BB_MIN_ZCOUNT:
         logger.debug(
-            "Near-surface BB rejected: Zcount at bottom (%d) < %d",
+            "Near-surface BB rejected: Zcount at peak (%s) < %d",
             zcount_bottom,
             NEAR_SURFACE_BB_MIN_ZCOUNT,
         )
         return False
 
-    if zcount_top < NEAR_SURFACE_BB_MIN_ZCOUNT:
+    if not np.isfinite(zcount_top) or zcount_top < NEAR_SURFACE_BB_MIN_ZCOUNT:
         logger.debug(
-            "Near-surface BB rejected: Zcount at top (%d) < %d",
+            "Near-surface BB rejected: Zcount at top (%s) < %d",
             zcount_top,
             NEAR_SURFACE_BB_MIN_ZCOUNT,
         )
@@ -384,7 +406,7 @@ def _validate_near_surface_bb(
             return False
 
     logger.debug(
-        "Near-surface BB validated: Zcount bottom=%d, top=%d, ratio=%.2f",
+        "Near-surface BB validated: Zcount peak=%d, top=%d, ratio=%.2f",
         zcount_bottom,
         zcount_top,
         zcount_top / zcount_bottom if zcount_bottom > 0 else 0,
@@ -393,19 +415,19 @@ def _validate_near_surface_bb(
 
 
 def compute_dbz_gradient_per_step(ds: xr.Dataset) -> xr.DataArray:
-    """Compute vertical gradient of corrected_dbz in dBZ per step.
+    """Compute downward-positive raw reflectivity differences per step.
 
     Unlike the gradient in clutter.py (which is dBZ/m), this returns
     the difference between adjacent levels (dBZ per 200m step),
     matching the Perl BB detection logic.
 
     Args:
-        ds: Dataset with 'corrected_dbz' variable
+        ds: Dataset with raw 'lin_dbz' and working 'corrected_dbz'
 
     Returns:
         DataArray with gradient values, indexed at lower height of each pair
     """
-    dbz = ds["corrected_dbz"]
+    dbz = ds["lin_dbz"]
 
     # Compute: gradient[i] = dbz[i] - dbz[i+1] (positive = decreasing upward)
     # Using shift to get dbz at height+step
@@ -413,10 +435,36 @@ def compute_dbz_gradient_per_step(ds: xr.Dataset) -> xr.DataArray:
     gradient = dbz - dbz_shifted
 
     # Mask where either value is missing
-    valid = (dbz > MDS) & (dbz_shifted > MDS)
+    corrected = ds["corrected_dbz"]
+    valid = (corrected > MDS) & (corrected.shift(height=-1) > MDS)
     gradient = gradient.where(valid)
 
     return gradient
+
+
+def _refine_peak_height(ds: xr.Dataset, peak: int) -> float:
+    """Reflectivity-weighted height; preserve the discrete restoration peak."""
+    heights = ds.height.values
+    values = ds["corrected_dbz"]
+    if peak - 2 * STEP > 0:
+        levels = [peak + offset for offset in BB_SPIKE_RESTORATION_OFFSETS]
+        if not all(h in heights and float(values.sel(height=h)) > MDS for h in levels):
+            return float(peak)
+        if (
+            float(values.sel(height=peak - 2 * STEP) - values.sel(height=peak - STEP)) >= 2
+            or float(values.sel(height=peak + 2 * STEP) - values.sel(height=peak + STEP)) >= 2
+        ):
+            return float(peak)
+    elif peak - STEP > 0:
+        levels = [peak - STEP, peak, peak + STEP]
+        required = levels + [peak + 2 * STEP]
+        if not all(h in heights and float(values.sel(height=h)) > MDS for h in required):
+            return float(peak)
+    else:
+        return float(peak)
+    dbz = values.sel(height=levels).values
+    weights = 10 ** ((dbz - np.max(dbz)) / 10)
+    return float(np.average(levels, weights=weights))
 
 
 def detect_bright_band(
@@ -449,6 +497,11 @@ def detect_bright_band(
     freezing_level = ds.attrs.get("freezing_level_m", None)
     heights = ds["height"].values
     dbz = ds["corrected_dbz"]
+    if not len(heights):
+        return BrightBandResult(
+            freezing_level_m=freezing_level,
+            rejection_reason=BBRejectionReason.NO_CANDIDATES,
+        )
 
     # Determine search bounds
     if layer_top is None:
@@ -462,7 +515,7 @@ def detect_bright_band(
             rejection_reason=BBRejectionReason.FREEZING_LEVEL_INVALID,
         )
 
-    if layer_top < 1300:
+    if layer_top <= 1300:
         return BrightBandResult(
             detected=False,
             freezing_level_m=freezing_level,
@@ -484,13 +537,13 @@ def detect_bright_band(
 
     # Select best candidate based on proximity to freezing level
     best_candidate = None
-    min_distance = float("inf")
+    min_distance = 500.0
 
     for h in candidates:
         if freezing_level is not None and freezing_level > 0:
             distance = abs(h - freezing_level)
-            if distance < min_distance:
-                min_distance = distance
+            if distance <= 500 and distance <= min_distance:
+                min_distance = abs(_refine_peak_height(ds, h) - freezing_level)
                 best_candidate = h
         else:
             # Without freezing level, take highest candidate (most likely)
@@ -506,10 +559,10 @@ def detect_bright_band(
 
     # Find boundaries
     bottom, top, amp_below, amp_above = _find_bb_boundaries(
-        dbz, gradient, best_candidate, heights
+        ds["lin_dbz"], gradient, best_candidate, heights
     )
 
-    peak_dbz = float(dbz.sel(height=best_candidate).values)
+    peak_dbz = float(ds["lin_dbz"].sel(height=best_candidate).values)
 
     result = BrightBandResult(
         detected=True,
@@ -520,6 +573,7 @@ def detect_bright_band(
         amplitude_below=amp_below,
         amplitude_above=amp_above,
         freezing_level_m=freezing_level,
+        refined_peak_height=_refine_peak_height(ds, best_candidate),
     )
 
     # Validate (pass dataset and lowest height for near-surface checks)
@@ -560,104 +614,60 @@ def apply_post_bb_clutter_correction(
         Tuple of (corrected dataset, updated BrightBandResult with clutter flag)
     """
     heights = ds["height"].values
-    lowest_height = int(heights[0])
-    freezing_level = bb_result.freezing_level_m
-
-    # Determine which correction scenario applies
-    scenario = _determine_clutter_scenario(bb_result, freezing_level)
-
-    if scenario is None:
-        # No correction needed
+    if not len(heights):
         return ds, bb_result
+    lowest = int(heights[0])
+    freezing_level = bb_result.freezing_level_m
+    scenario = _determine_clutter_scenario(bb_result, freezing_level)
+    if scenario is None:
+        return ds, bb_result
+    scenarios = [scenario]
+    if (
+        scenario == "near_surface_rejected"
+        and freezing_level is not None
+        and freezing_level <= NO_BB_CLUTTER_FREEZING_LEVEL_M
+    ):
+        # These are separate Perl blocks, not mutually exclusive branches.
+        scenarios.append("high_bb_or_no_bb")
 
-    logger.debug("Applying post-BB clutter correction: scenario %s", scenario)
-
-    # Make a copy to avoid modifying original
-    ds = ds.copy(deep=True)
-    corrected = ds["corrected_dbz"].values.copy()
-    original = ds["corrected_dbz"].values.copy()  # Keep original for reference
-
-    # Determine correction range based on scenario
-    if scenario == "near_surface_rejected":
-        # Scenario A: Rejected near-surface BB -> correct lowest 600m
-        correction_top = lowest_height + POST_BB_CLUTTER_HEIGHT_M
-        correction_bottom = lowest_height
-        use_corrected_reference = False  # Use original values as reference
-    elif scenario == "low_bb_bottom":
-        # Scenario B: Valid BB with low bottom -> correct below BB
-        correction_top = bb_result.bottom_height
-        correction_bottom = lowest_height
-        use_corrected_reference = True  # Use corrected values as reference
-    else:
-        # Scenario C: High BB or no BB with low freezing -> correct lowest 600m with smoothing
-        correction_top = lowest_height + POST_BB_CLUTTER_HEIGHT_M
-        correction_bottom = lowest_height
-        use_corrected_reference = True
-        # This scenario also applies smoothing for large jumps
-
-    # Apply correction from top down
-    height_indices = {int(h): i for i, h in enumerate(heights)}
-
-    for h in range(int(correction_top), int(correction_bottom), -STEP):
-        h_below = h - STEP
-        if h not in height_indices or h_below not in height_indices:
-            continue
-
-        idx = height_indices[h]
-        idx_below = height_indices[h_below]
-
-        # Get reference value (original or corrected depending on scenario)
-        if use_corrected_reference:
-            ref_value = corrected[idx]
-        else:
-            ref_value = original[idx]
-
-        # Check if lower level exceeds threshold
-        if original[idx_below] > ref_value + POST_BB_CLUTTER_THRESHOLD_DB:
-            corrected[idx_below] = ref_value + POST_BB_CLUTTER_THRESHOLD_DB
-            logger.debug(
-                "Clutter correction at %dm: %.1f -> %.1f dBZ",
-                h_below,
-                original[idx_below],
-                corrected[idx_below],
+    result = ds.copy(deep=True)
+    corrected = result["corrected_dbz"].values.astype(float, copy=True)
+    raw = result["lin_dbz"].values
+    indices = {int(h): i for i, h in enumerate(heights)}
+    applied = False
+    for scenario in scenarios:
+        top = (
+            bb_result.bottom_height if scenario == "low_bb_bottom"
+            else lowest + POST_BB_CLUTTER_HEIGHT_M
+        )
+        for height in range(int(top), lowest, -STEP):
+            if height not in indices or height - STEP not in indices:
+                continue
+            index, below = indices[height], indices[height - STEP]
+            if not np.isfinite(raw[index]) or not np.isfinite(raw[below]):
+                continue
+            threshold_reference = (
+                corrected[index] if scenario == "high_bb_or_no_bb" else raw[index]
             )
-
-            # Scenario C: Apply additional smoothing for large jumps
-            if scenario == "high_bb_or_no_bb":
-                h_above = h + STEP
-                if h_above in height_indices:
-                    idx_above = height_indices[h_above]
-                    if corrected[idx_above] - corrected[idx] > LARGE_JUMP_THRESHOLD_DB:
-                        # Average the middle level
-                        corrected[idx] = (corrected[idx] + corrected[idx_above]) / 2
-                        corrected[idx_below] = corrected[idx] + POST_BB_CLUTTER_THRESHOLD_DB
-                        logger.debug(
-                            "Smoothing large jump at %dm: new value %.1f dBZ",
-                            h,
-                            corrected[idx],
-                        )
-        else:
-            # Keep original value (no correction needed)
-            corrected[idx_below] = original[idx_below]
-
-    # Update dataset
-    ds["corrected_dbz"].values = corrected
-
-    # Update BB result with clutter correction flag
-    bb_result = BrightBandResult(
-        detected=bb_result.detected,
-        peak_height=bb_result.peak_height,
-        bottom_height=bb_result.bottom_height,
-        top_height=bb_result.top_height,
-        peak_dbz=bb_result.peak_dbz,
-        amplitude_below=bb_result.amplitude_below,
-        amplitude_above=bb_result.amplitude_above,
-        freezing_level_m=bb_result.freezing_level_m,
-        rejection_reason=bb_result.rejection_reason,
-        clutter_correction_applied=True,
+            if raw[below] > threshold_reference + POST_BB_CLUTTER_THRESHOLD_DB:
+                reference = raw[index] if scenario == "near_surface_rejected" else corrected[index]
+                corrected[below] = reference + POST_BB_CLUTTER_THRESHOLD_DB
+                applied = True
+                if scenario == "high_bb_or_no_bb" and height + STEP in indices:
+                    above = indices[height + STEP]
+                    if corrected[above] - corrected[index] > LARGE_JUMP_THRESHOLD_DB:
+                        corrected[index] = (corrected[index] + corrected[above]) / 2
+                        corrected[below] = corrected[index] + POST_BB_CLUTTER_THRESHOLD_DB
+            else:
+                corrected[below] = raw[below]
+    result["corrected_dbz"].values = corrected
+    result.attrs["clutter_detected"] = bool(
+        result.attrs.get("clutter_detected", False) or applied
     )
-
-    return ds, bb_result
+    return result, replace(
+        bb_result,
+        clutter_correction_applied=bb_result.clutter_correction_applied or applied,
+    )
 
 
 def _determine_clutter_scenario(

@@ -15,6 +15,7 @@ from vprc.classification import (
     classify_profile,
     classify_profiles,
     classify_precipitation_type,
+    finalize_profile_classification,
 )
 from vprc.constants import MDS, MIN_SAMPLES, EVAPORATION_THRESHOLD_DB, SNOW_FREEZING_LEVEL_THRESHOLD_M
 from vprc.bright_band import BrightBandResult
@@ -35,6 +36,8 @@ def make_test_dataset(
     ds = xr.Dataset(
         {
             "corrected_dbz": ("height", dbz_values),
+            "lin_dbz": ("height", dbz_values),
+            "zcount": ("height", counts),
             "sample_count": ("height", counts),
         },
         coords={"height": heights},
@@ -145,17 +148,16 @@ class TestFindEchoLayers:
 
         assert len(layers) == 0
 
-    def test_low_sample_count_invalidates_layer(self):
-        """Points with insufficient samples are treated as gaps."""
+    def test_filled_low_sample_count_does_not_split_layer(self):
+        """Corrected echoes retain interpolated gaps despite original counts."""
         dbz = xr.DataArray([10, 15, 20], dims=["height"])
         count = xr.DataArray([100, 10, 100], dims=["height"])  # Middle has low count
         heights = np.array([100, 300, 500])
 
         layers = _find_echo_layers(dbz, count, heights)
 
-        assert len(layers) == 2  # Two separate layers
-        assert layers[0].top_height == 100
-        assert layers[1].bottom_height == 500
+        assert len(layers) == 1
+        assert layers[0].top_height == 500
 
     def test_elevated_single_layer(self):
         """Layer starting above ground is not marked as touching_ground."""
@@ -206,15 +208,16 @@ class TestClassifyLayer:
         result = _classify_layer(layer, 0, freezing_level_m=None, lowest_profile_height=100)
         assert result == LayerType.CLEAR_AIR_ECHO
 
-    def test_clutter_flag_overrides(self):
-        """Clutter flag from upstream processing takes precedence."""
+    def test_precipitation_can_coexist_with_corrected_clutter(self):
+        """Clutter is an independent flag, not a precipitation veto."""
         layer = EchoLayer(
-            bottom_height=100, top_height=3000, max_dbz=30, touches_ground=True
+            bottom_height=100, top_height=4000, max_dbz=30, touches_ground=True
         )
         result = _classify_layer(
             layer, 0, freezing_level_m=2000, lowest_profile_height=100, has_clutter_flag=True
         )
-        assert result == LayerType.GROUND_CLUTTER
+        assert result == LayerType.PRECIPITATION
+        assert layer.has_clutter
 
 
 class TestClassifyProfile:
@@ -225,7 +228,7 @@ class TestClassifyProfile:
         # Create profile extending from ground to well above freezing level
         dbz_values = [20, 25, 30, 28, 25, 22, 20, 18, 15, 12, 10]
         heights = list(range(100, 100 + 200 * len(dbz_values), 200))
-        ds = make_test_dataset(dbz_values, heights, freezing_level_m=1000)
+        ds = make_test_dataset(dbz_values, heights, freezing_level_m=900)
 
         result = classify_profile(ds)
 
@@ -378,11 +381,13 @@ class TestEvaporationCheck:
         """Profile with strong evaporation is classified as altostratus."""
         # Create profile with max at top and low values at bottom
         # Strong drop: 45 dBZ at 900m, 10 dBZ at 100m = 35 dB drop
-        dbz_values = [10, 15, 20, 30, 45]
-        heights = [100, 300, 500, 700, 900]
+        dbz_values = [10, 15, 20, 30, 45, 40, 35, 30, 25, 20, 15, 12, 10, 8]
+        heights = list(range(100, 2900, 200))
         ds = make_test_dataset(dbz_values, heights, freezing_level_m=1500)
 
         result = classify_profile(ds)
+        assert result.profile_type == LayerType.PRECIPITATION
+        result = finalize_profile_classification(result, ds, BrightBandResult())
 
         # Should be classified as altostratus due to evaporation
         assert result.num_layers == 1
@@ -390,8 +395,8 @@ class TestEvaporationCheck:
         assert result.profile_type == LayerType.ALTOSTRATUS
         assert result.usable_for_vpr is False
 
-    def test_profile_without_evaporation_is_precipitation(self):
-        """Profile with normal gradient is classified as precipitation."""
+    def test_shallow_profile_without_evaporation_is_still_clear_air(self):
+        """A normal gradient does not bypass the freezing-level/top gate."""
         # Create profile with max near bottom (no evaporation)
         # Values decrease upward as expected
         dbz_values = [30, 28, 25, 22, 18, 15, 12, 10]
@@ -402,8 +407,8 @@ class TestEvaporationCheck:
 
         assert result.num_layers == 1
         assert result.lowest_layer.evaporation_detected is False
-        # With freezing level at 800m and top at 1500m (700m above FL),
-        # this should be precipitation
+        assert result.profile_type == LayerType.CLEAR_AIR_ECHO
+        assert result.usable_for_vpr is False
         assert result.lowest_layer.touches_ground
 
     def test_find_echo_layers_computes_min_below_max(self):
@@ -467,8 +472,8 @@ class TestClassifyPrecipitationType:
         )
         assert result == PrecipitationType.RAIN
 
-    def test_sleet_bb_at_ground(self):
-        """Sleet when BB bottom is at ground level."""
+    def test_positive_bb_bottom_at_lowest_observation_is_rain(self):
+        """Positive above-antenna heights are not the surface sentinel."""
         bb = BrightBandResult(
             detected=True,
             peak_height=300,
@@ -478,14 +483,14 @@ class TestClassifyPrecipitationType:
         result = classify_precipitation_type(
             bb, freezing_level_m=600, lowest_profile_height=100
         )
-        assert result == PrecipitationType.SLEET
+        assert result == PrecipitationType.RAIN
 
     def test_sleet_bb_below_ground(self):
         """Sleet when BB bottom would be below profile lowest level."""
         bb = BrightBandResult(
             detected=True,
             peak_height=200,
-            bottom_height=50,  # Below lowest profile height
+            bottom_height=-1,  # Surface BB sentinel
             top_height=400,
         )
         result = classify_precipitation_type(
@@ -544,3 +549,79 @@ class TestClassifyPrecipitationType:
     def test_threshold_matches_constant(self):
         """Verify threshold matches the constant value."""
         assert SNOW_FREEZING_LEVEL_THRESHOLD_M == 500
+
+
+@pytest.mark.parametrize(
+    "values,freezing_level,expected",
+    [
+        ([20] * 8, 1000, LayerType.CLEAR_AIR_ECHO),
+        ([30, 28, 25, 22, 18, 15, 12, 10], 0, LayerType.CLEAR_AIR_ECHO),
+        ([2] * 11, 0, LayerType.PRECIPITATION),
+        ([20] * 8, 300, LayerType.PRECIPITATION),
+        ([20] * 8, 301, LayerType.CLEAR_AIR_ECHO),
+    ],
+)
+def test_legacy_freezing_level_and_gradient_gates(values, freezing_level, expected):
+    result = classify_profile(make_test_dataset(values, freezing_level_m=freezing_level))
+    assert result.profile_type == expected
+    assert result.usable_for_vpr == (expected == LayerType.PRECIPITATION)
+
+
+def test_gap_filling_keeps_continuous_precipitation():
+    from vprc.smoothing import smooth_spikes
+
+    ds = make_test_dataset(
+        [20] * 4 + [MDS] + [20] * 10,
+        counts=[1000] * 4 + [0] + [1000] * 10,
+        freezing_level_m=1000,
+    )
+    corrected = smooth_spikes(ds)
+    assert float(corrected.corrected_dbz.sel(height=900)) == 20
+    result = classify_profile(corrected)
+    assert result.num_layers == 1
+    assert result.lowest_layer.top_height == 2900
+    assert result.usable_for_vpr
+
+
+def test_evaporation_excludes_broad_bright_band():
+    from vprc.bright_band import detect_bright_band, restore_bb_spike
+    from vprc.smoothing import smooth_spikes
+
+    values = [10, 10, 10, 12, 18, 30, 35, 35, 30, 18, 10, 8, 6, 4, 2, 0]
+    ds = smooth_spikes(make_test_dataset(values, freezing_level_m=1500))
+    classification = classify_profile(ds)
+    bb = detect_bright_band(ds)
+    assert bb.detected
+    assert bb.bottom_height == 900
+    result = finalize_profile_classification(classification, restore_bb_spike(ds, bb), bb)
+    assert result.profile_type == LayerType.PRECIPITATION
+    assert result.usable_for_vpr
+    assert result.lowest_layer.evaporation_amount == 8
+    assert result.lowest_layer.max_dbz == 18
+    assert classification.lowest_layer.max_dbz == 35
+
+
+def test_finalize_refreshes_extrema_without_resegmenting():
+    ds = make_test_dataset([40, 30, 20] + [10] * 8, freezing_level_m=500)
+    classification = classify_profile(ds)
+    corrected = ds.copy(deep=True)
+    corrected["corrected_dbz"][:3] = [13, 12, 11]
+    result = finalize_profile_classification(classification, corrected, BrightBandResult())
+    assert result.lowest_layer.max_dbz == 13
+    assert result.lowest_layer.max_dbz_height == 100
+    assert result.lowest_layer.top_height == classification.lowest_layer.top_height
+    assert classification.lowest_layer.max_dbz == 40
+
+
+def test_nonprecipitation_is_not_reclassified_by_evaporation():
+    ds = make_test_dataset([10, 15, 20, 30, 45], freezing_level_m=1500)
+    result = finalize_profile_classification(classify_profile(ds), ds, BrightBandResult())
+    assert result.profile_type == LayerType.CLEAR_AIR_ECHO
+    assert result.lowest_layer.evaporation_detected is False
+
+
+def test_finalize_empty_profile():
+    ds = make_test_dataset([])
+    result = finalize_profile_classification(classify_profile(ds), ds, BrightBandResult())
+    assert not result.layers
+    assert not result.usable_for_vpr

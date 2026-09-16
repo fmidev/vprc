@@ -1,690 +1,230 @@
-"""Spike smoothing operations for VVP profiles.
+"""Sequential spike and echo-boundary processing from allprof_prodx2.pl."""
 
-Based on the "piikkien tasoitus" section of allprof_prodx2.pl.
-These functions remove or smooth unphysical spikes and isolated echoes
-in vertical reflectivity profiles.
-"""
-
-import xarray as xr
 import numpy as np
+import xarray as xr
+
 from .constants import (
-    SPIKE_AMPLITUDE_THRESHOLD,
-    LARGE_POSITIVE_SPIKE_THRESHOLD,
     LARGE_NEGATIVE_SPIKE_THRESHOLD,
+    LARGE_POSITIVE_SPIKE_THRESHOLD,
+    MDS,
+    MIN_SAMPLES,
+    SPIKE_AMPLITUDE_THRESHOLD,
+    STEP,
 )
 
 
-def correct_lower_boundary_spike(
+def _at(ds: xr.Dataset, variable: str, height: int, missing: float) -> xr.DataArray:
+    """Return a height slice, treating absent boundary levels as missing."""
+    if height in ds.height.values:
+        return ds[variable].sel(height=height, drop=True)
+    return xr.full_like(ds[variable].isel(height=0, drop=True), missing, dtype=float)
+
+
+def _set(
     ds: xr.Dataset,
     height: int,
-    sample_threshold: int = 30,
+    condition: xr.DataArray,
+    value: xr.DataArray | float,
+) -> None:
+    if height in ds.height.values:
+        if not np.issubdtype(ds["corrected_dbz"].dtype, np.floating):
+            ds["corrected_dbz"] = ds["corrected_dbz"].astype(float)
+        original = ds["corrected_dbz"].sel(height=height, drop=True)
+        ds["corrected_dbz"].loc[{"height": height}] = xr.where(condition, value, original)
+
+
+def correct_lower_boundary_spike(
+    ds: xr.Dataset, height: int, sample_threshold: int = MIN_SAMPLES
 ) -> xr.Dataset:
-    """Remove false positive spikes at the bottom of echo regions.
-
-    Examines levels where there is missing data below but valid data at the current
-    level and two levels above. If reflectivity increases at this boundary (unphysical),
-    corrects the spike by either:
-    - Extrapolating downward using the positive gradient above, or
-    - Setting the spike value equal to the level above
-
-    Based on allprof_prodx2.pl ("alarajan positiivinen piikki").
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        VVP dataset with 'lin_dbz' and 'corrected_dbz' variables
-        Must have 'height' and 'time' dimensions
-    height : int
-        The height level (in meters) to check for boundary spikes
-    sample_threshold : int, default=30
-        Minimum number of samples required for valid data (Perl $kynnys)
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with corrected_dbz modified in-place for the specified height
-
-    Notes
-    -----
-    The algorithm checks the pattern:
-    - height - 200m: missing (samples < threshold)
-    - height: valid data
-    - height + 200m: valid data
-    - height + 400m: valid data
-
-    If reflectivity at height+200m exceeds corrected value at height+400m
-    (unphysical increase at boundary), apply correction.
-    """
-    # Check if all required height levels exist
-    h_minus_200 = height - 200
-    h_plus_200 = height + 200
-    h_plus_400 = height + 400
-    h_plus_600 = height + 600
-
-    required_heights = [h_minus_200, height, h_plus_200, h_plus_400, h_plus_600]
-    if not all(h in ds.height.values for h in required_heights):
-        return ds
-
-    # Extract data at relevant heights
-    samples_below = ds['sample_count'].sel(height=h_minus_200)
-    samples_current = ds['sample_count'].sel(height=height)
-    samples_plus_200 = ds['sample_count'].sel(height=h_plus_200)
-    samples_plus_400 = ds['sample_count'].sel(height=h_plus_400)
-
-    lin_dbz_plus_200 = ds['lin_dbz'].sel(height=h_plus_200)
-    corrected_plus_400 = ds['corrected_dbz'].sel(height=h_plus_400)
-    corrected_plus_600 = ds['corrected_dbz'].sel(height=h_plus_600)
-
-    # Identify where the pattern matches:
-    # - Missing data below (samples < threshold)
-    # - Valid data at current level and two levels above
-    pattern_match = (
-        (samples_below < sample_threshold) &
-        (samples_current > sample_threshold) &
-        (samples_plus_200 > sample_threshold) &
-        (samples_plus_400 > sample_threshold)
+    """Correct the first echo above two missing levels, in place."""
+    count = lambda h: _at(ds, "zcount", h, 0)
+    corrected = lambda h: _at(ds, "corrected_dbz", h, MDS)
+    raw = _at(ds, "lin_dbz", height + STEP, MDS)
+    above = corrected(height + 2 * STEP)
+    pattern = (
+        (count(height - STEP) < sample_threshold)
+        & (count(height) < sample_threshold)
+        & (count(height + STEP) > sample_threshold)
+        & (count(height + 2 * STEP) > sample_threshold)
+        & (raw > above)
     )
-
-    # Check for unphysical increase at boundary
-    # (Perl: if reflectivity decreases at edge - epäfysikaalista)
-    unphysical_increase = lin_dbz_plus_200 - corrected_plus_400 > 0
-
-    # Apply correction where both conditions are met
-    needs_correction = pattern_match & unphysical_increase
-
-    if needs_correction.any():
-        # Check gradient above: if positive, extrapolate downward
-        gradient_above = corrected_plus_600 - corrected_plus_400
-        positive_gradient = gradient_above > 0
-
-        # Two correction strategies
-        # Strategy 1: Extrapolate using positive gradient above
-        extrapolated = corrected_plus_400 - gradient_above
-
-        # Strategy 2: Set equal to level above
-        equal_to_above = corrected_plus_400
-
-        # Apply appropriate correction
-        correction = xr.where(
-            positive_gradient,
-            extrapolated,
-            equal_to_above
-        )
-
-        # Update corrected_dbz at height+200m where correction is needed
-        ds['corrected_dbz'].loc[{'height': h_plus_200}] = xr.where(
-            needs_correction,
-            correction,
-            ds['corrected_dbz'].sel(height=h_plus_200)
-        )
-
+    slope = corrected(height + 3 * STEP) - above
+    _set(ds, height + STEP, pattern, above - xr.where(slope > 0, slope, 0))
     return ds
 
 
 def correct_upper_boundary_spike(
+    ds: xr.Dataset, height: int, sample_threshold: int = MIN_SAMPLES
+) -> xr.Dataset:
+    """Correct the last echo below two missing levels, in place."""
+    count = lambda h: _at(ds, "zcount", h, 0)
+    corrected = lambda h: _at(ds, "corrected_dbz", h, MDS)
+    current = corrected(height)
+    pattern = (
+        (count(height) > sample_threshold)
+        & (count(height + STEP) > sample_threshold)
+        & (count(height + 2 * STEP) < sample_threshold)
+        & (count(height + 3 * STEP) < sample_threshold)
+        & (_at(ds, "lin_dbz", height + STEP, MDS) > current)
+    )
+    slope = current - corrected(height - STEP)
+    _set(ds, height + STEP, pattern, current + xr.where(slope < 0, slope, 0))
+    return ds
+
+
+def _smooth_at(
     ds: xr.Dataset,
     height: int,
-    sample_threshold: int = 30,
-) -> xr.Dataset:
-    """Remove false positive spikes at the top of echo regions.
-
-    Examines levels where there is valid data at the current and one level above,
-    but missing data at two levels above. If reflectivity increases at this boundary
-    (unphysical), corrects the spike by either:
-    - Extrapolating upward using the negative gradient below, or
-    - Setting the spike value equal to the level below
-
-    Based on allprof_prodx2.pl lines 458-487 ("ylärajan positiivinen piikki").
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        VVP dataset with 'lin_dbz', 'corrected_dbz', and 'sample_count' variables
-        Must have 'height' and 'time' dimensions
-    height : int
-        The height level (in meters) to check for boundary spikes
-    sample_threshold : int, default=30
-        Minimum number of samples required for valid data (Perl $kynnys)
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with corrected_dbz modified in-place for the specified height
-
-    Notes
-    -----
-    The algorithm checks the pattern:
-    - height: valid data
-    - height + 200m: valid data
-    - height + 400m: missing (samples < threshold)
-    - height + 600m: missing (samples < threshold)
-
-    If reflectivity at height+200m exceeds corrected value at height
-    (unphysical increase at boundary), apply correction.
-    """
-    # Check if all required height levels exist
-    h_minus_200 = height - 200
-    h = height
-    h_plus_200 = height + 200
-    h_plus_400 = height + 400
-    h_plus_600 = height + 600
-
-    required_heights = [h_minus_200, h, h_plus_200, h_plus_400, h_plus_600]
-    if not all(hgt in ds.height.values for hgt in required_heights):
-        return ds
-
-    # Extract data at relevant heights
-    samples_current = ds['sample_count'].sel(height=h)
-    samples_plus_200 = ds['sample_count'].sel(height=h_plus_200)
-    samples_plus_400 = ds['sample_count'].sel(height=h_plus_400)
-    samples_plus_600 = ds['sample_count'].sel(height=h_plus_600)
-
-    lin_dbz_plus_200 = ds['lin_dbz'].sel(height=h_plus_200)
-    corrected_current = ds['corrected_dbz'].sel(height=h)
-    corrected_minus_200 = ds['corrected_dbz'].sel(height=h_minus_200)
-
-    # Identify where the pattern matches:
-    # - Valid data at current and one level above
-    # - Missing data at two levels above
-    pattern_match = (
-        (samples_current > sample_threshold) &
-        (samples_plus_200 > sample_threshold) &
-        (samples_plus_400 < sample_threshold) &
-        (samples_plus_600 < sample_threshold)
+    positive: bool,
+    sample_threshold: int,
+    spike_threshold: float,
+    large_spike_threshold: float,
+) -> None:
+    """Detect against raw values, average the current working profile."""
+    levels = (height, height + STEP, height + 2 * STEP)
+    raw = [_at(ds, "lin_dbz", h, MDS) for h in levels]
+    working = [_at(ds, "corrected_dbz", h, MDS) for h in levels]
+    valid = (
+        (_at(ds, "zcount", levels[0], 0) > sample_threshold)
+        & (_at(ds, "zcount", levels[1], 0) > sample_threshold)
+        & (_at(ds, "zcount", levels[2], 0) > sample_threshold)
     )
-
-    # Check for unphysical increase at boundary
-    # Perl: if reflectivity increases at edge (kaiku kasvaa reunalle)
-    unphysical_increase = lin_dbz_plus_200 - corrected_current > 0
-
-    # Apply correction where both conditions are met
-    needs_correction = pattern_match & unphysical_increase
-
-    if needs_correction.any():
-        # Check gradient below: if negative, extrapolate upward
-        gradient_below = corrected_current - corrected_minus_200
-        negative_gradient = gradient_below < 0
-
-        # Two correction strategies
-        # Strategy 1: Extrapolate using negative gradient below
-        # corrected[i+200] = corrected[i] + (corrected[i] - corrected[i-200])
-        extrapolated = corrected_current + gradient_below
-
-        # Strategy 2: Set equal to level below
-        equal_to_below = corrected_current
-
-        # Apply appropriate correction
-        correction = xr.where(
-            negative_gradient,
-            extrapolated,
-            equal_to_below
-        )
-
-        # Update corrected_dbz at height+200m where correction is needed
-        ds['corrected_dbz'].loc[{'height': h_plus_200}] = xr.where(
-            needs_correction,
-            correction,
-            ds['corrected_dbz'].sel(height=h_plus_200)
-        )
-
-    return ds
+    direction = 1 if positive else -1
+    spike = valid & ((raw[1] - raw[0]) * direction > spike_threshold) & (
+        (raw[1] - raw[2]) * direction > spike_threshold
+    )
+    average = (working[0] + working[1] + working[2]) / 3
+    residual = raw[1] - average
+    large = (
+        residual > large_spike_threshold
+        if positive else residual < large_spike_threshold
+    )
+    correction = xr.where(large, (working[0] + working[2]) / 2, average)
+    _set(ds, height + STEP, spike, correction)
 
 
 def _smooth_spikes_rolling(
     ds: xr.Dataset,
     spike_type: str,
-    sample_threshold: int = 30,
+    sample_threshold: int = MIN_SAMPLES,
     spike_threshold: float = SPIKE_AMPLITUDE_THRESHOLD,
     large_spike_threshold: float | None = None,
 ) -> xr.Dataset:
-    """Internal function to smooth positive or negative spikes using rolling windows.
-
-    This is a unified implementation for operations 3 and 4, which differ only in:
-    - Detection direction (> for positive, < for negative)
-    - Large spike threshold (4 for positive, -10 for negative)
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        VVP dataset with corrected_dbz and sample_count variables
-    spike_type : str
-        Either 'positive' or 'negative'
-    sample_threshold : int
-        Minimum samples for valid data
-    spike_threshold : float
-        Amplitude threshold for spike detection (3.0 dBZ in Perl)
-    large_spike_threshold : float, optional
-        Threshold for 2-point vs 3-point average
-        If None, uses LARGE_POSITIVE_SPIKE_THRESHOLD or LARGE_NEGATIVE_SPIKE_THRESHOLD
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with smoothed spikes
-    """
-    if spike_type not in ('positive', 'negative'):
-        raise ValueError(f"spike_type must be 'positive' or 'negative', got {spike_type}")
-
+    """Compatibility helper; sequential updates are required for numerical parity."""
+    if spike_type not in ("positive", "negative"):
+        raise ValueError(f"Unknown spike type: {spike_type}")
+    positive = spike_type == "positive"
     if large_spike_threshold is None:
         large_spike_threshold = (
-            LARGE_POSITIVE_SPIKE_THRESHOLD if spike_type == 'positive'
-            else LARGE_NEGATIVE_SPIKE_THRESHOLD
+            LARGE_POSITIVE_SPIKE_THRESHOLD
+            if positive else LARGE_NEGATIVE_SPIKE_THRESHOLD
         )
-
     result = ds.copy(deep=True)
-
-    # Identify valid data
-    is_valid = result['sample_count'] >= sample_threshold
-
-    # Check if we have 3 consecutive valid levels
-    valid_window = is_valid.rolling(height=3, center=True).sum() == 3
-
-    corrected = result['corrected_dbz']
-
-    # Calculate 3-point rolling mean
-    smoothed = corrected.rolling(height=3, center=True, min_periods=3).mean()
-
-    # Get values at neighbors for spike detection
-    val_below = corrected.shift(height=-1)
-    val_current = corrected
-    val_above = corrected.shift(height=1)
-
-    # Detect spikes based on type
-    if spike_type == 'positive':
-        # Positive spike: middle point is > threshold above both neighbors
-        spike_above_below = (val_current - val_below > spike_threshold)
-        spike_above_above = (val_current - val_above > spike_threshold)
-        is_spike = valid_window & spike_above_below & spike_above_above
-
-        # Large positive spike: residual after smoothing is still > threshold
-        diff_from_smoothed = val_current - smoothed
-        is_large_spike = diff_from_smoothed > large_spike_threshold
-    else:  # negative
-        # Negative spike: middle point is < threshold below both neighbors
-        spike_below_below = (val_current - val_below < -spike_threshold)
-        spike_below_above = (val_current - val_above < -spike_threshold)
-        is_spike = valid_window & spike_below_below & spike_below_above
-
-        # Large negative spike: residual after smoothing is still < threshold
-        diff_from_smoothed = val_current - smoothed
-        is_large_spike = diff_from_smoothed < large_spike_threshold
-
-    # Two-point average (neighbors only, exclude center)
-    two_point_avg = (val_below + val_above) / 2
-
-    # Choose correction based on spike magnitude
-    correction = xr.where(is_large_spike, two_point_avg, smoothed)
-
-    result['corrected_dbz'] = xr.where(
-        is_spike,
-        correction,
-        result['corrected_dbz']
-    )
-
+    for height in result.height.values:
+        _smooth_at(
+            result, int(height), positive, sample_threshold,
+            spike_threshold, large_spike_threshold,
+        )
     return result
 
 
 def smooth_positive_spikes(
     ds: xr.Dataset,
-    sample_threshold: int = 30,
+    sample_threshold: int = MIN_SAMPLES,
     spike_threshold: float = SPIKE_AMPLITUDE_THRESHOLD,
     large_spike_threshold: float = LARGE_POSITIVE_SPIKE_THRESHOLD,
 ) -> xr.Dataset:
-    """Smooth positive spikes using 3-point rolling mean (with rolling windows).
-
-    Detects and smooths positive spikes where the middle point in a 3-level
-    sequence exceeds both neighbors by more than the spike threshold.
-    For moderate spikes, applies 3-point moving average. For large spikes,
-    replaces the spike with the average of the two neighbors only.
-
-    This operation is ideal for rolling window implementation because it uses
-    a symmetric 3-point window applied uniformly across all valid data.
-
-    Based on allprof_prodx2.pl lines 486-520 ("Positiivinen piikki").
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        VVP dataset with 'lin_dbz', 'corrected_dbz', and 'sample_count' variables
-        Must have 'height' and 'time' dimensions
-    sample_threshold : int, default=30
-        Minimum number of samples required for valid data (Perl $kynnys)
-    spike_threshold : float, default=3.0
-        Amplitude threshold for spike detection (dBZ)
-        A point is a spike if it exceeds both neighbors by this amount
-    large_spike_threshold : float, default=4.0
-        Threshold for using 2-point vs 3-point average (dBZ, Perl $dbzkynnys1)
-        If difference between original and 3-point average exceeds this,
-        use 2-point average (neighbors only) instead
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with smoothed positive spikes in corrected_dbz
-
-    Notes
-    -----
-    Algorithm:
-    1. Check three consecutive valid levels (i, i+1, i+2)
-    2. If middle level exceeds both neighbors by >spike_threshold:
-       a. Calculate 3-point moving average
-       b. Calculate difference between original and smoothed
-       c. If difference > large_spike_threshold: use 2-point average
-       d. Otherwise: use 3-point average
-
-    The Perl code uses lin_dbz (original) for spike detection but modifies
-    corrected_dbz (working values), so we follow the same approach.
-    """
+    """Smooth raw positive spikes using evolving working values."""
     return _smooth_spikes_rolling(
-        ds,
-        spike_type='positive',
-        sample_threshold=sample_threshold,
-        spike_threshold=spike_threshold,
-        large_spike_threshold=large_spike_threshold,
+        ds, "positive", sample_threshold, spike_threshold, large_spike_threshold
     )
 
 
 def smooth_negative_spikes(
     ds: xr.Dataset,
-    sample_threshold: int = 30,
+    sample_threshold: int = MIN_SAMPLES,
     spike_threshold: float = SPIKE_AMPLITUDE_THRESHOLD,
     large_spike_threshold: float = LARGE_NEGATIVE_SPIKE_THRESHOLD,
 ) -> xr.Dataset:
-    """Smooth negative spikes using 3-point rolling mean (with rolling windows).
-
-    Detects and smooths negative spikes where the middle point in a 3-level
-    sequence is below both neighbors by more than the spike threshold.
-    For moderate spikes, applies 3-point moving average. For large spikes,
-    replaces the spike with the average of the two neighbors only.
-
-    This operation is ideal for rolling window implementation because it uses
-    a symmetric 3-point window applied uniformly across all valid data.
-
-    Based on allprof_prodx2.pl lines 522-548 ("Negatiivinen piikki").
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        VVP dataset with 'lin_dbz', 'corrected_dbz', and 'sample_count' variables
-        Must have 'height' and 'time' dimensions
-    sample_threshold : int, default=30
-        Minimum number of samples required for valid data (Perl $kynnys)
-    spike_threshold : float, default=3.0
-        Amplitude threshold for spike detection (dBZ)
-        A point is a spike if it is below both neighbors by this amount
-    large_spike_threshold : float, default=-10.0
-        Threshold for using 2-point vs 3-point average (dBZ, Perl $dbzkynnys2)
-        If difference between original and 3-point average is below this,
-        use 2-point average (neighbors only) instead
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with smoothed negative spikes in corrected_dbz
-
-    Notes
-    -----
-    Algorithm:
-    1. Check three consecutive valid levels (i, i+1, i+2)
-    2. If middle level is <spike_threshold below both neighbors:
-       a. Calculate 3-point moving average
-       b. Calculate difference between original and smoothed
-       c. If difference < large_spike_threshold: use 2-point average
-       d. Otherwise: use 3-point average
-
-    The Perl code uses lin_dbz (original) for spike detection but modifies
-    corrected_dbz (working values), so we follow the same approach.
-    """
+    """Smooth raw negative spikes using evolving working values."""
     return _smooth_spikes_rolling(
-        ds,
-        spike_type='negative',
-        sample_threshold=sample_threshold,
-        spike_threshold=spike_threshold,
-        large_spike_threshold=large_spike_threshold,
+        ds, "negative", sample_threshold, spike_threshold, large_spike_threshold
     )
 
 
 def fill_gap(
-    ds: xr.Dataset,
-    height: int,
-    sample_threshold: int = 30,
-    mds: float = -45,
+    ds: xr.Dataset, height: int, sample_threshold: int = MIN_SAMPLES, mds: float = MDS
 ) -> xr.Dataset:
-    """Fill single missing values within continuous echo regions.
-
-    Interpolates missing values by averaging the adjacent valid levels when
-    surrounded by sufficient valid data (2 levels on one side, 1 on the other).
-
-    Based on allprof_prodx2.pl "täytetään puuttuvat arvot".
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        VVP dataset with 'corrected_dbz' and 'sample_count' variables
-        Must have 'height' and 'time' dimensions
-    height : int
-        The height level (in meters) to check for gaps
-    sample_threshold : int, default=30
-        Minimum number of samples required for valid data (Perl $kynnys)
-    mds : float, default=-45
-        Minimum detectable signal threshold (Perl $mds)
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with gap filled in corrected_dbz for the specified height
-
-    Notes
-    -----
-    Two patterns are checked:
-
-    Pattern A: Missing level with 2 valid levels below + 1 valid level above
-    Pattern B: Missing level with 1 valid level below + 2 valid levels above
-
-    In both cases, the gap is filled with the average of the immediately
-    adjacent valid levels (height ± 200m).
-    """
-    # Check if all required height levels exist
-    h_minus_400 = height - 400
-    h_minus_200 = height - 200
-    h = height
-    h_plus_200 = height + 200
-    h_plus_400 = height + 400
-
-    required_heights = [h_minus_400, h_minus_200, h, h_plus_200, h_plus_400]
-    if not all(hgt in ds.height.values for hgt in required_heights):
-        return ds
-
-    # Extract data at relevant heights
-    samples_current = ds['sample_count'].sel(height=h)
-    samples_minus_200 = ds['sample_count'].sel(height=h_minus_200)
-    samples_minus_400 = ds['sample_count'].sel(height=h_minus_400)
-    samples_plus_200 = ds['sample_count'].sel(height=h_plus_200)
-    samples_plus_400 = ds['sample_count'].sel(height=h_plus_400)
-
-    corrected_current = ds['corrected_dbz'].sel(height=h)
-    corrected_minus_200 = ds['corrected_dbz'].sel(height=h_minus_200)
-    corrected_minus_400 = ds['corrected_dbz'].sel(height=h_minus_400)
-    corrected_plus_200 = ds['corrected_dbz'].sel(height=h_plus_200)
-    corrected_plus_400 = ds['corrected_dbz'].sel(height=h_plus_400)
-
-    # Current level must be missing samples but have a valid corrected value (>= mds)
-    is_gap = (samples_current < sample_threshold) & (corrected_current >= mds)
-
-    # Pattern A: 2 valid below + 1 valid above
-    # Perl: alapuolella kahdessa kerroksessa havaintoa ja yläpuolella yhdessä
-    valid_below_2 = (
-        (samples_minus_200 > sample_threshold) & (corrected_minus_200 > mds) &
-        (samples_minus_400 > sample_threshold) & (corrected_minus_400 > mds)
+    """Fill a missing level with two supporting echoes on either side."""
+    count = lambda h: _at(ds, "zcount", h, 0)
+    corrected = lambda h: _at(ds, "corrected_dbz", h, mds)
+    valid = lambda h: (count(h) > sample_threshold) & (corrected(h) > mds)
+    pattern = (
+        (count(height) < sample_threshold)
+        & (corrected(height) >= mds)
+        & valid(height - STEP)
+        & valid(height + STEP)
+        & (valid(height - 2 * STEP) | valid(height + 2 * STEP))
     )
-    valid_above_1 = (samples_plus_200 > sample_threshold) & (corrected_plus_200 > mds)
-    pattern_a = is_gap & valid_below_2 & valid_above_1
-
-    # Pattern B: 1 valid below + 2 valid above
-    # Perl: alapuolella yhdessä kerroksessa havaintoa ja yläpuolella kahdessa
-    valid_below_1 = (samples_minus_200 > sample_threshold) & (corrected_minus_200 > mds)
-    valid_above_2 = (
-        (samples_plus_200 > sample_threshold) & (corrected_plus_200 > mds) &
-        (samples_plus_400 > sample_threshold) & (corrected_plus_400 > mds)
-    )
-    pattern_b = is_gap & valid_below_1 & valid_above_2
-
-    # Apply gap filling where either pattern matches
-    needs_fill = pattern_a | pattern_b
-
-    if needs_fill.any():
-        # Fill with average of adjacent valid levels
-        fill_value = (corrected_minus_200 + corrected_plus_200) / 2
-
-        ds['corrected_dbz'].loc[{'height': h}] = xr.where(
-            needs_fill,
-            fill_value,
-            ds['corrected_dbz'].sel(height=h)
-        )
-
+    _set(ds, height, pattern, (corrected(height - STEP) + corrected(height + STEP)) / 2)
     return ds
 
 
 def remove_isolated_echo(
-    ds: xr.Dataset,
-    height: int,
-    sample_threshold: int = 30,
-    mds: float = -45,
+    ds: xr.Dataset, height: int, sample_threshold: int = MIN_SAMPLES, mds: float = MDS
 ) -> xr.Dataset:
-    """Remove isolated echoes that lack supporting data above and below.
-
-    Removes single valid points that are surrounded by missing data on both
-    sides (2 levels above and below with no valid data).
-
-    Based on allprof_prodx2.pl after "jos yksittäinen piste, siten että ylä- ja
-    alapuolella ei kahdessa kerroksessa kaikua".
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        VVP dataset with 'corrected_dbz' and 'sample_count' variables
-        Must have 'height' and 'time' dimensions
-    height : int
-        The height level (in meters) to check for isolated echoes
-    sample_threshold : int, default=30
-        Minimum number of samples required for valid data (Perl $kynnys)
-    mds : float, default=-45
-        Minimum detectable signal threshold (Perl $mds)
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with isolated echo removed (set to mds) for the specified height
-
-    Notes
-    -----
-    Pattern: Valid point with 2 invalid levels both above and below
-
-    If all 4 surrounding levels (±200m and ±400m) have insufficient samples,
-    the current point is considered an isolated artifact and is removed.
-    """
-    # Check if all required height levels exist
-    h_minus_400 = height - 400
-    h_minus_200 = height - 200
-    h = height
-    h_plus_200 = height + 200
-    h_plus_400 = height + 400
-
-    required_heights = [h_minus_400, h_minus_200, h, h_plus_200, h_plus_400]
-    if not all(hgt in ds.height.values for hgt in required_heights):
-        return ds
-
-    # Extract sample counts at relevant heights
-    samples_current = ds['sample_count'].sel(height=h)
-    samples_minus_200 = ds['sample_count'].sel(height=h_minus_200)
-    samples_minus_400 = ds['sample_count'].sel(height=h_minus_400)
-    samples_plus_200 = ds['sample_count'].sel(height=h_plus_200)
-    samples_plus_400 = ds['sample_count'].sel(height=h_plus_400)
-
-    # Current level must have valid samples
-    is_valid = samples_current > sample_threshold
-
-    # All 4 surrounding levels must be invalid
-    # Perl: ylä- ja alapuolella ei kahdessa kerroksessa kaikua
-    all_neighbors_invalid = (
-        (samples_minus_200 < sample_threshold) &
-        (samples_minus_400 < sample_threshold) &
-        (samples_plus_200 < sample_threshold) &
-        (samples_plus_400 < sample_threshold)
-    )
-
-    # Isolated echo: valid point surrounded by invalid data
-    is_isolated = is_valid & all_neighbors_invalid
-
-    if is_isolated.any():
-        ds['corrected_dbz'].loc[{'height': h}] = xr.where(
-            is_isolated,
-            mds,
-            ds['corrected_dbz'].sel(height=h)
-        )
-
+    """Remove a single echo with two missing neighbours on both sides."""
+    count = lambda h: _at(ds, "zcount", h, 0)
+    pattern = count(height) > sample_threshold
+    for offset in (-2 * STEP, -STEP, STEP, 2 * STEP):
+        pattern = pattern & (count(height + offset) < sample_threshold)
+    _set(ds, height, pattern, mds)
     return ds
+
+
+def _smooth_two_point_layer(ds: xr.Dataset, height: int) -> None:
+    if height <= 400:
+        return
+    count = lambda h: _at(ds, "zcount", h, 0)
+    pattern = (count(height) > MIN_SAMPLES) & (count(height + STEP) > MIN_SAMPLES)
+    for offset in (-2 * STEP, -STEP, 2 * STEP, 3 * STEP):
+        pattern = pattern & (count(height + offset) < MIN_SAMPLES)
+    average = (
+        _at(ds, "lin_dbz", height, MDS) + _at(ds, "lin_dbz", height + STEP, MDS)
+    ) / 2
+    _set(ds, height, pattern, average)
+    _set(ds, height + STEP, pattern, average)
 
 
 def smooth_spikes(ds: xr.Dataset) -> xr.Dataset:
-    """Apply all spike smoothing operations to a VVP profile.
+    """Apply all operations in height order, preserving clutter extrapolation.
 
-    This is the main entry point that applies all 6 spike smoothing operations
-    from allprof_prodx2.pl in the correct sequence.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        VVP dataset with 'lin_dbz', 'corrected_dbz', and 'sample_count' variables
-        Must have 'height' and 'time' dimensions
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with smoothed corrected_dbz values
-
-    Notes
-    -----
-    Processing order:
-    1. Lower boundary spike correction
-    2. Upper boundary spike correction
-    3. Positive spike smoothing
-    4. Negative spike smoothing
-    5. Gap filling
-    6. Isolated echo removal
+    Operations must be interleaved: later averages use earlier corrections,
+    while spike detection always uses the original ``lin_dbz``.
     """
-    # Get lowest processing height (after clutter removal)
-    # For now, start from the lowest available height
-    # TODO: This should come from clutter removal module
-    heights = sorted(ds.height.values)
-    start_height = heights[0]
-
-    # Process each height level for operations 1 and 2
-    for height in heights:
-        if height < start_height:
+    result = ds.copy(deep=True)
+    if not result.sizes["height"]:
+        return result
+    start = result.attrs.get("smoothing_start_height_m", int(result.height.values[0]))
+    for height in result.height.values:
+        height = int(height)
+        if height < start:
             continue
-
-        # Operation 1: Lower boundary spike correction
-        ds = correct_lower_boundary_spike(ds, height)
-
-        # Operation 2: Upper boundary spike correction
-        ds = correct_upper_boundary_spike(ds, height)
-
-    # Operation 3: Positive spike smoothing (rolling window - processes all heights)
-    ds = smooth_positive_spikes(ds)
-
-    # Operation 4: Negative spike smoothing (rolling window - processes all heights)
-    ds = smooth_negative_spikes(ds)
-
-    # Process each height level for operations 5 and 6
-    for height in heights:
-        if height < start_height:
-            continue
-
-        # Operation 5: Gap filling
-        ds = fill_gap(ds, height)
-
-        # Operation 6: Isolated echo removal
-        ds = remove_isolated_echo(ds, height)
-
-    return ds
+        correct_lower_boundary_spike(result, height)
+        correct_upper_boundary_spike(result, height)
+        _smooth_at(
+            result, height, True, MIN_SAMPLES,
+            SPIKE_AMPLITUDE_THRESHOLD, LARGE_POSITIVE_SPIKE_THRESHOLD,
+        )
+        _smooth_at(
+            result, height, False, MIN_SAMPLES,
+            SPIKE_AMPLITUDE_THRESHOLD, LARGE_NEGATIVE_SPIKE_THRESHOLD,
+        )
+        _set(
+            result, height,
+            ~(_at(result, "zcount", height, 0) > MIN_SAMPLES), MDS,
+        )
+        fill_gap(result, height)
+        remove_isolated_echo(result, height)
+        _smooth_two_point_layer(result, height)
+    return result
