@@ -22,6 +22,7 @@ def make_test_dataset(
     dbz_values: list[float],
     heights: list[int] | None = None,
     antenna_height_m: float = 100.0,
+    zcounts: list[int] | None = None,
 ) -> xr.Dataset:
     """Create a minimal test dataset for VPR correction tests."""
     if heights is None:
@@ -31,6 +32,10 @@ def make_test_dataset(
         {
             "corrected_dbz": ("height", dbz_values),
             "sample_count": ("height", [100] * len(dbz_values)),
+            "zcount": (
+                "height",
+                zcounts if zcounts is not None else [1000] * len(dbz_values),
+            ),
         },
         coords={"height": heights},
         attrs={
@@ -63,19 +68,27 @@ class TestInterpolateToFineGrid:
         idx_300 = 300 // FINE_GRID_RESOLUTION_M
         assert fine_z[idx_300] > fine_z[idx_100]
 
-    def test_mds_values_become_zero_z(self):
-        """MDS values are treated as zero reflectivity."""
+    def test_mds_values_keep_finite_floor(self):
+        """Missing layers retain the finite legacy minimum reflectivity."""
         dbz_values = [20.0, MDS, 20.0]
         heights = [100, 300, 500]
         ds = make_test_dataset(dbz_values, heights)
 
         fine_heights, fine_z = interpolate_to_fine_grid(ds)
 
-        # At 300m, Z should be interpolated (not exactly zero)
-        # because we interpolate between valid values
         idx_300 = 300 // FINE_GRID_RESOLUTION_M
-        # The middle point with MDS becomes 0 in coarse, then gets interpolated
-        assert fine_z[idx_300] >= 0
+        assert fine_z[idx_300] == pytest.approx(10 ** (MDS / 10))
+
+    def test_above_last_echo_is_mds_even_with_trailing_missing_levels(self):
+        ds = make_test_dataset([30.0, 20.0, MDS, MDS])
+        heights, z = interpolate_to_fine_grid(ds)
+        assert z[heights == 300].item() == pytest.approx(100.0)
+        np.testing.assert_allclose(z[heights > 300], 10 ** (MDS / 10))
+
+    def test_empty_profile_has_finite_floor(self):
+        ds = make_test_dataset([])
+        _, z = interpolate_to_fine_grid(ds)
+        np.testing.assert_allclose(z, 10 ** (MDS / 10))
 
     def test_extrapolation_below_profile(self):
         """Values below lowest profile level use constant extrapolation."""
@@ -118,6 +131,11 @@ class TestComputeBeamHeight:
         h = compute_beam_height(100000, 0.5, 100)
         assert 500 < h < 3000
 
+    def test_reference_ellipsoid_radius_at_long_range(self):
+        # Unchanged pystycappi.pl truncates this relative height to 4102 m.
+        height = compute_beam_height(200000, 0.5, 174) - 174
+        assert height == pytest.approx(4102, abs=1.0)
+
 
 class TestSolveElevationForHeight:
     """Tests for elevation angle solver."""
@@ -144,6 +162,11 @@ class TestSolveElevationForHeight:
         elev = solve_elevation_for_height(target, range_m, antenna, min_elev)
 
         assert elev >= min_elev
+
+    def test_near_range_cappi_requires_elevation_above_45_degrees(self):
+        elev = solve_elevation_for_height(1000, 1000, 174)
+        assert elev > 45
+        assert compute_beam_height(1000, elev, 174) == pytest.approx(1000)
 
 
 class TestComputeBeamWeight:
@@ -178,16 +201,30 @@ class TestComputeBeamWeight:
 class TestConvolveBeamWithProfile:
     """Tests for beam-profile convolution."""
 
-    def test_uniform_profile_no_change(self):
-        """Uniform profile produces same Z regardless of beam position."""
+    def test_unblocked_uniform_profile_no_change(self):
+        """An unblocked beam observes the uniform profile unchanged."""
         n_layers = 600
         fine_heights = np.arange(0, n_layers * FINE_GRID_RESOLUTION_M, FINE_GRID_RESOLUTION_M)
         uniform_z = np.ones(n_layers) * 100.0  # Uniform Z
 
-        z1 = convolve_beam_with_profile(fine_heights, uniform_z, 2000, 100000)
+        z1 = convolve_beam_with_profile(fine_heights, uniform_z, 4000, 100000)
         z2 = convolve_beam_with_profile(fine_heights, uniform_z, 5000, 100000)
 
         assert np.isclose(z1, z2, rtol=0.01)
+
+    def test_blocked_negative_heights_remain_in_weight_denominator(self):
+        heights = np.arange(0, 15000, 25)
+        z = np.full(len(heights), 100.0)
+        actual = convolve_beam_with_profile(
+            heights, z, 0, 100000, beam_bounds_m=(-250, 250)
+        )
+        # Legacy sums indices int(lower/25)-1 through int(upper/25), inclusive.
+        slices = np.arange(-11, 11) * 25
+        angles = np.rad2deg(np.arctan2(np.abs(slices), 100000))
+        weights = 10 ** (-0.6 * (angles / 0.95) ** 2)
+        expected = 100 * weights[slices >= 0].sum() / weights.sum()
+        assert actual == pytest.approx(expected)
+        assert actual < 60
 
     def test_peak_at_beam_center_maximizes_z(self):
         """Profile with peak at beam center produces maximum observed Z."""
@@ -240,6 +277,29 @@ class TestComputeCorrectionForRange:
         # Beam sees less Z than ground → positive correction
         assert corr > 0
 
+    def test_uniform_profile_has_legacy_horizon_attenuation(self):
+        heights = np.arange(0, 15000, 25)
+        corr, _ = compute_correction_for_range(
+            heights, np.full(len(heights), 100.0), 100.0, 100, 0.5, 174
+        )
+        # Unchanged pystycappi.pl prints 0.9 dB (one decimal place).
+        assert corr == pytest.approx(0.9, abs=0.05)
+
+    def test_no_echo_retains_previous_correction(self):
+        heights = np.arange(0, 15000, 25)
+        corr, _ = compute_correction_for_range(
+            heights, np.zeros(len(heights)), 100.0, 200, 10, 174,
+            previous_correction_db=12.3,
+        )
+        assert corr == pytest.approx(12.3)
+
+    def test_clipping_remains_symmetric(self):
+        heights = np.arange(0, 15000, 25)
+        corr, _ = compute_correction_for_range(
+            heights, np.full(len(heights), 1e8), 1.0, 10, 2, 174
+        )
+        assert corr == -30.0
+
 
 class TestComputeVprCorrection:
     """Tests for main VPR correction function."""
@@ -275,6 +335,108 @@ class TestComputeVprCorrection:
         result = compute_vpr_correction(ds, cappi_heights_m=(750, 1500))
 
         assert list(result.corrections["cappi_height"].values) == [750, 1500]
+
+    @pytest.mark.parametrize("no_echo", [False, True])
+    def test_cappi_targets_are_above_sea_level(self, no_echo):
+        ds = make_test_dataset(
+            [MDS if no_echo else 30.0] * 50, antenna_height_m=174
+        )
+        result = compute_vpr_correction(
+            ds, freezing_level_m=2000, max_range_km=10
+        )
+        heights = result.corrections.cappi_beam_height_m
+        assert heights.sel(range_km=10, cappi_height=500).item() == pytest.approx(326)
+        assert heights.sel(range_km=1, cappi_height=1000).item() == pytest.approx(826)
+
+    def test_cappi_near_antenna_safeguard(self):
+        ds = make_test_dataset([30.0] * 50, antenna_height_m=530)
+        result = compute_vpr_correction(
+            ds, max_range_km=1, min_elevation_deg=0.0, include_clim=False
+        )
+        assert result.corrections.cappi_beam_height_m.sel(
+            cappi_height=500
+        ).item() == pytest.approx(50)
+
+    def test_shallow_echo_keeps_maximum_correction_above_echo(self):
+        heights = list(range(100, 10000, 200))
+        ds = make_test_dataset(
+            [30.0 if h <= 900 else MDS for h in heights], heights,
+            antenna_height_m=174,
+        )
+        result = compute_vpr_correction(
+            ds, elevation_angles_deg=(3.3,), include_clim=False,
+            max_range_km=250, range_step_km=50,
+        )
+        # Unchanged pystycappi.pl gives +30 at all these ranges.
+        np.testing.assert_array_equal(
+            result.corrections.elev_correction_db.sel(range_km=[100, 150, 200, 250]),
+            np.full((4, 1), 30.0),
+        )
+
+    def test_echo_outside_legacy_beam_support_does_not_contribute(self):
+        heights = list(range(100, 10000, 200))
+        ds = make_test_dataset(
+            [50.0 if h == 3700 else 10.0 for h in heights], heights,
+            antenna_height_m=174,
+        )
+        result = compute_vpr_correction(
+            ds, elevation_angles_deg=(2.3,), max_range_km=50,
+            range_step_km=50, include_clim=False,
+        )
+        # Unchanged pystycappi.pl: the 3700 m peak is outside the beam, dBc=0.
+        assert result.corrections.elev_correction_db.item() == 0.0
+
+    def test_correction_is_carried_beyond_entire_fine_grid(self):
+        ds = make_test_dataset([30.0] * 50)
+        result = compute_vpr_correction(
+            ds, elevation_angles_deg=(10.0,), max_range_km=250,
+            range_step_km=10, include_clim=False,
+        )
+        np.testing.assert_array_equal(
+            result.corrections.elev_correction_db.sel(range_km=[100, 150, 200, 250]),
+            np.full((4, 1), 30.0),
+        )
+
+    @pytest.mark.parametrize("no_echo", [False, True])
+    def test_geometry_metadata_and_explicit_overrides(self, no_echo):
+        ds = make_test_dataset([MDS if no_echo else 30.0] * 50)
+        ds.attrs.update(beamwidth_deg=1.1, horizon_angle_deg=0.8)
+        kwargs = dict(
+            elevation_angles_deg=(0.5,), max_range_km=100, range_step_km=100,
+            freezing_level_m=2000,
+        )
+        metadata = compute_vpr_correction(ds, **kwargs)
+        explicit = compute_vpr_correction(
+            ds, beamwidth_deg=1.1, horizon_angle_deg=0.8, **kwargs
+        )
+        np.testing.assert_array_equal(
+            metadata.corrections.elev_correction_db,
+            explicit.corrections.elev_correction_db,
+        )
+        lower_horizon = compute_vpr_correction(
+            ds, horizon_angle_deg=0.0, **kwargs
+        )
+        assert metadata.corrections.elev_correction_db.item() > (
+            lower_horizon.corrections.elev_correction_db.item()
+        )
+        narrower = compute_vpr_correction(ds, beamwidth_deg=0.7, **kwargs)
+        assert narrower.corrections.beamwidth_deg == 0.7
+        assert metadata.corrections.beamwidth_deg == 1.1
+        assert metadata.corrections.horizon_angle_deg == 0.8
+        assert narrower.corrections.elev_correction_db.item() != (
+            metadata.corrections.elev_correction_db.item()
+        )
+
+    def test_quality_gating_reaches_main_correction_result(self):
+        ds = make_test_dataset([30.0] * 10, zcounts=[1000] * 5 + [10000] * 5)
+        result = compute_vpr_correction(
+            ds, layer_top_height_m=900, max_range_km=1, include_clim=False
+        )
+        assert result.quality_weight == pytest.approx(0.2)
+        nonprecip = compute_vpr_correction(
+            ds, is_precipitation=False, max_range_km=1, include_clim=False
+        )
+        assert not nonprecip.usable
 
     def test_empty_profile_not_usable(self):
         """Profile with all MDS values produces unusable result."""
@@ -349,30 +511,58 @@ class TestQualityWeight:
     """Tests for profile quality weight calculation."""
 
     def test_strong_profile_has_positive_weight(self):
-        """Strong continuous echo gives positive quality weight."""
-        # Strong profile: 35 dBZ (Z ~ 3162) at all levels
+        """Quality measures reflectivity sample coverage, not echo strength."""
         dbz_values = [35.0] * 20  # 20 levels from 100m to 3900m
         heights = list(range(100, 100 + STEP * 20, STEP))
         ds = make_test_dataset(dbz_values, heights)
 
         wq = compute_quality_weight(ds)
 
-        assert wq > 0
-        # 35 dBZ ≈ 3162 Z, well above threshold
-        # Expected: ~3162 / 5000 ≈ 0.63 per level
-        assert wq > 0.5
+        assert wq == pytest.approx(1000 / 5000)
 
-    def test_weak_profile_has_zero_weight(self):
-        """Weak echo below threshold gives zero quality weight."""
-        # Weak profile: 10 dBZ (Z = 10) - below 500 threshold at lowest levels
+    def test_low_sample_count_has_zero_weight(self):
+        """Insufficient reflectivity samples give zero quality weight."""
         dbz_values = [10.0] * 20
         heights = list(range(100, 100 + STEP * 20, STEP))
-        ds = make_test_dataset(dbz_values, heights)
+        ds = make_test_dataset(dbz_values, heights, zcounts=[500] * 20)
 
         wq = compute_quality_weight(ds)
 
-        # Z = 10 at lowest levels < MIN_Z_FOR_USABLE (500)
         assert wq == 0.0
+
+    @pytest.mark.parametrize("dbz", [0.0, 10.0, 30.0, 40.0])
+    def test_quality_is_independent_of_reflectivity(self, dbz):
+        ds = make_test_dataset([dbz] * 10)
+        assert compute_quality_weight(ds) == pytest.approx(0.2)
+
+    def test_requires_five_levels_and_precipitation(self):
+        ds = make_test_dataset([30.0] * 4)
+        assert compute_quality_weight(ds) == 0.0
+        ds = make_test_dataset([30.0] * 10)
+        assert compute_quality_weight(ds, is_precipitation=False) == 0.0
+
+    def test_uses_zcount_not_total_count(self):
+        ds = make_test_dataset([30.0] * 5, zcounts=[501] * 5)
+        ds["sample_count"][:] = 99999
+        assert compute_quality_weight(ds) == pytest.approx(501 / 5000)
+        assert compute_quality_weight(ds.drop_vars("zcount")) == 0.0
+
+    def test_first_layer_top_and_strict_sample_threshold(self):
+        ds = make_test_dataset(
+            [30.0] * 8, zcounts=[1000] * 5 + [30, 100, 10000]
+        )
+        assert compute_quality_weight(ds, layer_top_height_m=1300) == pytest.approx(
+            5100 / (6 * 5000)
+        )
+
+    def test_excludes_detached_layer_and_heights_above_five_km(self):
+        ds = make_test_dataset(
+            [30.0] * 5 + [MDS] + [30.0] * 24,
+            zcounts=[1000] * 6 + [10000] * 24,
+        )
+        assert compute_quality_weight(ds) == pytest.approx(0.2)
+        ds = make_test_dataset([30.0] * 30, zcounts=[1000] * 25 + [10000] * 5)
+        assert compute_quality_weight(ds) == pytest.approx(0.2)
 
     def test_missing_echo_has_zero_weight(self):
         """Missing echo (MDS) gives zero quality weight."""
@@ -545,6 +735,15 @@ class TestClimatologyOnlyCorrection:
         assert result.usable is False
         assert result.quality_weight == 0.0
 
+    def test_no_echo_respects_disabled_climatology(self):
+        ds = make_test_dataset([MDS] * 5)
+        result = compute_vpr_correction(
+            ds, freezing_level_m=2000, include_clim=False, max_range_km=1
+        )
+        assert not result.usable
+        assert result.z_ground_clim_dbz is None
+        assert "cappi_clim_correction_db" not in result.corrections
+
     def test_climatology_only_ground_reference_is_clim(self):
         """Climatology-only profiles use climatological ground reference."""
         dbz_values = [MDS] * 25
@@ -663,6 +862,19 @@ class TestBrightBandSlopeAdjustment:
         expected = 20.0 + 700 / 200 * 0.2
         assert abs(adjusted_dbz - expected) < 0.01
         assert was_adjusted
+
+    def test_adjust_ground_reference_bottom_at_lowest_positive_level(self):
+        from vprc.vpr_correction import adjust_ground_reference
+        from vprc.bright_band import BrightBandResult
+
+        heights = np.array([100, 300, 500, 700, 900])
+        dbz_values = np.array([30.0, 40.0, 25.0, 20.0, 18.0])
+        bb = BrightBandResult(
+            detected=True, peak_height=300, bottom_height=100, top_height=700
+        )
+        reference, adjusted = adjust_ground_reference(dbz_values, heights, bb, 100)
+        assert adjusted
+        assert reference == pytest.approx(20.7)
 
     def test_adjust_ground_reference_gentle_slope_no_adjustment(self):
         """Gentle slope below threshold does not trigger adjustment."""
@@ -905,3 +1117,20 @@ class TestBBPeakAmplitudeCap:
         result_lower = cap_bb_peak_amplitude(ds, bb_result, amplitude_cap_db=5.0)
         expected_peak = 40.0 - (10.0 - 5.0)  # 35 dBZ
         assert result_lower["corrected_dbz"].sel(height=100).values == expected_peak
+
+    @pytest.mark.parametrize("include_raw", [False, True])
+    def test_cap_is_not_applied_twice_after_profile_finalization(self, include_raw):
+        from vprc.vpr_correction import cap_bb_peak_amplitude
+        from vprc.bright_band import BrightBandResult
+
+        ds = make_test_dataset([45.0, 30.0, 25.0])
+        if include_raw:
+            ds["lin_dbz"] = ds.corrected_dbz.copy()
+        bb = BrightBandResult(
+            detected=True, peak_height=100, bottom_height=-1, top_height=300,
+            peak_dbz=45.0, amplitude_above=15.0,
+        )
+        finalized = cap_bb_peak_amplitude(ds, bb)
+        repeated = cap_bb_peak_amplitude(finalized, bb)
+        np.testing.assert_array_equal(repeated.corrected_dbz, finalized.corrected_dbz)
+        assert repeated.corrected_dbz.sel(height=100).item() == 40.0

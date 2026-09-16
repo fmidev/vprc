@@ -57,6 +57,17 @@ MAX_PROFILE_HEIGHT_M = 15000
 # Perl variable: $puolentehonleveys
 DEFAULT_BEAMWIDTH_DEG = 0.95
 
+# Half extent of the beam volume, in one-way half-power beamwidths.
+# Perl: elevation +/- 1.5 * $puolentehonleveys
+BEAM_SUPPORT_WIDTHS = 1.5
+
+# Angular terrain horizon; radar-specific metadata may override this.
+# Most legacy radars use 0 degrees (Luosto uses -0.1 degrees).
+DEFAULT_HORIZON_ANGLE_DEG = 0.0
+
+# Ellipsoid radius at latitude 60 degrees used by pystycappi.pl ($maan_sade).
+EARTH_RADIUS_M = 6362000.0
+
 # Maximum allowed VPR correction (dB)
 # Corrections larger than this are capped
 # Perl variable: $max_dBZ_korjaus
@@ -95,7 +106,7 @@ BB_SLOPE_HEIGHT_LIMIT_M = 600
 # Perl: `if ( $ylaamp >= 10 and $bbalku == $alintaso )` (lines 1091-1098)
 BB_PEAK_AMPLITUDE_CAP_DB = 10.0
 
-# Minimum linear Z (mm^6/m^3) required for valid near-surface bright band
+# Minimum reflectivity sample count required for valid near-surface bright band
 # When BB bottom is at lowest 1-2 levels, sample count at both BB bottom and top
 # must exceed this threshold.
 # Perl: `$isotaulu[$bbalku][$j][1] < 500` (lines 1051-1075) where [1] is Zcount

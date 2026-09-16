@@ -62,8 +62,7 @@ def generate_climatological_profile(
         <xarray.DataArray 'clim_dbz' ()>
         array(37.)
     """
-    # Round freezing level to nearest step for layer boundary alignment
-    # Perl: $nollaraja_ps is used directly in comparisons
+    # Perl uses $nollaraja_ps directly, without rounding to the profile grid.
     fl = freezing_level_m
 
     # Base reflectivity: 10 + (FL_km * 10) dBZ
@@ -97,8 +96,8 @@ def generate_climatological_profile(
             else:
                 # Above FL+400: decay at -0.94 dB per 200m
                 # Perl: $kortaulu[$i+200][$j][1] = $kortaulu[$i][$j][1] - 0.94
-                levels_above = (h - (fl + 400)) // step_m
-                clim_dbz[idx] = base_dbz - 0.94 * (levels_above + 1)
+                levels_above = np.ceil((h - (fl + 400)) / step_m)
+                clim_dbz[idx] = base_dbz - 0.94 * levels_above
         else:
             # Freezing level below ground (winter conditions)
             # Base value at surface, decay upward at -0.66 dB per 200m

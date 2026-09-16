@@ -34,6 +34,9 @@ from .constants import (
     BB_SLOPE_THRESHOLD,
     BB_SLOPE_HEIGHT_LIMIT_M,
     BB_PEAK_AMPLITUDE_CAP_DB,
+    BEAM_SUPPORT_WIDTHS,
+    DEFAULT_HORIZON_ANGLE_DEG,
+    EARTH_RADIUS_M,
 )
 
 # Import for type annotation only
@@ -44,12 +47,12 @@ if TYPE_CHECKING:
 
 
 # Quality weight calculation constants (from allprof_prodx2.pl lines 1188-1219)
-# Minimum linear Z for layer to contribute to quality weight (~15 dBZ)
-MIN_Z_FOR_QUALITY = 30  # mm^6/m^3
+# Minimum reflectivity sample count for a layer to contribute to quality.
+MIN_ZCOUNT_FOR_QUALITY = 30
 # Maximum height for quality weight integration (m above antenna)
 MAX_QUALITY_HEIGHT_M = 5000
-# Minimum linear Z at lowest 5 levels for profile to be usable (~27 dBZ)
-MIN_Z_FOR_USABLE = 500  # mm^6/m^3
+# Each of the lowest five levels must exceed this reflectivity sample count.
+MIN_ZCOUNT_FOR_USABLE = 500
 
 
 @dataclass
@@ -96,23 +99,27 @@ def interpolate_to_fine_grid(
     coarse_heights = ds["height"].values
     coarse_dbz = ds["corrected_dbz"].values
 
-    # Convert dBZ to linear Z for interpolation
-    # Handle MDS values by setting them to very small Z
-    coarse_z = np.where(coarse_dbz > MDS, idecibel(coarse_dbz), 0.0)
+    # A finite MDS floor preserves the limiting correction above echo tops.
+    mds_z = idecibel(MDS)
+    coarse_z = np.where(coarse_dbz > MDS, idecibel(coarse_dbz), mds_z)
 
     # Create fine grid
     n_layers = int(max_height_m / fine_resolution_m)
     fine_heights = np.arange(0, n_layers * fine_resolution_m, fine_resolution_m)
+    echo_levels = np.flatnonzero(coarse_dbz > MDS + 1)
+    if not len(echo_levels):
+        return fine_heights, np.full(len(fine_heights), mds_z)
+    top = echo_levels[-1] + 1
 
     # Interpolate in Z-space
     # Extrapolate below lowest level with constant value
-    # Extrapolate above highest level with zero (no echo)
+    # Extrapolate above highest level with the MDS floor
     fine_z = np.interp(
         fine_heights,
-        coarse_heights,
-        coarse_z,
+        coarse_heights[:top],
+        coarse_z[:top],
         left=coarse_z[0],  # Extend lowest value downward
-        right=0.0,  # No echo above profile top
+        right=mds_z,
     )
 
     return fine_heights, fine_z
@@ -125,8 +132,8 @@ def compute_beam_height(
 ) -> float:
     """Compute radar beam center height at given range.
 
-    Uses wradlib's bin_altitude with 4/3 Earth radius model for
-    standard atmospheric refraction.
+    Uses wradlib's bin_altitude with the reference ellipsoid radius at 60 degrees
+    and the 4/3 Earth model for standard atmospheric refraction.
 
     Args:
         range_m: Slant range from radar (meters)
@@ -136,7 +143,13 @@ def compute_beam_height(
     Returns:
         Beam center height above sea level (meters)
     """
-    return bin_altitude(range_m, elevation_deg, antenna_height_m, ke=4.0 / 3.0)
+    return bin_altitude(
+        range_m,
+        elevation_deg,
+        antenna_height_m,
+        re=EARTH_RADIUS_M,
+        ke=4.0 / 3.0,
+    )
 
 
 def solve_elevation_for_height(
@@ -160,7 +173,7 @@ def solve_elevation_for_height(
         Elevation angle in degrees (may be capped at min_elevation_deg)
     """
     # Binary search for elevation angle
-    low, high = -2.0, 45.0
+    low, high = -90.0, 90.0
     target = target_height_m
 
     for _ in range(50):  # Sufficient iterations for convergence
@@ -204,6 +217,8 @@ def convolve_beam_with_profile(
     range_m: float,
     beamwidth_deg: float = DEFAULT_BEAMWIDTH_DEG,
     horizon_height_m: float = 0.0,
+    *,
+    beam_bounds_m: tuple[float, float] | None = None,
 ) -> float:
     """Convolve radar beam pattern with vertical Z profile.
 
@@ -217,29 +232,51 @@ def convolve_beam_with_profile(
         range_m: Slant range from radar (m)
         beamwidth_deg: One-way half-power beamwidth (degrees)
         horizon_height_m: Height of radar horizon (m), layers below are blocked
+        beam_bounds_m: Lower and upper heights of the beam volume. When omitted,
+            derive them from the beam center using the standard refraction model.
 
     Returns:
         Weighted average Z observed by beam (linear units)
     """
-    # Compute angular distance from beam center for each layer
-    # θ = atan2(height_diff, range) in degrees
-    height_diff = fine_heights - beam_center_m
+    if beamwidth_deg <= 0 or range_m <= 0:
+        raise ValueError("Beamwidth and range must be positive")
+    if len(fine_heights) < 2:
+        raise ValueError("The fine grid must contain at least two heights")
+    resolution = float(fine_heights[1] - fine_heights[0])
+    if resolution <= 0:
+        raise ValueError("The fine grid must be increasing")
+
+    if beam_bounds_m is None:
+        elevation = solve_elevation_for_height(
+            beam_center_m, range_m, 0.0, min_elevation_deg=-90.0
+        )
+        beam_bounds_m = (
+            compute_beam_height(
+                range_m, elevation - BEAM_SUPPORT_WIDTHS * beamwidth_deg, 0.0
+            ),
+            compute_beam_height(
+                range_m, elevation + BEAM_SUPPORT_WIDTHS * beamwidth_deg, 0.0
+            ),
+        )
+
+    # Include blocked slices in the denominator, including those below antenna.
+    # Match Perl's truncation and one extra slice below the beam's lower edge.
+    lower_index = int(beam_bounds_m[0] / resolution) - 1
+    upper_index = min(
+        int(beam_bounds_m[1] / resolution), int(fine_heights[-1] / resolution)
+    )
+    indices = np.arange(lower_index, upper_index + 1)
+    heights = indices * resolution
+    height_diff = heights - beam_center_m
     angular_distance = np.rad2deg(np.arctan2(np.abs(height_diff), range_m))
 
     # Compute weights using Gaussian beam pattern
     weights = compute_beam_weight(angular_distance, beamwidth_deg)
 
-    # Limit to layers within ~3 beamwidths (negligible contribution beyond)
-    max_angle = 3.0 * beamwidth_deg
-    in_beam = angular_distance <= max_angle
-
-    # Apply horizon blocking: layers below horizon contribute zero Z
-    # but their weights still count (reduces observed Z)
-    above_horizon = fine_heights >= horizon_height_m
-
-    # Weighted sum of Z (only above horizon contributes Z)
-    z_contribution = np.where(above_horizon & in_beam, weights * fine_z, 0.0)
-    weight_sum = np.sum(np.where(in_beam, weights, 0.0))
+    above_horizon = indices >= int(horizon_height_m / resolution)
+    profile_z = np.interp(heights, fine_heights, fine_z, left=0.0)
+    z_contribution = np.where(above_horizon, weights * profile_z, 0.0)
+    weight_sum = np.sum(weights)
 
     if weight_sum == 0:
         return 0.0
@@ -256,6 +293,10 @@ def compute_correction_for_range(
     antenna_height_m: float,
     beamwidth_deg: float = DEFAULT_BEAMWIDTH_DEG,
     max_correction_db: float = MAX_CORRECTION_DB,
+    *,
+    horizon_angle_deg: float = DEFAULT_HORIZON_ANGLE_DEG,
+    previous_correction_db: float = 0.0,
+    is_cappi: bool = False,
 ) -> tuple[float, float]:
     """Compute VPR correction at a single range.
 
@@ -268,6 +309,10 @@ def compute_correction_for_range(
         antenna_height_m: Antenna height (m)
         beamwidth_deg: Beamwidth (degrees)
         max_correction_db: Maximum allowed correction (dB)
+        horizon_angle_deg: Angular terrain horizon (degrees).
+        previous_correction_db: Correction to retain if the beam misses the
+            entire integration grid (zero at the first range).
+        is_cappi: Apply the legacy near-antenna CAPPI beam-height safeguard.
 
     Returns:
         Tuple of (correction_db, beam_height_m)
@@ -277,15 +322,43 @@ def compute_correction_for_range(
     # Compute beam center height (relative to antenna for profile lookup)
     beam_height_asl = compute_beam_height(range_m, elevation_deg, antenna_height_m)
     beam_height_antenna = beam_height_asl - antenna_height_m
+    lower_angle = elevation_deg - BEAM_SUPPORT_WIDTHS * beamwidth_deg
+    upper_angle = elevation_deg + BEAM_SUPPORT_WIDTHS * beamwidth_deg
+    lower_height = (
+        compute_beam_height(range_m, lower_angle, antenna_height_m) - antenna_height_m
+    )
+    upper_height = (
+        compute_beam_height(range_m, upper_angle, antenna_height_m) - antenna_height_m
+    )
+    horizon_height = (
+        compute_beam_height(
+            range_m, max(horizon_angle_deg, lower_angle), antenna_height_m
+        ) - antenna_height_m
+    )
+    if is_cappi:
+        resolution = float(fine_heights[1] - fine_heights[0])
+        if beam_height_antenna < 2 * resolution:
+            beam_height_antenna = 2 * resolution
+            horizon_height = resolution
+            lower_height = -4 * resolution
+            upper_height = 8 * resolution
 
     # Convolve beam with profile
     z_observed = convolve_beam_with_profile(
-        fine_heights, fine_z, beam_height_antenna, range_m, beamwidth_deg
+        fine_heights,
+        fine_z,
+        beam_height_antenna,
+        range_m,
+        beamwidth_deg,
+        horizon_height,
+        beam_bounds_m=(lower_height, upper_height),
     )
 
     # Compute correction
-    if z_observed <= 0 or z_ground <= 0:
+    if z_ground <= 0:
         correction_db = 0.0
+    elif z_observed <= 0:
+        correction_db = previous_correction_db
     else:
         correction_db = 10.0 * np.log10(z_ground / z_observed)
 
@@ -302,60 +375,66 @@ def compute_correction_for_range(
 def compute_quality_weight(
     ds: xr.Dataset,
     max_height_m: int = MAX_QUALITY_HEIGHT_M,
+    *,
+    is_precipitation: bool = True,
+    layer_top_height_m: float | None = None,
 ) -> float:
     """Compute profile quality weight for correction blending.
 
     The quality weight indicates how reliable the instantaneous profile is
-    for VPR correction. Higher values indicate stronger, more continuous
-    precipitation echo suitable for VPR correction.
+    for VPR correction. It measures reflectivity sample coverage, not echo
+    strength: Perl's $isotaulu[][1] contains IRIS ZCnt.
 
     Based on allprof_prodx2.pl lines 1188-1219 ($wq calculation).
 
     Algorithm:
-        1. Check that lowest 5 levels have Z > 500 mm^6/m^3 (~27 dBZ)
-        2. Sum linear Z values from ground to min(layer_top, 5km)
-        3. Only include layers with Z > 30 mm^6/m^3 (~15 dBZ)
+        1. Require precipitation and ZCnt > 500 at the lowest five levels
+        2. Sum sample counts from ground to min(layer_top, 5km)
+        3. Only include layers with ZCnt > 30
         4. Normalize by (5000 * num_valid_layers)
 
     Args:
-        ds: Dataset with 'corrected_dbz' indexed by 'height'.
+        ds: Dataset with 'zcount' indexed by 'height'. Without sample counts,
+            no observational quality can be established.
         max_height_m: Maximum integration height (default 5000m).
+        is_precipitation: Whether the finalized profile is precipitation.
+        layer_top_height_m: Top of the first precipitation layer. When omitted,
+            infer the first contiguous echo layer from corrected_dbz.
 
     Returns:
         Quality weight (typically 0-10, where higher = better quality).
         Returns 0 if profile is not suitable for VPR correction.
     """
-    heights = ds["height"].values
-    dbz_values = ds["corrected_dbz"].values
-
-    # Convert to linear Z
-    z_values = np.where(dbz_values > MDS, idecibel(dbz_values), 0.0)
-
-    # Check lowest 5 levels for sufficient echo strength
-    # Perl: $isotaulu[$alintaso][$j][1] > 500 and ... (5 levels)
-    n_required = min(5, len(z_values))
-    if not np.all(z_values[:n_required] >= MIN_Z_FOR_USABLE):
+    if not is_precipitation or "zcount" not in ds:
         return 0.0
 
-    # Integrate Z up to max_height_m, excluding weak layers
-    mask = (heights <= max_height_m) & (z_values >= MIN_Z_FOR_QUALITY)
+    heights = ds["height"].values
+    counts = ds["zcount"].values
+    if (
+        len(counts) < 5
+        or not np.all(np.isfinite(counts[:5]))
+        or not np.all(counts[:5] > MIN_ZCOUNT_FOR_USABLE)
+    ):
+        return 0.0
 
+    if layer_top_height_m is None:
+        echo = ds["corrected_dbz"].values > MDS
+        if not np.any(echo):
+            return 0.0
+        first = np.flatnonzero(echo)[0]
+        gaps = np.flatnonzero(~echo[first:])
+        last = first + gaps[0] - 1 if len(gaps) else len(heights) - 1
+        layer_top_height_m = heights[last]
+
+    mask = (
+        (heights <= min(max_height_m, layer_top_height_m))
+        & np.isfinite(counts)
+        & (counts > MIN_ZCOUNT_FOR_QUALITY)
+    )
     if not np.any(mask):
         return 0.0
 
-    # Sum Z values where mask is True (σ=1 for strong layers)
-    # Perl: $wq_yla = $wq_yla + $isotaulu[$i][$j][1] * $sigma
-    z_sum = np.sum(z_values[mask])
-
-    # Normalize by 5000 * number of valid layers
-    # Perl: $wq_ala = $wq_ala + 5000 * $sigma
-    n_valid = np.sum(mask)
-    normalization = 5000 * n_valid
-
-    if normalization == 0:
-        return 0.0
-
-    return z_sum / normalization
+    return float(np.mean(counts[mask]) / 5000)
 
 
 def compute_bb_slope(
@@ -470,7 +549,7 @@ def adjust_ground_reference(
 
     # Case 2: BB lower edge is above ground but near surface with steep slope
     # Perl: if ($zala > 0 and $zala < 600 and $bbkallistus > 0.2)
-    if bb_bottom > lowest_height and bb_bottom < height_limit_m:
+    if 0 < bb_bottom < height_limit_m:
         slope = compute_bb_slope(dbz_values, heights, bb_bottom, bb_top)
 
         if slope > slope_threshold:
@@ -519,6 +598,9 @@ def cap_bb_peak_amplitude(
     VPR correction. This function reduces the peak dBZ value to cap the
     effective amplitude.
 
+    Original lin_dbz or bb_result.peak_dbz makes repeated application safe.
+    Corrected-only callers without either must supply an uncapped profile.
+
     Based on allprof_prodx2.pl lines 1091-1098:
         if ( $ylaamp >= 10 and $bbalku == $alintaso ) {
             $isotaulu[$bbalku][$j][5] = $isotaulu[$bbalku][$j][0] - ( $ylaamp - 10 );
@@ -554,7 +636,7 @@ def cap_bb_peak_amplitude(
         return ds
 
     # Check if amplitude exceeds cap
-    if amplitude_above < amplitude_cap_db:
+    if amplitude_above <= amplitude_cap_db:
         return ds
 
     # Cap the peak amplitude by reducing the peak dBZ
@@ -562,7 +644,12 @@ def cap_bb_peak_amplitude(
     reduction = amplitude_above - amplitude_cap_db
 
     ds = ds.copy(deep=True)
-    original_peak_dbz = float(ds["corrected_dbz"].sel(height=peak_height).values)
+    if "lin_dbz" in ds:
+        original_peak_dbz = float(ds["lin_dbz"].sel(height=peak_height).values)
+    elif bb_result.peak_dbz is not None:
+        original_peak_dbz = float(bb_result.peak_dbz)
+    else:
+        original_peak_dbz = float(ds["corrected_dbz"].sel(height=peak_height).values)
     capped_peak_dbz = original_peak_dbz - reduction
 
     ds["corrected_dbz"].loc[dict(height=peak_height)] = capped_peak_dbz
@@ -592,6 +679,9 @@ def compute_vpr_correction(
     include_clim: bool = True,
     clim_weight: float = 0.2,
     bb_result: "BrightBandResult | None" = None,
+    is_precipitation: bool = True,
+    layer_top_height_m: float | None = None,
+    horizon_angle_deg: float | None = None,
 ) -> VPRCorrectionResult:
     """Compute VPR correction factors vs range for CAPPI heights and elevations.
 
@@ -603,7 +693,7 @@ def compute_vpr_correction(
         ds: Dataset with 'corrected_dbz' indexed by 'height'.
             Must have 'antenna_height_m' in attrs.
             Should have 'beamwidth_deg' in attrs (from radar config).
-        cappi_heights_m: CAPPI heights to compute corrections for.
+        cappi_heights_m: CAPPI heights above sea level to compute corrections for.
             Default: (500, 1000)
         elevation_angles_deg: Fixed elevation angles to compute corrections for.
             If None, uses angles from ds.attrs['elevation_angles'] (from VVP).
@@ -621,6 +711,11 @@ def compute_vpr_correction(
             Default 0.2 (from pystycappi_ka.pl).
         bb_result: Bright band detection result. If provided, enables slope
             adjustment when BB is near the surface with steep gradient.
+        is_precipitation: Final precipitation classification for quality gating.
+        layer_top_height_m: Top of the first precipitation layer for quality
+            integration; inferred from the profile when omitted.
+        horizon_angle_deg: Angular terrain horizon. When omitted, reads
+            ds.attrs['horizon_angle_deg'], falling back to zero degrees.
 
     Returns:
         VPRCorrectionResult containing:
@@ -656,6 +751,8 @@ def compute_vpr_correction(
     # Get beamwidth from parameter, dataset attrs, or use default
     if beamwidth_deg is None:
         beamwidth_deg = ds.attrs.get("beamwidth_deg", DEFAULT_BEAMWIDTH_DEG)
+    if horizon_angle_deg is None:
+        horizon_angle_deg = ds.attrs.get("horizon_angle_deg", DEFAULT_HORIZON_ANGLE_DEG)
 
     antenna_height_m = ds.attrs.get("antenna_height_m", 0)
 
@@ -669,7 +766,11 @@ def compute_vpr_correction(
         ds = cap_bb_peak_amplitude(ds, bb_result)
 
     # Compute quality weight
-    quality_weight = compute_quality_weight(ds)
+    quality_weight = compute_quality_weight(
+        ds,
+        is_precipitation=is_precipitation,
+        layer_top_height_m=layer_top_height_m,
+    )
 
     # Interpolate profile to fine grid
     fine_heights, fine_z = interpolate_to_fine_grid(ds)
@@ -679,8 +780,8 @@ def compute_vpr_correction(
     dbz_values = ds["corrected_dbz"].values
     valid_mask = dbz_values > MDS
 
-    if not np.any(valid_mask):
-        # No valid echo - return climatology-only result if freezing level available
+    if not np.any(valid_mask) or not is_precipitation:
+        # Non-precipitation profiles cannot supply observed corrections.
         return _create_climatology_only_result(
             ds=ds,
             cappi_heights_m=cappi_heights_m,
@@ -689,8 +790,9 @@ def compute_vpr_correction(
             range_step_km=range_step_km,
             min_elevation_deg=min_elevation_deg,
             beamwidth_deg=beamwidth_deg,
-            freezing_level_m=freezing_level_m,
+            freezing_level_m=freezing_level_m if include_clim else None,
             clim_weight=clim_weight,
+            horizon_angle_deg=horizon_angle_deg,
         )
 
     # Apply bright band slope adjustment if BB result provided
@@ -726,7 +828,7 @@ def compute_vpr_correction(
 
             # Find elevation angle for this CAPPI height
             elevation = solve_elevation_for_height(
-                cappi_height + antenna_height_m,  # CAPPI height is above sea level
+                cappi_height,
                 range_m,
                 antenna_height_m,
                 min_elevation_deg,
@@ -741,6 +843,9 @@ def compute_vpr_correction(
                 elevation,
                 antenna_height_m,
                 beamwidth_deg,
+                horizon_angle_deg=horizon_angle_deg,
+                previous_correction_db=corrections[i - 1, j] if i else 0.0,
+                is_cappi=True,
             )
 
             corrections[i, j] = corr
@@ -781,7 +886,7 @@ def compute_vpr_correction(
                 range_m = range_km * 1000.0
 
                 elevation = solve_elevation_for_height(
-                    cappi_height + antenna_height_m,
+                    cappi_height,
                     range_m,
                     antenna_height_m,
                     min_elevation_deg,
@@ -795,6 +900,9 @@ def compute_vpr_correction(
                     elevation,
                     antenna_height_m,
                     beamwidth_deg,
+                    horizon_angle_deg=horizon_angle_deg,
+                    previous_correction_db=clim_corrections[i - 1, j] if i else 0.0,
+                    is_cappi=True,
                 )
 
                 clim_corrections[i, j] = corr
@@ -848,6 +956,8 @@ def compute_vpr_correction(
                     elev_deg,
                     antenna_height_m,
                     beamwidth_deg,
+                    horizon_angle_deg=horizon_angle_deg,
+                    previous_correction_db=elev_corrections[i - 1, j] if i else 0.0,
                 )
 
                 elev_corrections[i, j] = corr
@@ -872,6 +982,10 @@ def compute_vpr_correction(
                         elev_deg,
                         antenna_height_m,
                         beamwidth_deg,
+                        horizon_angle_deg=horizon_angle_deg,
+                        previous_correction_db=(
+                            elev_clim_corrections[i - 1, j] if i else 0.0
+                        ),
                     )
                     elev_clim_corrections[i, j] = corr
 
@@ -916,6 +1030,7 @@ def compute_vpr_correction(
             "antenna_height_m": antenna_height_m,
             "beamwidth_deg": beamwidth_deg,
             "min_elevation_deg": min_elevation_deg,
+            "horizon_angle_deg": horizon_angle_deg,
             "climatology_only": is_climatology_only,
         },
     )
@@ -939,6 +1054,7 @@ def _create_climatology_only_result(
     beamwidth_deg: float,
     freezing_level_m: float | None,
     clim_weight: float,
+    horizon_angle_deg: float = DEFAULT_HORIZON_ANGLE_DEG,
 ) -> VPRCorrectionResult:
     """Create climatology-only VPR correction result.
 
@@ -955,6 +1071,7 @@ def _create_climatology_only_result(
         beamwidth_deg: Radar beamwidth
         freezing_level_m: Freezing level for climatological profile
         clim_weight: Climatology weight for quality_weight in result
+        horizon_angle_deg: Angular terrain horizon.
 
     Returns:
         VPRCorrectionResult with climatology-only corrections
@@ -1025,7 +1142,7 @@ def _create_climatology_only_result(
             range_m = range_km * 1000.0
 
             elevation = solve_elevation_for_height(
-                cappi_height + antenna_height_m,
+                cappi_height,
                 range_m,
                 antenna_height_m,
                 min_elevation_deg,
@@ -1039,6 +1156,9 @@ def _create_climatology_only_result(
                 elevation,
                 antenna_height_m,
                 beamwidth_deg,
+                horizon_angle_deg=horizon_angle_deg,
+                previous_correction_db=clim_corrections[i - 1, j] if i else 0.0,
+                is_cappi=True,
             )
 
             clim_corrections[i, j] = corr
@@ -1071,6 +1191,8 @@ def _create_climatology_only_result(
                     elev_deg,
                     antenna_height_m,
                     beamwidth_deg,
+                    horizon_angle_deg=horizon_angle_deg,
+                    previous_correction_db=elev_corrections[i - 1, j] if i else 0.0,
                 )
                 elev_corrections[i, j] = corr
                 elev_beam_heights[i, j] = beam_h
@@ -1094,6 +1216,7 @@ def _create_climatology_only_result(
             "freezing_level_m": freezing_level_m,
             "antenna_height_m": antenna_height_m,
             "beamwidth_deg": beamwidth_deg,
+            "horizon_angle_deg": horizon_angle_deg,
             "climatology_only": True,
         },
     )

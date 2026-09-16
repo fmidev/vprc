@@ -91,6 +91,14 @@ class TestClimatologicalProfile:
         val_500 = ds["clim_dbz"].sel(height=500, method="nearest").values
         assert val_500 == pytest.approx(base - 2 * 0.66)
 
+    def test_decay_with_freezing_level_aligned_to_profile_grid(self):
+        # Unchanged allprof recurrence: h2500=31, h2700=30.06, h2900=29.12.
+        ds = generate_climatological_profile(2100, lowest_level_m=100)
+        np.testing.assert_allclose(
+            ds.clim_dbz.sel(height=[2500, 2700, 2900]).values,
+            [31.0, 30.06, 29.12],
+        )
+
     def test_mds_floor(self):
         """Profile values should never go below MDS (-45 dBZ)."""
         # Very negative FL -> low base, should hit MDS
