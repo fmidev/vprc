@@ -50,4 +50,4 @@ RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
 USER vprc
 
 # Default command shows package info (useful for debugging)
-CMD ["python", "-c", "import vprc; print(f'vprc {vprc.__version__}')"]
+CMD ["python", "-c", "from importlib.metadata import version; print(f'vprc {version(\"vprc\")}')"]
