@@ -219,7 +219,9 @@ __marimo__/
 *~
 *.swp
 .DS_Store
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 legacy/
 *.pdf
 local/
