@@ -37,7 +37,8 @@ Without uv: `python -m pip install -e . --group dev` (pip 25.1+).
   as relevant. Full suite: `uv run pytest tests/`.
 - Lint and format touched Python files with Ruff (configured in
   [pyproject.toml](pyproject.toml)): `uv run ruff check --fix <files>` and
-  `uv run ruff format <files>`. CI checks the whole tree.
+  `uv run ruff format <files>`. [CI](.github/workflows/ci.yml) runs Ruff,
+  the full test suite and a wheel build on the whole tree.
 - Type checking: `uv run mypy src/vprc tests`. Existing errors remain; do not
   add new ones in touched code.
 - Wheel build, for packaging changes: `uv build --wheel`.
