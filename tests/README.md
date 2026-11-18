@@ -32,32 +32,32 @@ tests/
 
 Run all tests:
 ```bash
-pytest tests/
+uv run pytest tests/
 ```
 
 Run tests for a specific module:
 ```bash
-pytest tests/test_io.py
+uv run pytest tests/test_io.py
 ```
 
 Run tests with verbose output:
 ```bash
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 Run tests with coverage:
 ```bash
-pytest tests/ --cov=src/vprc --cov-report=term-missing
+uv run pytest tests/ --cov=src/vprc --cov-report=term-missing
 ```
 
 Run a specific test class:
 ```bash
-pytest tests/test_io.py::TestParseVVPFile -v
+uv run pytest tests/test_io.py::TestParseVVPFile -v
 ```
 
 Run a specific test:
 ```bash
-pytest tests/test_io.py::TestParseVVPFile::test_parse_sample_file -v
+uv run pytest tests/test_io.py::TestParseVVPFile::test_parse_sample_file -v
 ```
 
 ## Test Organization
@@ -132,6 +132,9 @@ modifying or running scripts in the legacy working directory.
 
 ## Dependencies
 
+Test dependencies are in the `dev` dependency group of `pyproject.toml`:
+
 ```bash
-pip install pytest pytest-cov
+uv sync
+uv run pytest tests/
 ```

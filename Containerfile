@@ -7,7 +7,7 @@
 #       from vprc import process_vvp
 #       return process_vvp(vvp_file, radar_config)
 
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -29,7 +29,7 @@ COPY .git/ .git/
 RUN hatch build -t wheel
 
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 LABEL org.opencontainers.image.title="vprc"
 LABEL org.opencontainers.image.description="FMI VPR correction for weather radar data"

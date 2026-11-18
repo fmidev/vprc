@@ -1,7 +1,7 @@
 # vprc
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.txt)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 [![Status: Beta](https://img.shields.io/badge/status-beta-yellow.svg)]()
 [![Docker Repository on Quay](https://quay.io/repository/fmi/vprc/status "Docker Repository on Quay")](https://quay.io/repository/fmi/vprc)
 
@@ -22,13 +22,13 @@ Python implementation of the **Koistinen & Pohjola VPR (Vertical Profile Reflect
 
 ## Installation
 
-Requires Python 3.12+.
+Requires Python 3.14+.
 
 ```bash
-# From source (development)
+# From source (development, with uv: creates .venv including dev tools)
 git clone https://github.com/fmidev/vprc.git
 cd vprc
-pip install -e .
+uv sync
 
 # Or directly from GitHub
 pip install git+https://github.com/fmidev/vprc.git
@@ -45,7 +45,7 @@ docs/              # Documentation
 ## Testing
 
 ```bash
-pytest tests/
+uv run pytest tests/
 ```
 
 See [tests/README.md](tests/README.md) for details on test structure and coverage.

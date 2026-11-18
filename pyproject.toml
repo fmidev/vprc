@@ -7,7 +7,7 @@ name = "vprc"
 dynamic = ["version"]
 description = 'FMI VPR correction'
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = "MIT"
 keywords = []
 authors = [
@@ -16,8 +16,7 @@ authors = [
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
@@ -27,6 +26,7 @@ dependencies = [
   "wradlib",
   "rioxarray",
   "pyproj",
+  "pandas",
 ]
 
 [project.urls]
@@ -49,12 +49,21 @@ include = [
   "/LICENSE.txt",
 ]
 
-[tool.hatch.envs.types]
-extra-dependencies = [
-  "mypy>=1.0.0",
+[dependency-groups]
+# Installed by default with `uv sync`; click and matplotlib are needed by
+# src/scripts and their tests.
+dev = [
+  "pytest",
+  "pytest-cov",
+  "ruff",
+  "mypy",
+  "pandas-stubs",
+  "click",
+  "matplotlib",
 ]
-[tool.hatch.envs.types.scripts]
-check = "mypy --install-types --non-interactive {args:src/vprc tests}"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]
 
 [tool.coverage.run]
 source_pkgs = ["vprc", "tests"]

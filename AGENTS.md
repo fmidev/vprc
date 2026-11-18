@@ -1,6 +1,6 @@
 # Agent guide for vprc
 
-Python 3.12+ implementation of the Koistinen & Pohjola vertical profile
+Python 3.14+ implementation of the Koistinen & Pohjola vertical profile
 reflectivity (VPR) correction algorithm for weather radar data. FMI runs this
 package in containers from external Airflow workflows; DAGs do not belong here.
 
@@ -24,24 +24,26 @@ details rather than duplicating them here.
 
 ## Setup and checks
 
-Run commands from the repository root in a Python 3.12+ virtual environment.
-Reuse an existing environment; for a fresh checkout:
+The environment is managed with [uv](https://docs.astral.sh/uv/) from
+[pyproject.toml](pyproject.toml) and the committed `uv.lock`; the Python
+version comes from [.python-version](.python-version) and matches the
+production container. Run commands from the repository root with `uv run`,
+which creates or syncs `.venv` as needed; do not rely on shell activation.
+Without uv: `python -m pip install -e . --group dev` (pip 25.1+).
 
-```sh
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -e . pytest
-```
-
-- Run the relevant tests first, e.g. `python -m pytest tests/test_clutter.py`.
+- Run the relevant tests first, e.g. `uv run pytest tests/test_clutter.py`.
 - For algorithm or pipeline changes, also run
-  `python -m pytest tests/test_legacy_comparison.py tests/test_temporal_e2e.py`
-  as relevant. Full suite: `python -m pytest tests/`.
-- Type checking, when Hatch is available: `hatch run types:check`.
-- Wheel build, for packaging changes: `hatch build -t wheel`.
+  `uv run pytest tests/test_legacy_comparison.py tests/test_temporal_e2e.py`
+  as relevant. Full suite: `uv run pytest tests/`.
+- Lint and format touched Python files with Ruff (configured in
+  [pyproject.toml](pyproject.toml)): `uv run ruff check --fix <files>` and
+  `uv run ruff format <files>`. CI checks the whole tree.
+- Type checking: `uv run mypy src/vprc tests`. Existing errors remain; do not
+  add new ones in touched code.
+- Wheel build, for packaging changes: `uv build --wheel`.
   [Containerfile](Containerfile) defines the production image build.
-- Use Black formatting and Ruff for Python changes; limit checks/formatting to
-  touched files. There is currently no project-specific Black/Ruff configuration.
+- Add or update dependencies with `uv add` (`uv add --dev` for development
+  tools) so `uv.lock` stays in sync; commit both files.
 - Add regression tests in the corresponding test module when behavior changes.
   Reuse fixtures in [tests/data/](tests/data/) and the existing legacy parsers.
 - Report checks run and any failures or unavailable dependencies. Documentation-only
