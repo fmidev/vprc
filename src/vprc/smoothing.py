@@ -8,6 +8,7 @@ from .constants import (
     LARGE_POSITIVE_SPIKE_THRESHOLD,
     MDS,
     MIN_SAMPLES,
+    PROFILE_TOP_M,
     SPIKE_AMPLITUDE_THRESHOLD,
     STEP,
 )
@@ -201,6 +202,10 @@ def smooth_spikes(ds: xr.Dataset) -> xr.Dataset:
 
     Operations must be interleaved: later averages use earlier corrections,
     while spike detection always uses the original ``lin_dbz``.
+
+    Levels at or above ``PROFILE_TOP_M`` are used only as neighbours and are
+    dropped from the result, as in allprof_prodx2.pl. Each operation writes
+    only its own level or the one above, so they cannot affect lower levels.
     """
     result = ds.copy(deep=True)
     if not result.sizes["height"]:
@@ -227,4 +232,11 @@ def smooth_spikes(ds: xr.Dataset) -> xr.Dataset:
         fill_gap(result, height)
         remove_isolated_echo(result, height)
         _smooth_two_point_layer(result, height)
+    result = result.sel(height=result.height < PROFILE_TOP_M)
+    if "missing_levels_m" in result.attrs:
+        result.attrs["missing_levels_m"] = [
+            height
+            for height in result.attrs["missing_levels_m"]
+            if height < PROFILE_TOP_M
+        ]
     return result

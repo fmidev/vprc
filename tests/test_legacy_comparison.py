@@ -587,6 +587,23 @@ def test_levels_absent_from_input_match_legacy_profile(stem, radar_code):
     _assert_profile_matches_legacy(result, expected, footer, stem)
 
 
+@pytest.mark.parametrize(
+    "stem",
+    [
+        "202208171115_VIM.VVP_40",
+        "202208171130_VIM.VVP_40",
+        "202208171200_VIM.VVP_40",
+        "202208171215_VIM.VVP_40",
+        "202208171230_VIM.VVP_40",
+    ],
+)
+def test_layers_reaching_ten_kilometres_match_legacy_profile(stem):
+    """Perl analyses levels below 10 km above the antenna and closes layers there."""
+    result, expected, footer = _process_like_legacy(stem, "VIM")
+    assert int(result.dataset.height.max()) == 9902
+    _assert_profile_matches_legacy(result, expected, footer, stem)
+
+
 # Kankaanpää 2025-08-24 11 UTC with one change each; references from running
 # allprof_prodx2.pl and pystycappi.pl without a HIRLAM freezing level.
 @pytest.mark.parametrize(

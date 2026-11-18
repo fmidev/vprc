@@ -16,6 +16,11 @@ GROUND_CLUTTER_GRADIENT_THRESHOLD = -0.005
 # Vertical resolution / height step (meters)
 STEP = 200
 
+# Profile analysis stops below this height above the antenna (meters).
+# allprof_prodx2.pl loops run to $i < 10000 and close layers there; higher
+# VVP levels are read only as neighbours of the levels below.
+PROFILE_TOP_M = 10000
+
 # Minimum sample count for valid data
 # Data points with fewer samples are considered unreliable
 MIN_SAMPLES = 30

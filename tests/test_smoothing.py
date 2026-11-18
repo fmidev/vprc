@@ -175,3 +175,17 @@ def test_integer_input_does_not_truncate_fractional_corrections():
     ds = make_profile([20, 35, 25])
     ds["corrected_dbz"] = ds.corrected_dbz.astype(int)
     assert float(smooth_positive_spikes(ds).corrected_dbz[1]) == 22.5
+
+
+def test_levels_above_profile_top_are_only_neighbours():
+    """allprof_prodx2.pl analyses levels below 10 km and reads higher ones.
+
+    Echo continuing above the top keeps 9900 m from being smoothed as a spike;
+    the higher levels are then dropped, including their missing-level entries.
+    """
+    ds = make_profile([20.0] * 49 + [30.0, 30.0, 30.0])  # 100 ... 10300 m
+    ds.attrs["missing_levels_m"] = [300, 10100]
+    result = smooth_spikes(ds)
+    assert int(result.height.max()) == 9900
+    assert float(result.corrected_dbz.sel(height=9900)) == 30
+    assert result.attrs["missing_levels_m"] == [300]

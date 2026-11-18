@@ -72,7 +72,9 @@ python -m pip install -e . pytest
   `read_vvp()` starts the grid at the radar's `lowest_level_offset_m` (Perl
   `$alintaso`), even when the file lacks that level, and fills levels absent
   from the file as no-echo levels so stages can index `height ± STEP`; their
-  heights are in `attrs["missing_levels_m"]`.
+  heights are in `attrs["missing_levels_m"]`. `smooth_spikes()` drops levels
+  at or above `PROFILE_TOP_M` (10 km above antenna) after using them as
+  neighbours, as the legacy loops stop at `$i < 10000`.
   The correction calculation also uses a finer grid; do not assume every grid
   has 200 m spacing.
 - `lin_dbz` is reflectivity in **dBZ**, not linear reflectivity Z, despite its name.
