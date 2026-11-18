@@ -69,8 +69,10 @@ python -m pip install -e . pytest
 - Vertical profiles use the xarray `height` dimension. Parsed heights are integer
   meters **above antenna**, converted from input heights above sea level (ASL),
   with the standard 200 m spacing (`STEP` in [constants.py](src/vprc/constants.py)).
-  `read_vvp()` fills levels absent from the file as no-echo levels so stages
-  can index `height ± STEP`; their heights are in `attrs["missing_levels_m"]`.
+  `read_vvp()` starts the grid at the radar's `lowest_level_offset_m` (Perl
+  `$alintaso`), even when the file lacks that level, and fills levels absent
+  from the file as no-echo levels so stages can index `height ± STEP`; their
+  heights are in `attrs["missing_levels_m"]`.
   The correction calculation also uses a finer grid; do not assume every grid
   has 200 m spacing.
 - `lin_dbz` is reflectivity in **dBZ**, not linear reflectivity Z, despite its name.
@@ -85,6 +87,8 @@ python -m pip install -e . pytest
 - Use [config.py](src/vprc/config.py) for radar lookup rather than hardcoding
   stations, coordinates or network size. VVP header names must match a radar
   `name` or `aliases` entry; unknown names raise rather than use `[defaults]`.
+  `antenna_height_m` and `lowest_level_offset_m` come only from the radar
+  section or from runtime overrides given together; `[defaults]` has none.
   Configuration selects `VPRC_RADAR_CONFIG` if set, otherwise the packaged
   [radar_defaults.toml](src/vprc/radar_defaults.toml). Within the selected config,
   runtime metadata overrides radar-specific values, which override `[defaults]`.
@@ -97,6 +101,7 @@ python -m pip install -e . pytest
   Perl variable names or quote a short expression when useful; avoid fragile
   legacy line-number references.
 - Use `logging` for processing diagnostics and surface invalid inputs explicitly;
-  do not hide errors behind success-shaped fallback results.
+  do not hide errors behind success-shaped fallback results. Raise
+  `NoUsableProfileError` only for valid files that contain no usable profile.
 - Keep changes scoped and update related tests/docs when APIs or behavior change.
   Maintain this file when development commands or important conventions change.

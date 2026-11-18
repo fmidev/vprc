@@ -6,9 +6,11 @@
 # - aliases: Other header names for the same radar, e.g. older IRIS site
 #   names [optional]. VVP files whose header name is neither a name nor an
 #   alias of any section are rejected rather than processed with [defaults].
-# - antenna_height_m: Antenna elevation above sea level (meters)
-# - lowest_level_offset_m: Offset from nearest profile level (meters)
-#   Profile levels are at 100, 300, 500, ... meters above antenna
+# - antenna_height_m: Antenna elevation above sea level (meters) [required]
+# - lowest_level_offset_m: Height of the lowest profile level above the
+#   antenna (meters), the legacy $alintaso [required]. VVP levels are at
+#   100, 300, 500, ... m ASL, so this is normally (100 - antenna) mod 200.
+#   Profiles start at this level even when the file lacks it.
 # - beamwidth_deg: One-way half-power beamwidth (degrees) [optional]
 # - latitude: WGS84 latitude (degrees)
 # - longitude: WGS84 longitude (degrees)
@@ -22,9 +24,8 @@ crs_epsg = 3067  # ETRS-TM35FIN (Finland standard)
 default_grid_resolution_m = 1000
 
 [defaults]
-# Shared default values used when radar-specific value is not specified
-antenna_height_m = 198
-lowest_level_offset_m = 102
+# Shared default values used when radar-specific value is not specified.
+# Radar geometry (antenna_height_m, lowest_level_offset_m) has no default.
 beamwidth_deg = 0.95
 horizon_angle_deg = 0.0
 max_range_km = 250

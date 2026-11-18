@@ -13,6 +13,7 @@ GeoTIFF export:
     write_weights_cog() - Export weight variables as COGs
 """
 
+from ..exceptions import NoUsableProfileError
 from .vvp import (
     VVPHeader,
     read_vvp,
@@ -41,6 +42,7 @@ from .geotiff import (
 __all__ = [
     # VVP parsing
     "VVPHeader",
+    "NoUsableProfileError",
     "read_vvp",
     "height_to_sea_level",
     # GeoTIFF export

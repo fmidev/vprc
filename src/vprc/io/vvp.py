@@ -18,6 +18,7 @@ from ..config import (
     resolve_radar_code,
 )
 from ..constants import MDS, STEP
+from ..exceptions import NoUsableProfileError
 
 logger = logging.getLogger(__name__)
 
@@ -32,28 +33,43 @@ _MISSING_LEVEL_FILL: dict[str, float] = {
 }
 
 
-def _fill_missing_levels(ds: xr.Dataset, antenna_height_m: float) -> xr.Dataset:
-    """Reindex a profile onto a complete ``STEP`` grid between its end levels.
+def _fill_missing_levels(
+    ds: xr.Dataset, antenna_height_m: int, lowest_level_m: int
+) -> xr.Dataset:
+    """Reindex a profile onto a complete ``STEP`` grid from the lowest level.
 
-    Processing stages index neighbouring levels as ``height ± STEP``, as the
-    legacy height-indexed arrays did. Missing levels become no-echo levels
-    with zero samples; other variables are NaN. Their heights above antenna
-    are listed in the ``missing_levels_m`` attribute, because the legacy
-    post-bright-band clutter correction treats absent levels differently from
-    measured no-echo levels.
+    The grid starts at the configured lowest profile level (legacy
+    ``$alintaso``), not at the lowest level present in the file, so the
+    height-relative rules near the surface use the right levels. Processing
+    stages index neighbouring levels as ``height ± STEP``, as the legacy
+    height-indexed arrays did. Missing levels become no-echo levels with zero
+    samples; other variables are NaN. Their heights above antenna are listed
+    in the ``missing_levels_m`` attribute, because the legacy post-bright-band
+    clutter correction treats absent levels differently from measured no-echo
+    levels.
 
     Raises:
-        ValueError: If the heights are not on a common ``STEP`` grid.
+        ValueError: If the heights are not on the ``STEP`` grid through the
+            lowest level, i.e. the radar geometry does not match the file.
+        NoUsableProfileError: If no level is at or above the lowest level.
     """
     heights = ds["height"].values
-    lowest = int(heights[0])
-    if np.any((heights - lowest) % STEP):
+    if np.any((heights - lowest_level_m) % STEP):
         raise ValueError(
-            f"VVP profile heights are not on a regular {STEP} m grid: "
-            f"{heights.tolist()}"
+            f"VVP profile levels at {(heights + antenna_height_m).tolist()} m ASL "
+            f"are not on the {STEP} m grid through the lowest profile level "
+            f"{lowest_level_m} m above the antenna at {antenna_height_m} m ASL; "
+            "check antenna_height_m and lowest_level_offset_m"
         )
-    grid = np.arange(lowest, int(heights[-1]) + 1, STEP)
-    missing = np.setdiff1d(grid, heights)
+    # allprof_prodx2.pl stores levels below $alintaso at index 0, unused.
+    ds = ds.isel(height=heights >= lowest_level_m)
+    if not ds.sizes["height"]:
+        raise NoUsableProfileError(
+            "VVP profile has no levels at or above the lowest profile level "
+            f"({lowest_level_m} m above the antenna)"
+        )
+    grid = np.arange(lowest_level_m, int(ds["height"].values[-1]) + 1, STEP)
+    missing = np.setdiff1d(grid, ds["height"].values)
     if len(missing):
         logger.info(
             "VVP profile is missing %d level(s) at %s m ASL; treating them as "
@@ -67,6 +83,16 @@ def _fill_missing_levels(ds: xr.Dataset, antenna_height_m: float) -> xr.Dataset:
         ds = ds.reindex(height=grid, fill_value=fill)
     ds.attrs["missing_levels_m"] = [int(height) for height in missing]
     return ds
+
+
+def _whole_meters(metadata: dict, key: str) -> int:
+    """Return a geometry value as integer meters, rejecting other values."""
+    value = metadata[key]
+    numeric = isinstance(value, Real) and not isinstance(value, bool)
+    meters = float(value) if numeric else np.nan
+    if not np.isfinite(meters) or not meters.is_integer():
+        raise ValueError(f"{key} must be whole meters, got {value!r}")
+    return int(meters)
 
 
 @dataclass
@@ -145,6 +171,10 @@ def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
     Returns:
         Tuple of (header metadata, DataFrame with profile data)
 
+    Raises:
+        NoUsableProfileError: If a valid header is followed by no data rows.
+        ValueError: If the file is empty or malformed.
+
     Example:
         >>> header, df = parse_vvp_file('202508241100_KAN.VVP_40.txt')
         >>> header.radar
@@ -159,11 +189,14 @@ def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
     with open(filepath, 'r') as f:
         lines = f.readlines()
 
-    if len(lines) < 4:
-        raise ValueError(f"File too short: expected at least 4 lines, got {len(lines)}")
+    if not lines:
+        raise ValueError(f"Empty VVP file: {filepath}")
 
     # Parse header (line 0)
     header = _parse_vvp_header(lines[0])
+    if not any(line.strip() for line in lines[3:]):
+        # IRIS writes header-only products when no profile could be computed.
+        raise NoUsableProfileError(f"VVP file has no profile levels: {filepath}")
 
     # The file has a multi-level header structure where each major column
     # (Wind-Speed, Linear-dBZ, etc.) has 2 sub-values (mean and std deviation)
@@ -238,7 +271,8 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
         radar_metadata: Optional dict to override specific metadata fields.
                        Common fields:
                        - antenna_height_m: Antenna elevation above sea level (meters)
-                       - lowest_level_offset_m: Offset from nearest profile level
+                       - lowest_level_offset_m: Lowest profile level above the
+                         antenna (meters); override together with antenna_height_m
                        - freezing_level_m: Freezing level in meters ASL (from NWP)
                          * None: Unknown (not yet retrieved from NWP)
                          * 0 or negative: No freezing layer → normalized to 0
@@ -267,18 +301,24 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     # Convert sea-level heights to heights above antenna
     # This follows the legacy Perl logic: $Height = $SeaHeight - $antennin_korkeus * 1000
     # (allprof_prodx2.pl line 153)
-    antenna_height_m = metadata.get('antenna_height_m', 0)
+    antenna_height_m = _whole_meters(metadata, "antenna_height_m")
+    lowest_level_m = _whole_meters(metadata, "lowest_level_offset_m")
+    if lowest_level_m <= 0:
+        raise ValueError(
+            f"lowest_level_offset_m must be above the antenna, got {lowest_level_m}"
+        )
     df = df.copy()
     df['height'] = df['height'] - antenna_height_m
 
-    # Drop levels below antenna (negative heights)
-    # Legacy: if ($Height < $alintaso) { $Height = 0; } but actually skips them
+    # Drop levels at or below the antenna (non-positive heights)
     df = df[df['height'] > 0].copy()
     if df.empty:
-        raise ValueError("VVP profile has no levels above the antenna")
+        raise NoUsableProfileError("VVP profile has no levels above the antenna")
 
     # Convert DataFrame to xarray using height as the index/coordinate
-    ds = _fill_missing_levels(df.set_index("height").to_xarray(), antenna_height_m)
+    ds = _fill_missing_levels(
+        df.set_index("height").to_xarray(), antenna_height_m, lowest_level_m
+    )
 
     # Rename 'count' to 'sample_count' for consistency with processing modules
     if 'count' in ds:
@@ -319,8 +359,9 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
             else:
                 # Convert from ASL to above-antenna (same as height coordinate)
                 # If result is ≤0, freezing level is at/below antenna → no melting visible
-                fl_above_antenna = fl - antenna_height_m
-                metadata_copy['freezing_level_m'] = max(0, fl_above_antenna)
+                metadata_copy["freezing_level_m"] = (
+                    fl - antenna_height_m if float(fl) > antenna_height_m else 0
+                )
 
     attrs.update(metadata_copy)
 
@@ -347,7 +388,8 @@ def read_vvp(filepath: Path | str,
 
                        Common fields:
                        - antenna_height_m: Antenna elevation above sea level (meters)
-                       - lowest_level_offset_m: Offset from nearest profile level
+                       - lowest_level_offset_m: Lowest profile level above the
+                         antenna (meters); override together with antenna_height_m
                        - beamwidth_deg: One-way half-power beamwidth (degrees)
                        - freezing_level_m: Freezing level in meters ASL (from NWP)
                          * None: Unknown (not yet retrieved from NWP data)
@@ -356,13 +398,17 @@ def read_vvp(filepath: Path | str,
 
     Returns:
         xarray.Dataset with profile data and metadata. Heights form a
-        contiguous 200 m grid between the lowest and highest levels above the
-        antenna; levels absent from the file are no-echo levels (MDS, zero
-        sample counts) listed in ``attrs['missing_levels_m']``.
+        contiguous 200 m grid from ``lowest_level_offset_m`` above the antenna
+        to the highest level in the file; levels absent from the file are
+        no-echo levels (MDS, zero sample counts) listed in
+        ``attrs['missing_levels_m']``.
 
     Raises:
+        NoUsableProfileError: If the file is a header-only product or has no
+            levels at or above the lowest profile level.
         ValueError: If the header radar name is not configured as a radar
-            ``name`` or ``aliases`` entry, or the profile is invalid.
+            ``name`` or ``aliases`` entry, the radar geometry is incomplete or
+            does not match the file, or the profile is invalid.
 
     Environment Variables:
         VPRC_RADAR_CONFIG: Path to custom radar configuration TOML file.

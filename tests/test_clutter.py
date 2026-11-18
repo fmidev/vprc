@@ -85,11 +85,23 @@ def test_clutter_outside_protected_freezing_interval(freezing_level):
     assert float(remove_ground_clutter(ds).corrected_dbz[0]) == 21
 
 
-def test_missing_upper_gradient_removes_lower_echo_and_clears_clutter():
+def test_missing_upper_gradient_removes_echo_above_lowest_level():
+    """Perl's cleanup checks levels 2-4 and never clears the lowest level.
+
+    The lowest level keeps its clutter extrapolation (20 + 2 dB), as in
+    allprof_prodx2.pl, and the clutter flag is cleared.
+    """
     ds = make_profile([40, 35, 20, MDS, MDS], zcount=[1000, 1000, 1000, 0, 0])
     result = remove_ground_clutter(ds)
-    np.testing.assert_equal(result.corrected_dbz.values, [MDS] * 5)
+    np.testing.assert_equal(result.corrected_dbz.values, [22, MDS, MDS, MDS, MDS])
     assert result.attrs["clutter_detected"] is False
+
+
+def test_low_zcount_second_level_keeps_lowest_level():
+    """Regression: clearing the lowest level detached the layer from the ground."""
+    ds = make_profile([30, 31, 32, 33, 34], zcount=[1000, 20, 1000, 1000, 1000])
+    result = remove_ground_clutter(ds)
+    np.testing.assert_equal(result.corrected_dbz.values, [30, MDS, 32, 33, 34])
 
 
 def test_empty_profile_is_supported():
@@ -101,12 +113,13 @@ def test_level_missing_from_vvp_file_does_not_break_clutter_removal():
     """Regression: an absent 500 m ASL KES level raised ``KeyError: 326``.
 
     The 526 m level triggers the three-level correction, which also writes
-    326 m. As in allprof_prodx2.pl, the absent level has no gradient, so the
-    levels up to it are removed and the clutter flag is cleared.
+    126 and 326 m. As in allprof_prodx2.pl, the absent 326 m level has no
+    gradient, so it is removed and the clutter flag is cleared; the lowest
+    level keeps its extrapolated value.
     """
     ds = read_vvp(GAPPED_VVP_FILE, {"freezing_level_m": 126})
     result = remove_ground_clutter(ds)
-    np.testing.assert_allclose(result.corrected_dbz[:4], [MDS, MDS, -23.6, -24.6])
+    np.testing.assert_allclose(result.corrected_dbz[:4], [-21.6, MDS, -23.6, -24.6])
     assert result.attrs["smoothing_start_height_m"] == 726
     assert result.attrs["clutter_detected"] is False
 

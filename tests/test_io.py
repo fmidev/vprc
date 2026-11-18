@@ -25,11 +25,14 @@ from vprc.io import (
 )
 from vprc.config import list_radar_codes, resolve_radar_code
 from vprc.constants import MDS
+from vprc.exceptions import NoUsableProfileError
 
 # Test data path
 TEST_DATA_DIR = Path(__file__).parent / "data"
 SAMPLE_VVP_FILE = TEST_DATA_DIR / "202508241100_KAN.VVP_40.txt"
 KOR_VVP_FILE = TEST_DATA_DIR / "202308281000_KOR.VVP_40.txt"
+# Kankaanpää 2025-08-24 11 UTC without its lowest (300 m ASL) level.
+NO_LOWEST_VVP_FILE = TEST_DATA_DIR / "variant_KAN_no_lowest_level.VVP_40.txt"
 # Operational KESALAHTI profile that lacks the 500, 1300 and 1700 m ASL levels.
 GAPPED_VVP_FILE = TEST_DATA_DIR / "202611112000_KES.VVP_40.txt"
 
@@ -157,13 +160,33 @@ class TestParseVVPFile:
         with pytest.raises(FileNotFoundError):
             _parse_vvp_file(nonexistent)
 
-    def test_parse_file_too_short(self, tmp_path: Path):
-        """Test that file with too few lines raises ValueError."""
-        short_file = tmp_path / "short.txt"
-        short_file.write_text("RADAR VVP_40 PPI1_A 2025 08 24 11 00\n\n")
+    @pytest.mark.parametrize(
+        "body",
+        ["", "\n", "\nHeight Count ZCnt ...\n", "\nHeight Count ZCnt ...\n\n  \n"],
+    )
+    def test_header_only_file_has_no_usable_profile(self, tmp_path: Path, body):
+        path = tmp_path / "header_only.txt"
+        path.write_text(
+            "KANKAANPAA VVP_40 PPI1_A 2025 08 24 11 00 ELEVS:  0.7 1.5 3.0\n" + body
+        )
+        with pytest.raises(NoUsableProfileError, match="no profile levels"):
+            _parse_vvp_file(path)
 
-        with pytest.raises(ValueError, match="File too short"):
-            _parse_vvp_file(short_file)
+    @pytest.mark.parametrize(
+        ("content", "message"),
+        [
+            ("", "Empty VVP file"),
+            ("RADAR VVP_40 PPI1_A 2025 08 24 11 00\n\n", "Invalid header"),
+        ],
+    )
+    def test_empty_or_headerless_file_is_invalid(
+        self, tmp_path: Path, content, message
+    ):
+        path = tmp_path / "invalid.txt"
+        path.write_text(content)
+        with pytest.raises(ValueError, match=message) as error:
+            _parse_vvp_file(path)
+        assert not isinstance(error.value, NoUsableProfileError)
 
 
 class TestVVPDataframeToXarray:
@@ -250,8 +273,8 @@ class TestVVPDataframeToXarray:
         """Test that xarray has correct metadata attributes."""
         header, df = sample_data
         radar_meta = {
-            'antenna_height_km': 0.174,
-            'lowest_level_offset_m': 126,
+            "antenna_height_m": 174,
+            "lowest_level_offset_m": 126,
         }
         ds = _vvp_dataframe_to_xarray(df, header, radar_meta, SAMPLE_VVP_FILE)
 
@@ -260,7 +283,7 @@ class TestVVPDataframeToXarray:
         assert ds.attrs['scan_type'] == 'PPI1_A'
         assert ds.attrs['timestamp'] == '2025-08-24T11:00:00'
         assert ds.attrs['elevation_angles'] == [0.7, 1.5, 3.0]
-        assert ds.attrs['antenna_height_km'] == 0.174
+        assert ds.attrs["antenna_height_m"] == 174
         assert ds.attrs['lowest_level_offset_m'] == 126
         assert 'source_file' in ds.attrs
 
@@ -303,13 +326,13 @@ class TestParseVVPToXarray:
         # KAN antenna height is 174m
         antenna_height = 174
         radar_meta = {
-            'antenna_height_km': 0.174,
-            'lowest_level_offset_m': 126,
-            'freezing_level_m': 2000,  # ASL
+            "antenna_height_m": antenna_height,
+            "lowest_level_offset_m": 126,
+            "freezing_level_m": 2000,  # ASL
         }
         ds = read_vvp(SAMPLE_VVP_FILE, radar_meta)
 
-        assert ds.attrs['antenna_height_km'] == 0.174
+        assert ds.attrs["antenna_height_m"] == antenna_height
         # freezing_level converted from ASL (2000) to above-antenna (2000 - 174)
         assert ds.attrs['freezing_level_m'] == 2000 - antenna_height
 
@@ -333,10 +356,17 @@ class TestParseVVPToXarray:
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
-    def test_no_levels_above_antenna_raises(self):
+    def test_no_levels_above_antenna_has_no_usable_profile(self):
         header, df = _parse_vvp_file(SAMPLE_VVP_FILE)
-        with pytest.raises(ValueError, match="no levels above"):
-            _vvp_dataframe_to_xarray(df.iloc[:0], header)
+        with pytest.raises(NoUsableProfileError, match="no levels above"):
+            _vvp_dataframe_to_xarray(df[df.height < 174], header)
+
+    def test_no_levels_from_lowest_level_has_no_usable_profile(self):
+        """Levels below the lowest profile level are unused, as in Perl."""
+        header, df = _parse_vvp_file(SAMPLE_VVP_FILE)
+        geometry = {"antenna_height_m": 174, "lowest_level_offset_m": 326}
+        with pytest.raises(NoUsableProfileError, match="at or above"):
+            _vvp_dataframe_to_xarray(df[df.height <= 300], header, geometry)
 
     @pytest.mark.parametrize("freezing_level", [float("nan"), float("inf"), "2000", True])
     def test_invalid_freezing_level_raises(self, freezing_level):
@@ -442,9 +472,9 @@ class TestRadarConfiguration:
         assert 'antenna_height_m' in config['KAN']
         assert 'lowest_level_offset_m' in config['KAN']
 
-        # Check structure of defaults section
-        assert 'antenna_height_m' in config['defaults']
-        assert 'lowest_level_offset_m' in config['defaults']
+        # Check structure of defaults section; geometry has no default
+        assert "antenna_height_m" not in config["defaults"]
+        assert "lowest_level_offset_m" not in config["defaults"]
         assert 'beamwidth_deg' in config['defaults']
 
         # Verify known values from Perl reference
@@ -458,23 +488,68 @@ class TestRadarConfiguration:
         assert meta['antenna_height_m'] == 174
         assert meta['lowest_level_offset_m'] == 126
 
-    def test_get_radar_metadata_unknown_radar(self):
-        """Test fallback to [defaults] for unknown radar code."""
-        meta = _get_radar_metadata('UNKNOWN')
+    def test_get_radar_metadata_unknown_radar_has_no_geometry(self):
+        """[defaults] does not provide geometry for unknown radar codes."""
+        with pytest.raises(
+            ValueError, match="UNKNOWN does not define antenna_height_m"
+        ):
+            _get_radar_metadata("UNKNOWN")
 
-        # Should get [defaults] values
-        assert meta['antenna_height_m'] == 198
-        assert meta['lowest_level_offset_m'] == 102
+    def test_unknown_radar_with_full_geometry_override(self):
+        meta = _get_radar_metadata(
+            "UNKNOWN", {"antenna_height_m": 100, "lowest_level_offset_m": 200}
+        )
+        assert (meta["antenna_height_m"], meta["lowest_level_offset_m"]) == (100, 200)
         assert meta['beamwidth_deg'] == 0.95
 
     def test_get_radar_metadata_with_override(self):
         """Test that override metadata takes precedence."""
-        meta = _get_radar_metadata('KAN', {'antenna_height_m': 999})
-
-        # Overridden field
+        meta = _get_radar_metadata(
+            "KAN", {"antenna_height_m": 999, "lowest_level_offset_m": 1}
+        )
         assert meta['antenna_height_m'] == 999
-        # Original field from TOML
-        assert meta['lowest_level_offset_m'] == 126
+        assert meta["lowest_level_offset_m"] == 1
+
+    @pytest.mark.parametrize("key", ["antenna_height_m", "lowest_level_offset_m"])
+    def test_geometry_must_be_overridden_together(self, key):
+        with pytest.raises(ValueError, match=f"overridden together; only {key}"):
+            _get_radar_metadata("KAN", {key: 200})
+
+    @pytest.mark.parametrize("missing", ["antenna_height_m", "lowest_level_offset_m"])
+    def test_radar_section_must_define_geometry(
+        self, tmp_path, monkeypatch, caplog, missing
+    ):
+        """Radar sections never take geometry from [defaults]."""
+        geometry = {"antenna_height_m": 174, "lowest_level_offset_m": 126}
+        del geometry[missing]
+        config = tmp_path / "partial.toml"
+        config.write_text(
+            "[defaults]\nantenna_height_m = 198\nlowest_level_offset_m = 102\n"
+            '[KAN]\nname = "KANKAANPAA"\n'
+            + "".join(f"{key} = {value}\n" for key, value in geometry.items())
+        )
+        monkeypatch.setenv("VPRC_RADAR_CONFIG", str(config))
+        _load_radar_defaults.cache_clear()
+        _build_radar_name_to_code_map.cache_clear()
+        try:
+            with pytest.raises(ValueError, match=f"KAN does not define {missing}"):
+                read_vvp(SAMPLE_VVP_FILE)
+            assert (
+                "Ignoring antenna_height_m, lowest_level_offset_m in [defaults]"
+                in caplog.text
+            )
+        finally:
+            monkeypatch.delenv("VPRC_RADAR_CONFIG")
+            _load_radar_defaults.cache_clear()
+            _build_radar_name_to_code_map.cache_clear()
+
+    @pytest.mark.parametrize("value", [174.5, float("nan"), "174", True])
+    def test_geometry_must_be_whole_meters(self, value):
+        with pytest.raises(ValueError, match="antenna_height_m must be whole meters"):
+            read_vvp(
+                SAMPLE_VVP_FILE,
+                {"antenna_height_m": value, "lowest_level_offset_m": 126},
+            )
 
     def test_get_radar_metadata_with_additional_fields(self):
         """Test adding additional fields via override."""
@@ -588,13 +663,22 @@ antenna_height_m = 181
         if not SAMPLE_VVP_FILE.exists():
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
 
-        # Override antenna_height to 200m, freezing_level to 2500m ASL
-        ds = read_vvp(SAMPLE_VVP_FILE, {'antenna_height_m': 200, 'freezing_level_m': 2500})
+        # Override the geometry (as a pair) and the freezing level (m ASL)
+        ds = read_vvp(
+            SAMPLE_VVP_FILE,
+            {
+                "antenna_height_m": 200,
+                "lowest_level_offset_m": 100,
+                "freezing_level_m": 2500,
+            },
+        )
 
-        # Overridden value
+        # Overridden values
         assert ds.attrs['antenna_height_m'] == 200
-        # TOML default
-        assert ds.attrs['lowest_level_offset_m'] == 126
+        assert ds.attrs["lowest_level_offset_m"] == 100
+        assert int(ds.height[0]) == 100
+        # TOML value for a field not overridden
+        assert ds.attrs["latitude"] == pytest.approx(61.81085)
         # freezing_level converted from ASL (2500) to above-antenna (2500 - 200 = 2300)
         assert ds.attrs['freezing_level_m'] == 2300
 
@@ -642,8 +726,10 @@ lowest_level_offset_m = 50
         custom_config = tmp_path / "test_radars.toml"
         custom_config.write_text("""
 [KAN]
+name = "KANKAANPAA"
 antenna_height_m = 500
 lowest_level_offset_m = 400
+beamwidth_deg = 1.2
 custom_field = 123
 """)
 
@@ -651,15 +737,24 @@ custom_field = 123
         try:
             os.environ['VPRC_RADAR_CONFIG'] = str(custom_config)
             _load_radar_defaults.cache_clear()
+            _build_radar_name_to_code_map.cache_clear()
 
             # Load with function override
-            ds = read_vvp(SAMPLE_VVP_FILE, {'antenna_height_m': 300})
+            ds = read_vvp(
+                SAMPLE_VVP_FILE,
+                {
+                    "antenna_height_m": 300,
+                    "lowest_level_offset_m": 200,
+                    "custom_field": 7,
+                },
+            )
 
-            # Function parameter wins
+            # Function parameters win
             assert ds.attrs['antenna_height_m'] == 300
-            # Custom TOML provides these
-            assert ds.attrs['lowest_level_offset_m'] == 400
-            assert ds.attrs['custom_field'] == 123
+            assert ds.attrs["lowest_level_offset_m"] == 200
+            assert ds.attrs["custom_field"] == 7
+            # Custom TOML provides this
+            assert ds.attrs["beamwidth_deg"] == 1.2
 
         finally:
             if old_env is not None:
@@ -667,6 +762,7 @@ custom_field = 123
             else:
                 os.environ.pop('VPRC_RADAR_CONFIG', None)
             _load_radar_defaults.cache_clear()
+            _build_radar_name_to_code_map.cache_clear()
 
 
 class TestRadarNameMapping:
@@ -923,5 +1019,21 @@ class TestMissingLevels:
             + "\n".join(f"{h}{row}" for h in (300, 600, 700))
             + "\n"
         )
-        with pytest.raises(ValueError, match="regular 200 m grid"):
+        with pytest.raises(ValueError, match="not on the 200 m grid"):
             read_vvp(path)
+
+    def test_missing_lowest_level_keeps_configured_lowest_level(self):
+        """Regression: the first level present in the file became 'ground'."""
+        ds = read_vvp(NO_LOWEST_VVP_FILE)
+        assert ds.attrs["lowest_level_offset_m"] == 126
+        assert int(ds.height[0]) == 126
+        assert ds.attrs["missing_levels_m"] == [126]
+        assert int(ds.zcount.sel(height=126)) == 0
+        assert float(ds.lin_dbz.sel(height=126)) == MDS
+
+    def test_geometry_inconsistent_with_file_raises(self):
+        with pytest.raises(ValueError, match="check antenna_height_m and lowest_level"):
+            read_vvp(
+                SAMPLE_VVP_FILE,
+                {"antenna_height_m": 174, "lowest_level_offset_m": 100},
+            )

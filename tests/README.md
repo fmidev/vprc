@@ -23,7 +23,9 @@ tests/
     ├── 202511071400_VIH.VVP_40.txt      # Sample VVP (Vihti)
     ├── 202511071400_VIH.VVP_40.profile  # Legacy profile output
     ├── 202611112000_KES.VVP_40.txt      # VVP lacking 500/1300/1700 m ASL
-    └── 202611112000_KES.VVP_40.profile  # Legacy profile output
+    ├── 202611112000_KES.VVP_40.profile  # Legacy profile output
+    ├── variant_KAN_level2_low_zcnt.VVP_40.*  # 2025 KAN, ZCnt 20 at 500 m ASL
+    └── variant_KAN_no_lowest_level.VVP_40.*  # 2025 KAN without 300 m ASL
 ```
 
 ## Running Tests
@@ -87,6 +89,13 @@ Test data files in `tests/data/`:
 
 - `202508241100_KAN.VVP_40.txt` – Kankaanpää radar, 2025-08-24 11:00 UTC
 - `202511071400_VIH.VVP_40.txt` – Vihti radar, 2025-11-07 14:00 UTC
+- `202611112000_KES.VVP_40.txt` – Kesälahti radar, 2026-11-11 20:00 UTC; the
+  file lacks the 500, 1300 and 1700 m ASL levels
+- `variant_KAN_*.VVP_40.txt` – the Kankaanpää input with one change each:
+  ZCnt 20 at 500 m ASL (`level2_low_zcnt`) or the 300 m ASL row removed
+  (`no_lowest_level`). Their `.profile` and `.cor` references were produced by
+  running the unmodified `allprof_prodx2.pl` and `pystycappi.pl` on them
+  without a HIRLAM freezing level.
 
 ### Legacy Reference Outputs
 

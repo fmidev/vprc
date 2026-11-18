@@ -4,10 +4,17 @@ This module provides functions to look up radar metadata from the
 radar_defaults.toml configuration file.
 """
 
+import logging
 import os
 import tomllib
 from functools import lru_cache
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# Profile geometry must come from one source: a radar section or an override.
+# Mixing an antenna height with another source's offset misplaces every level.
+GEOMETRY_KEYS = ("antenna_height_m", "lowest_level_offset_m")
 
 
 def _radar_config_path() -> Path:
@@ -36,7 +43,16 @@ def _load_radar_defaults() -> dict:
         )
 
     with open(config_file, "rb") as f:
-        return tomllib.load(f)
+        config = tomllib.load(f)
+    ignored = [key for key in GEOMETRY_KEYS if key in config.get("defaults", {})]
+    if ignored:
+        logger.warning(
+            "Ignoring %s in [defaults] of %s; radar geometry must be defined "
+            "in each radar section",
+            ", ".join(ignored),
+            config_file,
+        )
+    return config
 
 
 def get_radar_metadata(code: str) -> dict | None:
@@ -93,10 +109,11 @@ def get_network_config() -> dict:
 def get_defaults() -> dict:
     """Get default values for radar parameters.
 
-    These are used when a radar-specific value is not specified.
+    These are used when a radar-specific value is not specified. Radar
+    geometry (antenna height and lowest level offset) has no default.
 
     Returns:
-        Dict with keys: antenna_height_m, lowest_level_offset_m, beamwidth_deg, max_range_km
+        Dict with keys such as beamwidth_deg, horizon_angle_deg, max_range_km
     """
     config = _load_radar_defaults()
     return config.get("defaults", {})
@@ -218,7 +235,10 @@ def _get_radar_metadata(radar_code: str,
     Precedence (highest to lowest):
     1. Values provided in override_metadata parameter
     2. Values from radar-specific section in TOML
-    3. Values from [defaults] section in TOML (used as fallback for unknown radars)
+    3. Values from [defaults] section in TOML, except radar geometry
+
+    ``antenna_height_m`` and ``lowest_level_offset_m`` must both come from
+    the radar section or both from override_metadata.
 
     Args:
         radar_code: Three-letter radar station code (e.g., 'KAN', 'VAN')
@@ -227,6 +247,10 @@ def _get_radar_metadata(radar_code: str,
     Returns:
         Dictionary with antenna_height_m, lowest_level_offset_m, beamwidth_deg,
         and any additional fields from override_metadata (e.g., freezing_level_m)
+
+    Raises:
+        ValueError: If only one geometry value is overridden, or the radar
+            section does not define both and they are not overridden.
 
     Example:
         >>> meta = _get_radar_metadata('KAN', {'freezing_level_m': 2000})
@@ -237,14 +261,24 @@ def _get_radar_metadata(radar_code: str,
         >>> meta['beamwidth_deg']  # From [defaults] section
         0.95
     """
-    # Load defaults from TOML
     radar_defaults = _load_radar_defaults()
+    overrides = override_metadata or {}
+    overridden = [key for key in GEOMETRY_KEYS if key in overrides]
+    if len(overridden) == 1:
+        raise ValueError(
+            "antenna_height_m and lowest_level_offset_m must be overridden "
+            f"together; only {overridden[0]} was given"
+        )
 
-    # Start with shared defaults (also serves as fallback for unknown radars)
-    metadata = dict(radar_defaults.get('defaults', {}))
+    # Shared defaults never provide geometry.
+    metadata = {
+        key: value
+        for key, value in radar_defaults.get("defaults", {}).items()
+        if key not in GEOMETRY_KEYS
+    }
 
     # Get radar-specific config if it exists
-    if radar_code in radar_defaults and radar_code != 'defaults':
+    if radar_code in radar_defaults and radar_code not in ("defaults", "network"):
         radar_config = radar_defaults[radar_code]
         # Update with radar-specific config (overrides defaults). Header
         # aliases are lookup configuration, not radar metadata.
@@ -252,8 +286,15 @@ def _get_radar_metadata(radar_code: str,
             {key: value for key, value in radar_config.items() if key != "aliases"}
         )
 
+    if not overridden:
+        missing = [key for key in GEOMETRY_KEYS if key not in metadata]
+        if missing:
+            raise ValueError(
+                f"Radar {radar_code} does not define {' and '.join(missing)} "
+                f"in {_radar_config_path()}"
+            )
+
     # Override with user-supplied values (highest priority)
-    if override_metadata:
-        metadata.update(override_metadata)
+    metadata.update(overrides)
 
     return metadata

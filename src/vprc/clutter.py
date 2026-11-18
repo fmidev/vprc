@@ -87,9 +87,14 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
     if third in heights and float(raw.sel(height=third)) <= MDS:
         working.loc[{"height": lowest}] = MDS
 
-    for offset in range(3):
+    # Perl runs this cleanup after its single-pass level loop, where $i is
+    # already $alintaso + 200: it checks gradients at levels 2-4 and clears
+    # from level 2 up, never the lowest level. Follow that rather than the
+    # comment's "levels 1-4": clearing the lowest level detaches a
+    # precipitation layer from the ground when only level 2 has low ZCnt.
+    for offset in range(1, 4):
         height = lowest + offset * STEP
         if height in heights and not np.isfinite(float(gradient.sel(height=height))):
-            working.loc[{"height": slice(lowest, height)}] = MDS
+            working.loc[{"height": slice(lowest + STEP, height)}] = MDS
             result.attrs["clutter_detected"] = False
     return result

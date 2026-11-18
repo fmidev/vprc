@@ -98,9 +98,16 @@ if classification.usable_for_vpr:
     )
 ```
 
+`read_vvp()` and `process_vvp()` raise `vprc.NoUsableProfileError`, a
+`ValueError` subclass, for valid files without a usable profile: header-only
+products and profiles with no levels at or above the radar's lowest profile
+level. Catch it to fall back to climatology without treating the file as a
+processing failure. Other exceptions mean invalid input or configuration.
+
 The composite creation command exits with an error for unreadable/corrupt inputs,
-missing radar coordinates, or processing failures. These failures must not be
-interpreted as valid no-precipitation products.
+files without a usable profile, missing radar coordinates, or processing
+failures. These failures must not be interpreted as valid no-precipitation
+products.
 
 ## Airflow Integration
 

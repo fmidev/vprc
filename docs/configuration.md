@@ -8,8 +8,6 @@ The `vprc` package uses TOML-based configuration for radar station metadata. All
 
 ```toml
 [defaults]  # Shared defaults for values a radar section omits
-antenna_height_m = 198
-lowest_level_offset_m = 102
 beamwidth_deg = 0.95
 horizon_angle_deg = 0.0
 
@@ -43,7 +41,16 @@ lowest_level_offset_m = 39
 **Required (per-radar):**
 - `name` (string): Full radar name for VVP header matching (case-insensitive)
 - `antenna_height_m` (int): Antenna elevation above sea level (meters)
-- `lowest_level_offset_m` (int): Offset from nearest profile level (meters)
+- `lowest_level_offset_m` (int): Height of the lowest profile level above the
+  antenna (meters), the legacy `$alintaso`. VVP levels are at 100, 300, 500, …
+  m ASL, so this is normally `(100 - antenna_height_m) mod 200`.
+
+The two geometry values have no default: a radar section missing either
+raises `ValueError` when its metadata is resolved, and geometry in
+`[defaults]` is ignored with a warning. Profiles always start at
+`lowest_level_offset_m`; a lowest level missing from the file becomes a no-echo
+level. Files whose levels are not on the 200 m grid through that level raise
+`ValueError`, which usually means the geometry is wrong.
 
 **Optional (per-radar):**
 - `aliases` (list of strings): Other VVP header names for the same radar, such
@@ -64,6 +71,7 @@ Values are resolved in this order (highest to lowest):
 1. **Function parameters** - `read_vvp(radar_metadata={...})`
 2. **Radar-specific TOML section** - e.g., `[KAN]`
 3. **Shared defaults** - `[defaults]` section in TOML, for values the radar section omits
+   (never `antenna_height_m` or `lowest_level_offset_m`)
 4. **Environment variable** - `VPRC_RADAR_CONFIG` points to custom TOML
 5. **Package default** - `src/vprc/radar_defaults.toml`
 
@@ -111,6 +119,12 @@ ds = read_vvp('202508241100_KAN.VVP_40.txt', {
 ds = read_vvp('202508241100_KAN.VVP_40.txt', {
     'beamwidth_deg': 1.0
 })
+
+# Geometry overrides must come as a pair; overriding only one raises ValueError
+ds = read_vvp('202508241100_KAN.VVP_40.txt', {
+    'antenna_height_m': 174,
+    'lowest_level_offset_m': 126,
+})
 ```
 
 ### Custom Configuration File
@@ -127,9 +141,6 @@ Example custom TOML with radar-specific beamwidth:
 ```toml
 [defaults]
 beamwidth_deg = 0.95
-# Shared defaults for values a radar section omits
-antenna_height_m = 198
-lowest_level_offset_m = 102
 
 [KAN]
 name = "KANKAANPAA"

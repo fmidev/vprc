@@ -48,6 +48,7 @@ from .vpr_correction import (
 )
 from .temporal import average_corrections
 from .climatology import generate_climatological_profile, get_clim_ground_reference
+from .exceptions import NoUsableProfileError
 from .composite import (
     CompositeGrid,
     RadarCorrection,
@@ -224,6 +225,7 @@ def process_vvp(
 __all__ = [
     "process_vvp",
     "ProcessedProfile",
+    "NoUsableProfileError",
     "ProfileClassification",
     "LayerType",
     "PrecipitationType",

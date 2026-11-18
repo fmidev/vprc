@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from vprc import PrecipitationType, get_radar_metadata, process_vvp
-from vprc.constants import MDS
+from vprc.constants import MDS, MIN_SAMPLES
 
 from .legacy_parser import parse_legacy_profile
 
@@ -527,6 +527,46 @@ class TestVPRCorrectionComparison:
             )
 
 
+def _process_like_legacy(stem: str, radar_code: str):
+    """Process an input with the freezing level of its legacy reference."""
+    expected, _, footer = parse_legacy_profile(DATA_DIR / f"{stem}.profile")
+    radar = get_radar_metadata(radar_code)
+    assert radar is not None
+    result = process_vvp(
+        DATA_DIR / f"{stem}.txt",
+        freezing_level_m=footer.freezing_level + radar["antenna_height_m"],
+    )
+    return result, expected, footer
+
+
+def _assert_profile_matches_legacy(result, expected, footer, stem):
+    """Compare all reference levels and the lowest layer with the reference.
+
+    Select rather than reindex the Python result so that a dropped level
+    fails instead of matching MDS.
+    """
+    dataset = result.dataset.copy()
+    # allprof_prodx2.pl prints the raw value as $mds when ZCnt <= $kynnys.
+    dataset["lin_dbz"] = dataset.lin_dbz.where(dataset.zcount > MIN_SAMPLES, MDS)
+    heights = expected.height.where(expected.height <= dataset.height.max(), drop=True)
+    for variable in ("lin_dbz", "corrected_dbz", "zcount"):
+        np.testing.assert_allclose(
+            dataset[variable].sel(height=heights).values,
+            expected[variable].sel(height=heights).values,
+            rtol=0.01,
+            atol=0.1,
+            err_msg=f"{variable} does not match legacy output for {stem}",
+        )
+    layer = result.classification.lowest_layer
+    assert layer is not None
+    assert (layer.bottom_height, layer.top_height, layer.has_clutter) == (
+        footer.bottom_height,
+        footer.top_height,
+        bool(footer.ground_clutter),
+    )
+    assert result.classification.usable_for_vpr == (footer.precipitation > 0)
+
+
 @pytest.mark.parametrize(
     ("stem", "radar_code"),
     [
@@ -540,22 +580,61 @@ def test_levels_absent_from_input_match_legacy_profile(stem, radar_code):
     """Profiles with levels absent from the VVP file keep the legacy grid.
 
     Perl stores levels by height, so absent levels are output as no-echo
-    levels and may be filled by smoothing. Select rather than reindex the
-    Python result so that a dropped level fails instead of matching MDS.
+    levels and may be filled by smoothing.
     """
-    expected, _, footer = parse_legacy_profile(DATA_DIR / f"{stem}.profile")
-    antenna_height = get_radar_metadata(radar_code)["antenna_height_m"]
-    result = process_vvp(
-        DATA_DIR / f"{stem}.txt",
-        freezing_level_m=footer.freezing_level + antenna_height,
-    ).dataset
-    assert result.attrs["missing_levels_m"]
-    heights = expected.height.where(expected.height <= result.height.max(), drop=True)
-    for variable in ("lin_dbz", "corrected_dbz", "zcount"):
-        np.testing.assert_allclose(
-            result[variable].sel(height=heights).values,
-            expected[variable].sel(height=heights).values,
-            rtol=0.01,
-            atol=0.1,
-            err_msg=f"{variable} does not match legacy output for {stem}",
-        )
+    result, expected, footer = _process_like_legacy(stem, radar_code)
+    assert result.dataset.attrs["missing_levels_m"]
+    _assert_profile_matches_legacy(result, expected, footer, stem)
+
+
+# Kankaanpää 2025-08-24 11 UTC with one change each; references from running
+# allprof_prodx2.pl and pystycappi.pl without a HIRLAM freezing level.
+@pytest.mark.parametrize(
+    "stem",
+    [
+        # ZCnt 20 at 500 m ASL: the clutter cleanup must keep the lowest level.
+        "variant_KAN_level2_low_zcnt.VVP_40",
+        # 300 m ASL row removed: the profile still starts at 126 m.
+        "variant_KAN_no_lowest_level.VVP_40",
+    ],
+)
+def test_near_surface_variants_match_legacy_profile_and_corrections(stem):
+    """Lowest-layer classification drives the correction, as in the reference.
+
+    Unlike TestVPRCorrectionComparison, use Python's own classification
+    rather than the reference's.
+    """
+    from vprc.vpr_correction import compute_vpr_correction
+
+    from .legacy_parser import parse_legacy_cor
+
+    result, expected, footer = _process_like_legacy(stem, "KAN")
+    _assert_profile_matches_legacy(result, expected, footer, stem)
+
+    legacy_cor, header = parse_legacy_cor(DATA_DIR / f"{stem}.cor")
+    layer = result.classification.lowest_layer
+    corrections = compute_vpr_correction(
+        result.dataset,
+        freezing_level_m=header.freezing_level_m,
+        max_range_km=int(legacy_cor.range_km.max()),
+        min_elevation_deg=header.elevation_angles[0],
+        elevation_angles_deg=tuple(header.elevation_angles),
+        is_precipitation=result.classification.usable_for_vpr,
+        layer_top_height_m=layer.top_height,
+        horizon_angle_deg=0,
+        bb_result=result.bright_band,
+    ).corrections
+    products = [("cappi_clim_correction_db", "correction_klim_db")]
+    if header.precip_code > 0:
+        products.append(("cappi_correction_db", "correction_rain_db"))
+    for python_variable, legacy_variable in products:
+        for cappi_height in (500, 1000):
+            np.testing.assert_allclose(
+                corrections[python_variable].sel(cappi_height=cappi_height),
+                legacy_cor[legacy_variable].sel(
+                    correction_type=f"cappi_{cappi_height}"
+                ),
+                rtol=0,
+                atol=0.1,
+                err_msg=f"{python_variable} at {cappi_height} m for {stem}",
+            )
