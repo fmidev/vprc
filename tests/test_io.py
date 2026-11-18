@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Tuple
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -22,12 +23,15 @@ from vprc.io import (
     _get_radar_metadata,
     read_vvp,
 )
-from vprc.config import list_radar_codes
-
+from vprc.config import list_radar_codes, resolve_radar_code
+from vprc.constants import MDS
 
 # Test data path
 TEST_DATA_DIR = Path(__file__).parent / "data"
 SAMPLE_VVP_FILE = TEST_DATA_DIR / "202508241100_KAN.VVP_40.txt"
+KOR_VVP_FILE = TEST_DATA_DIR / "202308281000_KOR.VVP_40.txt"
+# Operational KESALAHTI profile that lacks the 500, 1300 and 1700 m ASL levels.
+GAPPED_VVP_FILE = TEST_DATA_DIR / "202611112000_KES.VVP_40.txt"
 
 
 class TestParseVVPHeader:
@@ -691,11 +695,13 @@ class TestRadarNameMapping:
         assert name_map['VIMPELI'] == 'VIM'
         assert name_map['NURMES'] == 'NUR'
         assert name_map['VIHTI'] == 'VIH'
-        assert name_map['KOR'] == 'KOR'  # Korpo uses code as name
+        assert name_map["KORPPOO"] == "KOR"
+        assert name_map["KOR"] == "KOR"  # Alias: older headers, Perl match
         assert name_map['KERAVA'] == 'KER'
 
-        # Check count (15 radars, excluding 'other')
-        assert len(name_map) == 15
+        # 15 radars, excluding 'other'; Korppoo has one alias
+        assert len(set(name_map.values())) == 15
+        assert len(name_map) == 16
 
     def test_build_radar_name_to_code_map_excludes_other(self):
         """Test that 'other' section is not included in name mapping."""
@@ -773,7 +779,7 @@ lowest_level_offset_m = 100
 
         # 'other' doesn't have a 'name' field and should not be in mapping
         # (checked implicitly - if it was there, it would fail with KeyError)
-        assert len(name_map) == 15  # Only the 15 named radars
+        assert len(set(name_map.values())) == 15  # Only the 15 named radars
 
     def test_toml_name_matches_perl_reference(self):
         """Test that TOML names exactly match Perl reference implementation."""
@@ -802,3 +808,120 @@ lowest_level_offset_m = 100
             assert name in name_map, f"Missing radar name: {name}"
             assert name_map[name] == expected_code, \
                 f"Wrong code for {name}: expected {expected_code}, got {name_map[name]}"
+
+    # Header names of the operational radars, verified against VVP files
+    # in November 2026.
+    @pytest.mark.parametrize(
+        ("header_name", "code"),
+        [
+            ("ANJALANKOSKI", "ANJ"),
+            ("KANKAANPAA", "KAN"),
+            ("KAUNISPAA", "KAU"),
+            ("KESALAHTI", "KES"),
+            ("KORPPOO", "KOR"),
+            ("KUOPIO", "KUO"),
+            ("LUOSTO", "LUO"),
+            ("NURMES", "NUR"),
+            ("PETAJAVESI", "PET"),
+            ("UTAJARVI", "UTA"),
+            ("VIHTI", "VIH"),
+            ("VIMPELI", "VIM"),
+        ],
+    )
+    def test_operational_header_names_resolve(self, header_name, code):
+        assert resolve_radar_code(header_name) == code
+
+    def test_korppoo_header_uses_kor_metadata(self, tmp_path):
+        """Regression: KORPPOO headers fell back to [defaults] (antenna 198 m)."""
+        lines = KOR_VVP_FILE.read_text().splitlines()
+        lines[0] = "KORPPOO VVP_40 PPI1_A 2026 11 01 22 00 ELEVS:  0.7 1.5 3.0"
+        path = tmp_path / "202611012200_KOR.VVP_40.txt"
+        path.write_text("\n".join(lines) + "\n")
+
+        ds = read_vvp(path)
+
+        assert ds.attrs["radar"] == "KORPPOO"
+        assert ds.attrs["radar_code"] == "KOR"
+        assert ds.attrs["antenna_height_m"] == 61
+        assert ds.attrs["lowest_level_offset_m"] == 39
+        assert ds.attrs["latitude"] == pytest.approx(60.128469)
+        assert "aliases" not in ds.attrs
+        # The 100 m ASL level is kept at 100 - 61 m above the antenna.
+        assert int(ds.height[0]) == 39
+
+    def test_legacy_kor_header_still_resolves(self):
+        ds = read_vvp(KOR_VVP_FILE)
+        assert ds.attrs["radar"] == "KOR"
+        assert ds.attrs["radar_code"] == "KOR"
+        assert ds.attrs["antenna_height_m"] == 61
+
+    def test_unconfigured_header_name_raises(self, tmp_path):
+        lines = SAMPLE_VVP_FILE.read_text().splitlines()
+        lines[0] = lines[0].replace("KANKAANPAA", "NEWRADAR")
+        path = tmp_path / "unknown.txt"
+        path.write_text("\n".join(lines) + "\n")
+
+        with pytest.raises(ValueError, match="'NEWRADAR'.*not configured"):
+            read_vvp(path)
+
+    def test_header_name_claimed_by_two_radars_raises(self, tmp_path, monkeypatch):
+        config = tmp_path / "duplicate.toml"
+        config.write_text(
+            '[AAA]\nname = "FIRST"\naliases = ["SHARED"]\n[BBB]\nname = "SHARED"\n'
+        )
+        monkeypatch.setenv("VPRC_RADAR_CONFIG", str(config))
+        _load_radar_defaults.cache_clear()
+        _build_radar_name_to_code_map.cache_clear()
+        try:
+            with pytest.raises(ValueError, match="'SHARED'.*AAA and BBB"):
+                _build_radar_name_to_code_map()
+        finally:
+            monkeypatch.delenv("VPRC_RADAR_CONFIG")
+            _load_radar_defaults.cache_clear()
+            _build_radar_name_to_code_map.cache_clear()
+
+
+class TestMissingLevels:
+    """Levels absent from a VVP file are filled onto a contiguous grid."""
+
+    MISSING_ASL = (500, 1300, 1700)
+
+    def test_absent_levels_are_filled_as_no_echo(self):
+        _, df = _parse_vvp_file(GAPPED_VVP_FILE)
+        ds = read_vvp(GAPPED_VVP_FILE)
+        antenna = ds.attrs["antenna_height_m"]
+        missing = [height - antenna for height in self.MISSING_ASL]
+
+        np.testing.assert_array_equal(np.diff(ds.height), 200)
+        assert int(ds.height[0]) == 300 - antenna
+        assert int(ds.height[-1]) == 5100 - antenna
+        assert ds.attrs["missing_levels_m"] == missing
+
+        gap = ds.sel(height=missing)
+        np.testing.assert_array_equal(gap.zcount, 0)
+        np.testing.assert_array_equal(gap.sample_count, 0)
+        for variable in ("lin_dbz", "log_dbz", "corrected_dbz"):
+            np.testing.assert_array_equal(gap[variable], MDS)
+        assert gap.wind_speed.isnull().all()
+        assert np.issubdtype(ds.zcount.dtype, np.integer)
+
+        observed = df[df.height > antenna]
+        measured = ds.sel(height=observed.height.values - antenna)
+        np.testing.assert_array_equal(measured.lin_dbz, observed.lin_dbz)
+        np.testing.assert_array_equal(measured.zcount, observed.zcount)
+
+    def test_complete_profile_has_no_missing_levels(self):
+        ds = read_vvp(SAMPLE_VVP_FILE)
+        assert ds.attrs["missing_levels_m"] == []
+
+    def test_heights_off_the_profile_grid_raise(self, tmp_path):
+        path = tmp_path / "off_grid.txt"
+        row = " 30 1000 0 0 0 0 0 0 10 0 0 0 0 0 0 0 0 0"
+        path.write_text(
+            "KANKAANPAA VVP_40 PPI1_A 2025 08 24 11 00 ELEVS: 0.7\n\n"
+            "Height Count ZCnt ...\n"
+            + "\n".join(f"{h}{row}" for h in (300, 600, 700))
+            + "\n"
+        )
+        with pytest.raises(ValueError, match="regular 200 m grid"):
+            read_vvp(path)

@@ -1,11 +1,16 @@
 """Numerical regressions for the ground-clutter stage."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import xarray as xr
 
 from vprc.clutter import compute_gradient, remove_ground_clutter
 from vprc.constants import MDS
+from vprc.io import read_vvp
+
+GAPPED_VVP_FILE = Path(__file__).parent / "data" / "202611112000_KES.VVP_40.txt"
 
 
 def make_profile(values, *, zcount=None, count=None, freezing_level=2000):
@@ -90,3 +95,23 @@ def test_missing_upper_gradient_removes_lower_echo_and_clears_clutter():
 def test_empty_profile_is_supported():
     ds = make_profile([])
     xr.testing.assert_identical(remove_ground_clutter(ds), ds)
+
+
+def test_level_missing_from_vvp_file_does_not_break_clutter_removal():
+    """Regression: an absent 500 m ASL KES level raised ``KeyError: 326``.
+
+    The 526 m level triggers the three-level correction, which also writes
+    326 m. As in allprof_prodx2.pl, the absent level has no gradient, so the
+    levels up to it are removed and the clutter flag is cleared.
+    """
+    ds = read_vvp(GAPPED_VVP_FILE, {"freezing_level_m": 126})
+    result = remove_ground_clutter(ds)
+    np.testing.assert_allclose(result.corrected_dbz[:4], [MDS, MDS, -23.6, -24.6])
+    assert result.attrs["smoothing_start_height_m"] == 726
+    assert result.attrs["clutter_detected"] is False
+
+
+def test_non_contiguous_heights_raise_value_error():
+    ds = make_profile([30, MDS, 35, 20]).drop_sel(height=300)
+    with pytest.raises(ValueError, match="contiguous 200 m"):
+        remove_ground_clutter(ds)

@@ -1,5 +1,6 @@
 """Parser for IRIS VVP (Velocity Volume Processing) prodx files."""
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from numbers import Real
@@ -13,9 +14,59 @@ import xarray as xr
 from ..config import (
     _load_radar_defaults,
     _build_radar_name_to_code_map,
-    _radar_name_to_code,
     _get_radar_metadata,
+    resolve_radar_code,
 )
+from ..constants import MDS, STEP
+
+logger = logging.getLogger(__name__)
+
+# Values for profile levels absent from the VVP file. allprof_prodx2.pl stores
+# levels in a height-indexed array, so a skipped level is undefined: its ZCnt
+# fails every sample threshold and it is written out as MDS with zero samples.
+_MISSING_LEVEL_FILL: dict[str, float] = {
+    "count": 0,
+    "zcount": 0,
+    "lin_dbz": MDS,
+    "log_dbz": MDS,
+}
+
+
+def _fill_missing_levels(ds: xr.Dataset, antenna_height_m: float) -> xr.Dataset:
+    """Reindex a profile onto a complete ``STEP`` grid between its end levels.
+
+    Processing stages index neighbouring levels as ``height ± STEP``, as the
+    legacy height-indexed arrays did. Missing levels become no-echo levels
+    with zero samples; other variables are NaN. Their heights above antenna
+    are listed in the ``missing_levels_m`` attribute, because the legacy
+    post-bright-band clutter correction treats absent levels differently from
+    measured no-echo levels.
+
+    Raises:
+        ValueError: If the heights are not on a common ``STEP`` grid.
+    """
+    heights = ds["height"].values
+    lowest = int(heights[0])
+    if np.any((heights - lowest) % STEP):
+        raise ValueError(
+            f"VVP profile heights are not on a regular {STEP} m grid: "
+            f"{heights.tolist()}"
+        )
+    grid = np.arange(lowest, int(heights[-1]) + 1, STEP)
+    missing = np.setdiff1d(grid, heights)
+    if len(missing):
+        logger.info(
+            "VVP profile is missing %d level(s) at %s m ASL; treating them as "
+            "no-echo levels with zero samples",
+            len(missing),
+            (missing + antenna_height_m).tolist(),
+        )
+        fill = {
+            name: _MISSING_LEVEL_FILL.get(str(name), np.nan) for name in ds.data_vars
+        }
+        ds = ds.reindex(height=grid, fill_value=fill)
+    ds.attrs["missing_levels_m"] = [int(height) for height in missing]
+    return ds
 
 
 @dataclass
@@ -206,10 +257,9 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
         For multi-profile processing (multiple scans), you'd extend this
         to have dimensions (height, profile_idx).
     """
-    # Resolve metadata with proper precedence
-    # Extract radar code from header using TOML-based mapping
-    radar_name = header.radar.upper()
-    radar_code = _radar_name_to_code(radar_name)
+    # Resolve metadata with proper precedence. An unconfigured header name is
+    # an error: [defaults] would silently shift every level of the profile.
+    radar_code = resolve_radar_code(header.radar)
 
     # Get merged metadata (TOML defaults + overrides)
     metadata = _get_radar_metadata(radar_code, radar_metadata)
@@ -228,7 +278,7 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
         raise ValueError("VVP profile has no levels above the antenna")
 
     # Convert DataFrame to xarray using height as the index/coordinate
-    ds = df.set_index('height').to_xarray()
+    ds = _fill_missing_levels(df.set_index("height").to_xarray(), antenna_height_m)
 
     # Rename 'count' to 'sample_count' for consistency with processing modules
     if 'count' in ds:
@@ -292,7 +342,7 @@ def read_vvp(filepath: Path | str,
                        Configuration precedence (highest to lowest):
                        1. Values in this parameter
                        2. Values from radar-specific TOML section
-                       3. Values from [defaults] TOML section (fallback)
+                       3. Values from [defaults] TOML section
                        4. Package default radar_defaults.toml
 
                        Common fields:
@@ -305,7 +355,14 @@ def read_vvp(filepath: Path | str,
                          * Positive: Valid freezing level (converted to above-antenna internally)
 
     Returns:
-        xarray.Dataset with profile data and metadata
+        xarray.Dataset with profile data and metadata. Heights form a
+        contiguous 200 m grid between the lowest and highest levels above the
+        antenna; levels absent from the file are no-echo levels (MDS, zero
+        sample counts) listed in ``attrs['missing_levels_m']``.
+
+    Raises:
+        ValueError: If the header radar name is not configured as a radar
+            ``name`` or ``aliases`` entry, or the profile is invalid.
 
     Environment Variables:
         VPRC_RADAR_CONFIG: Path to custom radar configuration TOML file.

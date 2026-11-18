@@ -3,6 +3,9 @@
 #
 # Each radar section contains:
 # - name: Full radar name as it appears in VVP file headers (for lookup)
+# - aliases: Other header names for the same radar, e.g. older IRIS site
+#   names [optional]. VVP files whose header name is neither a name nor an
+#   alias of any section are rejected rather than processed with [defaults].
 # - antenna_height_m: Antenna elevation above sea level (meters)
 # - lowest_level_offset_m: Offset from nearest profile level (meters)
 #   Profile levels are at 100, 300, 500, ... meters above antenna
@@ -20,7 +23,6 @@ default_grid_resolution_m = 1000
 
 [defaults]
 # Shared default values used when radar-specific value is not specified
-# Also serves as fallback for unknown/unrecognized radar codes
 antenna_height_m = 198
 lowest_level_offset_m = 102
 beamwidth_deg = 0.95
@@ -83,8 +85,9 @@ lowest_level_offset_m = 32
 latitude = 62.862598
 longitude = 27.381468
 
-[KOR]  # Korpo
-name = "KOR"
+[KOR]  # Korppoo
+name = "KORPPOO"
+aliases = ["KOR"]  # Older header name, also the allprof_prodx2.pl match
 antenna_height_m = 61
 lowest_level_offset_m = 39
 latitude = 60.128469

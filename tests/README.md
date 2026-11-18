@@ -21,7 +21,9 @@ tests/
     ├── 202508241100_KAN.VVP_40.profile  # Legacy profile output
     ├── 202508241100_KAN.VVP_40.cor      # Legacy correction output
     ├── 202511071400_VIH.VVP_40.txt      # Sample VVP (Vihti)
-    └── 202511071400_VIH.VVP_40.profile  # Legacy profile output
+    ├── 202511071400_VIH.VVP_40.profile  # Legacy profile output
+    ├── 202611112000_KES.VVP_40.txt      # VVP lacking 500/1300/1700 m ASL
+    └── 202611112000_KES.VVP_40.profile  # Legacy profile output
 ```
 
 ## Running Tests

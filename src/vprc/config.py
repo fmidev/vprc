@@ -10,6 +10,14 @@ from functools import lru_cache
 from pathlib import Path
 
 
+def _radar_config_path() -> Path:
+    """Return the selected radar configuration file path."""
+    config_path = os.environ.get("VPRC_RADAR_CONFIG")
+    if config_path:
+        return Path(config_path)
+    return Path(__file__).parent / "radar_defaults.toml"
+
+
 @lru_cache
 def _load_radar_defaults() -> dict:
     """Load radar defaults from TOML config.
@@ -21,17 +29,11 @@ def _load_radar_defaults() -> dict:
     Note:
         Results are cached. Only loaded once per process.
     """
-    # Check for user-specified config file
-    config_path = os.environ.get('VPRC_RADAR_CONFIG')
-
-    if config_path:
-        config_file = Path(config_path)
-        if not config_file.exists():
-            raise FileNotFoundError(
-                f"VPRC_RADAR_CONFIG points to non-existent file: {config_path}"
-            )
-    else:
-        config_file = Path(__file__).parent / "radar_defaults.toml"
+    config_file = _radar_config_path()
+    if os.environ.get("VPRC_RADAR_CONFIG") and not config_file.exists():
+        raise FileNotFoundError(
+            f"VPRC_RADAR_CONFIG points to non-existent file: {config_file}"
+        )
 
     with open(config_file, "rb") as f:
         return tomllib.load(f)
@@ -131,28 +133,40 @@ def list_radar_codes(enabled_only: bool = True) -> list[str]:
 
 @lru_cache(maxsize=1)
 def _build_radar_name_to_code_map() -> dict[str, str]:
-    """Build reverse mapping from full radar names to three-letter codes.
+    """Build reverse mapping from VVP header radar names to three-letter codes.
 
-    This mapping is derived from the TOML configuration file, avoiding
-    hardcoded name-to-code relationships in Python code.
+    Each radar section's ``name`` and optional ``aliases`` are mapped, so a
+    station whose IRIS site name has changed (e.g. Korppoo: ``KOR`` in older
+    files, ``KORPPOO`` later) resolves to the same configuration.
 
     Returns:
-        Dictionary mapping full radar names (uppercase) to codes.
+        Dictionary mapping header names (uppercase) to codes.
         Example: {"KANKAANPAA": "KAN", "VANTAA": "VAN", ...}
+
+    Raises:
+        ValueError: If two radar sections claim the same header name.
 
     Note:
         Results are cached. Only built once per process.
         Reuses the cached TOML data from _load_radar_defaults().
     """
     radar_defaults = _load_radar_defaults()
-    name_to_code = {}
+    name_to_code: dict[str, str] = {}
 
     for code, config in radar_defaults.items():
-        if code == 'other':
+        if code == "other" or not isinstance(config, dict) or "name" not in config:
             continue
-        # Get the 'name' field from config
-        if isinstance(config, dict) and 'name' in config:
-            name_to_code[config['name'].upper()] = code
+        aliases = config.get("aliases", [])
+        if isinstance(aliases, str) or not isinstance(aliases, list):
+            raise TypeError(f"Radar {code}: 'aliases' must be a list of names")
+        for name in (config["name"], *aliases):
+            key = name.upper()
+            if name_to_code.get(key, code) != code:
+                raise ValueError(
+                    f"Radar header name {key!r} is configured for both "
+                    f"{name_to_code[key]} and {code}"
+                )
+            name_to_code[key] = code
 
     return name_to_code
 
@@ -165,8 +179,8 @@ def _radar_name_to_code(radar_name: str) -> str:
 
     Returns:
         Three-letter radar code (e.g., "KAN")
-        If not found in mapping, returns the radar_name unchanged
-        (will fallback to 'other' in _get_radar_metadata).
+        If not found in mapping, returns the radar_name unchanged.
+        Use resolve_radar_code() where an unknown name must be an error.
 
     Example:
         >>> _radar_name_to_code("KANKAANPAA")
@@ -176,6 +190,25 @@ def _radar_name_to_code(radar_name: str) -> str:
     """
     name_map = _build_radar_name_to_code_map()
     return name_map.get(radar_name.upper(), radar_name)
+
+
+def resolve_radar_code(radar_name: str) -> str:
+    """Return the configured radar code for a VVP header radar name.
+
+    Unlike _radar_name_to_code(), an unknown name is an error: falling back to
+    [defaults] would apply the wrong antenna height and shift every profile
+    level, producing plausible-looking but wrong corrections.
+
+    Raises:
+        ValueError: If no radar section has this name or alias.
+    """
+    code = _build_radar_name_to_code_map().get(radar_name.upper())
+    if code is None:
+        raise ValueError(
+            f"Radar name {radar_name!r} from the VVP header is not configured "
+            f"as a radar name or alias in {_radar_config_path()}"
+        )
+    return code
 
 
 def _get_radar_metadata(radar_code: str,
@@ -213,8 +246,11 @@ def _get_radar_metadata(radar_code: str,
     # Get radar-specific config if it exists
     if radar_code in radar_defaults and radar_code != 'defaults':
         radar_config = radar_defaults[radar_code]
-        # Update with radar-specific config (overrides defaults)
-        metadata.update(radar_config)
+        # Update with radar-specific config (overrides defaults). Header
+        # aliases are lookup configuration, not radar metadata.
+        metadata.update(
+            {key: value for key, value in radar_config.items() if key != "aliases"}
+        )
 
     # Override with user-supplied values (highest priority)
     if override_metadata:

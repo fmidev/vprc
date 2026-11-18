@@ -69,6 +69,8 @@ python -m pip install -e . pytest
 - Vertical profiles use the xarray `height` dimension. Parsed heights are integer
   meters **above antenna**, converted from input heights above sea level (ASL),
   with the standard 200 m spacing (`STEP` in [constants.py](src/vprc/constants.py)).
+  `read_vvp()` fills levels absent from the file as no-echo levels so stages
+  can index `height ± STEP`; their heights are in `attrs["missing_levels_m"]`.
   The correction calculation also uses a finer grid; do not assume every grid
   has 200 m spacing.
 - `lin_dbz` is reflectivity in **dBZ**, not linear reflectivity Z, despite its name.
@@ -81,8 +83,9 @@ python -m pip install -e . pytest
   when passing freezing levels or CAPPI heights between stages.
 - Profile labels are `Prec.`, `As`, `CAE` and `Clutter`; use existing types.
 - Use [config.py](src/vprc/config.py) for radar lookup rather than hardcoding
-  stations, coordinates or network size. Configuration selects
-  `VPRC_RADAR_CONFIG` if set, otherwise the packaged
+  stations, coordinates or network size. VVP header names must match a radar
+  `name` or `aliases` entry; unknown names raise rather than use `[defaults]`.
+  Configuration selects `VPRC_RADAR_CONFIG` if set, otherwise the packaged
   [radar_defaults.toml](src/vprc/radar_defaults.toml). Within the selected config,
   runtime metadata overrides radar-specific values, which override `[defaults]`.
   Config loading is cached; tests changing configuration must account for caches.

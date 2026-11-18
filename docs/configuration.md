@@ -7,7 +7,7 @@ The `vprc` package uses TOML-based configuration for radar station metadata. All
 ## TOML File Structure
 
 ```toml
-[defaults]  # Shared defaults and fallback for unknown radars
+[defaults]  # Shared defaults for values a radar section omits
 antenna_height_m = 198
 lowest_level_offset_m = 102
 beamwidth_deg = 0.95
@@ -22,6 +22,12 @@ lowest_level_offset_m = 126
 name = "VANTAA"
 antenna_height_m = 83
 lowest_level_offset_m = 17
+
+[KOR]
+name = "KORPPOO"
+aliases = ["KOR"]  # Older VVP header name
+antenna_height_m = 61
+lowest_level_offset_m = 39
 ```
 
 ### Fields
@@ -40,6 +46,8 @@ lowest_level_offset_m = 17
 - `lowest_level_offset_m` (int): Offset from nearest profile level (meters)
 
 **Optional (per-radar):**
+- `aliases` (list of strings): Other VVP header names for the same radar, such
+  as an older IRIS site name. A name may belong to only one radar.
 - `beamwidth_deg` (float): Override default beamwidth for this specific radar
 - `horizon_angle_deg` (float): Override the default terrain horizon
 
@@ -55,7 +63,7 @@ Values are resolved in this order (highest to lowest):
 
 1. **Function parameters** - `read_vvp(radar_metadata={...})`
 2. **Radar-specific TOML section** - e.g., `[KAN]`
-3. **Shared defaults** - `[defaults]` section in TOML (also serves as fallback for unknown radars)
+3. **Shared defaults** - `[defaults]` section in TOML, for values the radar section omits
 4. **Environment variable** - `VPRC_RADAR_CONFIG` points to custom TOML
 5. **Package default** - `src/vprc/radar_defaults.toml`
 
@@ -119,7 +127,7 @@ Example custom TOML with radar-specific beamwidth:
 ```toml
 [defaults]
 beamwidth_deg = 0.95
-# Shared defaults and fallback for unknown radars
+# Shared defaults for values a radar section omits
 antenna_height_m = 198
 lowest_level_offset_m = 102
 
@@ -156,9 +164,14 @@ VVP file "KANKAANPAA" → TOML name lookup → "KAN" → load metadata
                     (or VPRC_RADAR_CONFIG)
 ```
 
+A VVP header name that matches no radar `name` or `aliases` entry raises
+`ValueError`. `[defaults]` is not used for unknown radars: its antenna height
+would shift every profile level and produce wrong corrections.
+
 ## Radar Stations (Package Default)
 
-Based on `allprof_prodx2.pl` lines 32-50, 75-135:
+Based on `allprof_prodx2.pl` lines 32-50, 75-135. Korppoo VVP headers say
+`KORPPOO`; the legacy name `KOR` is kept as an alias.
 
 | Code | Name         | Height (m) | Offset (m) |
 |------|--------------|------------|------------|
@@ -170,7 +183,7 @@ Based on `allprof_prodx2.pl` lines 32-50, 75-135:
 | PET  | PETAJAVESI   | 271        | 29         |
 | ANJ  | ANJALANKOSKI | 139        | 161        |
 | KUO  | KUOPIO       | 268        | 32         |
-| KOR  | KOR          | 61         | 39         |
+| KOR  | KORPPOO      | 61         | 39         |
 | UTA  | UTAJARVI     | 118        | 182        |
 | LUO  | LUOSTO       | 530        | 170        |
 | VIM  | VIMPELI      | 198        | 102        |

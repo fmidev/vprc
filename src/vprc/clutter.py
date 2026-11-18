@@ -34,12 +34,21 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
     ``clutter_detected`` records surviving clutter contamination.
     ``smoothing_start_height_m`` is the legacy ``alintaso + kortaso``.
     The input is not modified.
+
+    Raises:
+        ValueError: If the heights are not a contiguous ``STEP`` grid.
+            ``read_vvp()`` fills levels missing from the file, matching the
+            legacy height-indexed arrays.
     """
     result = ds.copy(deep=True)
     result["corrected_dbz"] = result["corrected_dbz"].astype(float)
     heights = result["height"].values
     if not len(heights):
         return result
+    if np.any(np.diff(heights) != STEP):
+        raise ValueError(
+            f"Ground clutter removal requires a contiguous {STEP} m height grid"
+        )
     lowest = int(heights[0])
     result.attrs["clutter_detected"] = False
     result.attrs["smoothing_start_height_m"] = lowest

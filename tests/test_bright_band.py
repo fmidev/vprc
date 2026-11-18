@@ -950,6 +950,26 @@ def test_rejected_surface_bb_correction_reads_raw_profile():
     np.testing.assert_allclose(corrected.corrected_dbz, [31, 26, 21, 20, 18])
 
 
+@pytest.mark.parametrize(
+    ("missing_levels", "expected"),
+    [
+        # 300 m measured without echo: extrapolate and average across the jump.
+        ([], [-11, -12, 21, 20, 22]),
+        # 300 m absent from the file: Perl's ``ne ""`` guard restores raw values.
+        ([300], [30, MDS, 21, 20, 22]),
+    ],
+)
+def test_no_bb_correction_distinguishes_absent_levels(missing_levels, expected):
+    """Both expectations come from allprof_prodx2.pl runs on matching inputs."""
+    ds = make_test_dataset([30, MDS, 35, 20, 22])
+    ds["corrected_dbz"] = ("height", [MDS, MDS, 21.0, 20, 22])
+    ds.attrs["missing_levels_m"] = missing_levels
+    bb = BrightBandResult(detected=False, freezing_level_m=0)
+    corrected, bb = apply_post_bb_clutter_correction(ds, bb)
+    np.testing.assert_allclose(corrected.corrected_dbz, expected)
+    assert bb.clutter_correction_applied
+
+
 def test_no_spurious_clutter_flag_when_post_bb_does_not_correct():
     ds = make_test_dataset([20, 21, 22, 23, 24])
     bb = BrightBandResult(detected=False, freezing_level_m=500)

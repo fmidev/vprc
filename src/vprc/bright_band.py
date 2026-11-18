@@ -634,6 +634,10 @@ def apply_post_bb_clutter_correction(
     corrected = result["corrected_dbz"].values.astype(float, copy=True)
     raw = result["lin_dbz"].values
     indices = {int(h): i for i, h in enumerate(heights)}
+    # Levels absent from the VVP file are undefined in the legacy arrays. Only
+    # the no-BB/high-BB block guards them (``$isotaulu[...][0] ne ""``),
+    # taking its else branch; elsewhere the MDS fill is used as no echo.
+    absent = set(result.attrs.get("missing_levels_m", ()))
     applied = False
     for scenario in scenarios:
         top = (
@@ -645,6 +649,12 @@ def apply_post_bb_clutter_correction(
                 continue
             index, below = indices[height], indices[height - STEP]
             if not np.isfinite(raw[index]) or not np.isfinite(raw[below]):
+                continue
+            if scenario == "high_bb_or_no_bb" and (
+                height in absent or height - STEP in absent
+            ):
+                # read_vvp() fills an absent level's raw value with MDS.
+                corrected[below] = raw[below]
                 continue
             threshold_reference = (
                 corrected[index] if scenario == "high_bb_or_no_bb" else raw[index]
