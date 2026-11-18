@@ -13,15 +13,20 @@ Layer types:
     - GROUND_CLUTTER: Ground clutter contaminated echo
 """
 
+import logging
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING
-import logging
 
 import numpy as np
 import xarray as xr
 
-from .constants import MDS, MIN_SAMPLES, EVAPORATION_THRESHOLD_DB, SNOW_FREEZING_LEVEL_THRESHOLD_M
+from .constants import (
+    EVAPORATION_THRESHOLD_DB,
+    MDS,
+    MIN_SAMPLES,
+    SNOW_FREEZING_LEVEL_THRESHOLD_M,
+)
 
 if TYPE_CHECKING:
     from .bright_band import BrightBandResult
@@ -51,9 +56,9 @@ class PrecipitationType(Enum):
     """
 
     UNKNOWN = "unknown"  # Not precipitation or unclassified
-    SNOW = "snow"        # No BB, freezing level < 500m
-    SLEET = "sleet"      # BB detected, bottom at/below ground
-    RAIN = "rain"        # BB with bottom above ground, or FL >= 500m
+    SNOW = "snow"  # No BB, freezing level < 500m
+    SLEET = "sleet"  # BB detected, bottom at/below ground
+    RAIN = "rain"  # BB with bottom above ground, or FL >= 500m
 
 
 @dataclass
@@ -307,15 +312,15 @@ def _classify_layer(
     if freezing_level_m is None:
         if layer_index == 0 and layer.touches_ground and layer.thickness >= 1000:
             return (
-                LayerType.PRECIPITATION if layer.max_dbz >= 5
+                LayerType.PRECIPITATION
+                if layer.max_dbz >= 5
                 else LayerType.CLEAR_AIR_ECHO
             )
         return result
 
     freezing_level = max(0.0, freezing_level_m)
-    if (
-        (not has_clutter_flag and layer_index == 0)
-        or (has_clutter_flag and layer_index == 1)
+    if (not has_clutter_flag and layer_index == 0) or (
+        has_clutter_flag and layer_index == 1
     ):
         if (
             layer.bottom_height < 1500
@@ -424,8 +429,7 @@ def classify_profile(
     third_to_sixth = None
     if lowest_height + 400 in heights and lowest_height + 1000 in heights:
         third_to_sixth = float(
-            dbz.sel(height=lowest_height + 400)
-            - dbz.sel(height=lowest_height + 1000)
+            dbz.sel(height=lowest_height + 400) - dbz.sel(height=lowest_height + 1000)
         )
 
     # Find contiguous layers
@@ -452,10 +456,7 @@ def classify_profile(
 
         # VPR correction is useful for precipitation profiles
         # that touch the ground and have sufficient vertical extent
-        if (
-            lowest.layer_type == LayerType.PRECIPITATION
-            and lowest.touches_ground
-        ):
+        if lowest.layer_type == LayerType.PRECIPITATION and lowest.touches_ground:
             usable_for_vpr = True
 
     return ProfileClassification(

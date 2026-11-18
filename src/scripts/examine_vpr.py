@@ -28,22 +28,26 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from vprc import (
+    ProcessedProfile,
     process_vvp,
     read_vvp,
-    ProcessedProfile,
 )
+from vprc.bright_band import detect_bright_band
+from vprc.classification import classify_profile
 from vprc.clutter import remove_ground_clutter
 from vprc.smoothing import smooth_spikes
-from vprc.classification import classify_profile
-from vprc.bright_band import detect_bright_band
 from vprc.vpr_correction import compute_vpr_correction
 
 # Default sample file
-DEFAULT_VVP = Path(__file__).resolve().parents[2] / "tests/data/202511071400_VIH.VVP_40.txt"
-#DEFAULT_VVP = Path(__file__).resolve().parents[2] / "tests/data/202508241100_KAN.VVP_40.txt"
+DEFAULT_VVP = (
+    Path(__file__).resolve().parents[2] / "tests/data/202511071400_VIH.VVP_40.txt"
+)
+# DEFAULT_VVP = Path(__file__).resolve().parents[2] / "tests/data/202508241100_KAN.VVP_40.txt"
 
 
-def plot_profile(ds, ds_raw=None, bright_band=None, title: str | None = None) -> plt.Figure:
+def plot_profile(
+    ds, ds_raw=None, bright_band=None, title: str | None = None
+) -> plt.Figure:
     """Plot dBZ and sample count profiles against height.
 
     Args:
@@ -64,7 +68,9 @@ def plot_profile(ds, ds_raw=None, bright_band=None, title: str | None = None) ->
     # Plot raw dBZ if provided
     if ds_raw is not None:
         raw_dbz = ds_raw["corrected_dbz"].values
-        ax1.plot(raw_dbz, height, color="tab:blue", linewidth=1, alpha=0.4, label="dBZ (raw)")
+        ax1.plot(
+            raw_dbz, height, color="tab:blue", linewidth=1, alpha=0.4, label="dBZ (raw)"
+        )
 
     # Plot dBZ on primary x-axis
     color_dbz = "tab:blue"
@@ -77,11 +83,34 @@ def plot_profile(ds, ds_raw=None, bright_band=None, title: str | None = None) ->
 
     # Mark bright band if detected
     if bright_band is not None and bright_band.detected:
-        ax1.axhline(y=bright_band.peak_height, color="tab:red", linestyle="-", linewidth=2, label="BB peak")
-        ax1.axhline(y=bright_band.top_height, color="tab:red", linestyle="--", alpha=0.7, label="BB top")
-        ax1.axhline(y=bright_band.bottom_height, color="tab:red", linestyle="--", alpha=0.7, label="BB bottom")
+        ax1.axhline(
+            y=bright_band.peak_height,
+            color="tab:red",
+            linestyle="-",
+            linewidth=2,
+            label="BB peak",
+        )
+        ax1.axhline(
+            y=bright_band.top_height,
+            color="tab:red",
+            linestyle="--",
+            alpha=0.7,
+            label="BB top",
+        )
+        ax1.axhline(
+            y=bright_band.bottom_height,
+            color="tab:red",
+            linestyle="--",
+            alpha=0.7,
+            label="BB bottom",
+        )
         # Shade the bright band region
-        ax1.axhspan(bright_band.bottom_height, bright_band.top_height, alpha=0.1, color="tab:red")
+        ax1.axhspan(
+            bright_band.bottom_height,
+            bright_band.top_height,
+            alpha=0.1,
+            color="tab:red",
+        )
 
     # Plot sample count on secondary x-axis
     ax2 = ax1.twiny()
@@ -146,14 +175,16 @@ def plot_vpr_correction(vpr_correction, title: str | None = None) -> plt.Figure:
     # Plot climatological correction for CAPPI 1000 if available
     if "cappi_clim_correction_db" in corr:
         data = corr["cappi_clim_correction_db"].sel(cappi_height=1000)
-        _plot_correction_line(ax, data, "Climatology 1000 m",
-                             linewidth=2, linestyle=":", color=color_1000)
+        _plot_correction_line(
+            ax, data, "Climatology 1000 m", linewidth=2, linestyle=":", color=color_1000
+        )
 
     # Plot blended correction for CAPPI 1000 if available
     if "cappi_blended_correction_db" in corr:
         data = corr["cappi_blended_correction_db"].sel(cappi_height=1000)
-        _plot_correction_line(ax, data, "Blended 1000 m",
-                             linewidth=2, linestyle="--", color=color_1000)
+        _plot_correction_line(
+            ax, data, "Blended 1000 m", linewidth=2, linestyle="--", color=color_1000
+        )
 
     # Plot correction for lowest elevation angle if available
     if "elev_correction_db" in corr:
@@ -161,7 +192,9 @@ def plot_vpr_correction(vpr_correction, title: str | None = None) -> plt.Figure:
         if len(elev_angles) > 0:
             lowest_elev = elev_angles[0]  # Assuming sorted, lowest first
             data = corr["elev_correction_db"].sel(elevation=lowest_elev)
-            _plot_correction_line(ax, data, f"Elevation {lowest_elev:.1f}°", linewidth=2)
+            _plot_correction_line(
+                ax, data, f"Elevation {lowest_elev:.1f}°", linewidth=2
+            )
 
     ax.set_xlabel("Range (km)")
     ax.set_ylabel("Correction (dB)")
@@ -172,9 +205,14 @@ def plot_vpr_correction(vpr_correction, title: str | None = None) -> plt.Figure:
 
     # Add ground reflectivity info to title or legend
     z_ground = vpr_correction.z_ground_dbz
-    ax.text(0.02, 0.98, f"Ground reflectivity: {z_ground:.1f} dBZ",
-            transform=ax.transAxes, verticalalignment="top",
-            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
+    ax.text(
+        0.02,
+        0.98,
+        f"Ground reflectivity: {z_ground:.1f} dBZ",
+        transform=ax.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+    )
 
     fig.tight_layout()
     return fig
@@ -226,7 +264,9 @@ def load_step_by_step(path: str | Path | None = None) -> dict:
 
     vpr_correction = None
     if classification.usable_for_vpr:
-        vpr_correction = compute_vpr_correction(ds_smooth, freezing_level_m=freezing_level_m)
+        vpr_correction = compute_vpr_correction(
+            ds_smooth, freezing_level_m=freezing_level_m
+        )
     return {
         "ds_raw": ds_raw,
         "ds_clutter": ds_clutter,
@@ -269,12 +309,16 @@ if __name__ == "__main__":
     if classification.layers:
         print(f"\nLayers ({len(classification.layers)}):")
         for i, layer in enumerate(classification.layers, 1):
-            print(f"  {i}. {layer.layer_type.name}: {layer.bottom_height}–{layer.top_height} m")
+            print(
+                f"  {i}. {layer.layer_type.name}: {layer.bottom_height}–{layer.top_height} m"
+            )
 
     print(f"\nBright band detected: {bright_band.detected}")
     if bright_band.detected:
         print(f"  Peak height: {bright_band.peak_height} m")
-        print(f"  Top: {bright_band.top_height} m, Bottom: {bright_band.bottom_height} m")
+        print(
+            f"  Top: {bright_band.top_height} m, Bottom: {bright_band.bottom_height} m"
+        )
         print(f"  Peak dBZ: {bright_band.peak_dbz:.1f}")
 
     if vpr_correction is not None:
@@ -296,9 +340,13 @@ if __name__ == "__main__":
     print("-" * 60 + "\n")
 
     # Create profile plot
-    fig = plot_profile(ds, ds_raw=ds_raw, bright_band=bright_band, title=str(vvp_path.name))
+    fig = plot_profile(
+        ds, ds_raw=ds_raw, bright_band=bright_band, title=str(vvp_path.name)
+    )
 
     # Create VPR correction plot if available
     fig_corr = None
     if vpr_correction is not None:
-        fig_corr = plot_vpr_correction(vpr_correction, title=f"VPR Correction - {vvp_path.name}")
+        fig_corr = plot_vpr_correction(
+            vpr_correction, title=f"VPR Correction - {vvp_path.name}"
+        )

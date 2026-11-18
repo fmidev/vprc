@@ -6,10 +6,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from vprc import process_vvp, LayerType, PrecipitationType, BBRejectionReason
+from vprc import BBRejectionReason, LayerType, PrecipitationType, process_vvp
 from vprc.config import _load_radar_defaults
 from vprc.vpr_correction import compute_vpr_correction
-
 
 KAN_FILE = Path(__file__).parent / "data" / "202508241100_KAN.VVP_40.txt"
 
@@ -56,7 +55,9 @@ def test_explicit_freezing_level_overrides_configuration(monkeypatch):
 
     assert result.vpr_correction is not None
     assert result.vpr_correction.corrections.attrs["freezing_level_m"] == 0
-    assert np.isfinite(result.vpr_correction.corrections.cappi_blended_correction_db).all()
+    assert np.isfinite(
+        result.vpr_correction.corrections.cappi_blended_correction_db
+    ).all()
 
 
 def _write_profile(

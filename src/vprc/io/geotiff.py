@@ -8,11 +8,10 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
-import xarray as xr
 
 # rioxarray import activates the .rio accessor on xarray objects
 import rioxarray  # noqa: F401
-
+import xarray as xr
 
 # Compression options supported by GDAL COG driver
 Compression = Literal["DEFLATE", "LZW", "ZSTD", "NONE"]
@@ -62,8 +61,10 @@ def write_correction_cog(
         KeyError: If variable not found in dataset
     """
     if variable not in ds:
-        raise KeyError(f"Variable '{variable}' not found in dataset. "
-                      f"Available: {list(ds.data_vars)}")
+        raise KeyError(
+            f"Variable '{variable}' not found in dataset. "
+            f"Available: {list(ds.data_vars)}"
+        )
 
     # Ensure CRS metadata is set
     ds = prepare_for_export(ds)
@@ -171,7 +172,9 @@ def write_composite_cogs(
     # Main correction variable
     correction_var = "correction_db"
     if correction_var in ds:
-        filename = f"{prefix}_{correction_var}.tif" if prefix else f"{correction_var}.tif"
+        filename = (
+            f"{prefix}_{correction_var}.tif" if prefix else f"{correction_var}.tif"
+        )
         path = output_dir / filename
         write_correction_cog(ds, path, variable=correction_var, compress=compress)
         outputs[correction_var] = path

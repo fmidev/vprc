@@ -23,32 +23,23 @@ from pathlib import Path
 
 import xarray as xr
 
-from .io import read_vvp  # Used internally by process_vvp
-from .clutter import remove_ground_clutter
-from .smoothing import smooth_spikes
-from .classification import (
-    classify_profile,
-    ProfileClassification,
-    LayerType,
-    PrecipitationType,
-    classify_precipitation_type,
-    finalize_profile_classification,
-)
 from .bright_band import (
-    detect_bright_band,
-    BrightBandResult,
     BBRejectionReason,
+    BrightBandResult,
     apply_post_bb_clutter_correction,
+    detect_bright_band,
     restore_bb_spike,
 )
-from .vpr_correction import (
-    compute_vpr_correction,
-    VPRCorrectionResult,
-    cap_bb_peak_amplitude,
+from .classification import (
+    LayerType,
+    PrecipitationType,
+    ProfileClassification,
+    classify_precipitation_type,
+    classify_profile,
+    finalize_profile_classification,
 )
-from .temporal import average_corrections
 from .climatology import generate_climatological_profile, get_clim_ground_reference
-from .exceptions import NoUsableProfileError
+from .clutter import remove_ground_clutter
 from .composite import (
     CompositeGrid,
     RadarCorrection,
@@ -58,11 +49,20 @@ from .composite import (
     inverse_distance_weight,
 )
 from .config import (
-    get_radar_metadata,
-    get_radar_coords,
-    get_network_config,
     get_defaults,
+    get_network_config,
+    get_radar_coords,
+    get_radar_metadata,
     list_radar_codes,
+)
+from .exceptions import NoUsableProfileError
+from .io import read_vvp  # Used internally by process_vvp
+from .smoothing import smooth_spikes
+from .temporal import average_corrections
+from .vpr_correction import (
+    VPRCorrectionResult,
+    cap_bb_peak_amplitude,
+    compute_vpr_correction,
 )
 
 

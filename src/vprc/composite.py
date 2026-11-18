@@ -9,14 +9,13 @@ via the `weight_func` parameter.
 """
 
 from dataclasses import dataclass
-from typing import Protocol, Callable
+from typing import Callable, Protocol
 
 import numpy as np
 import xarray as xr
 from pyproj import CRS, Transformer
 
 from .vpr_correction import VPRCorrectionResult
-
 
 # Type alias for weight functions
 # Signature: (distances, quality_weights, **kwargs) -> weights
@@ -170,9 +169,7 @@ class CompositeGrid:
             )
 
         # Transform from WGS84 to target CRS
-        transformer = Transformer.from_crs(
-            CRS.from_epsg(4326), crs, always_xy=True
-        )
+        transformer = Transformer.from_crs(CRS.from_epsg(4326), crs, always_xy=True)
 
         xs, ys = [], []
         for lat, lon in coords:
@@ -221,7 +218,9 @@ def inverse_distance_weight(
     d = np.maximum(distances_m, min_distance_m)
 
     # IDW with quality scaling
-    weights = quality_weights * (1 / np.power(d, power) - 1 / np.power(max_distance_m, power))
+    weights = quality_weights * (
+        1 / np.power(d, power) - 1 / np.power(max_distance_m, power)
+    )
 
     return weights
 
@@ -240,9 +239,7 @@ def compute_radar_distances(
         Array of shape (n_radars, n_y, n_x) with distances in meters
     """
     # Transform radar locations from WGS84 to grid CRS
-    transformer = Transformer.from_crs(
-        CRS.from_epsg(4326), grid.crs, always_xy=True
-    )
+    transformer = Transformer.from_crs(CRS.from_epsg(4326), grid.crs, always_xy=True)
 
     # Create 2D grid of coordinates
     xx, yy = np.meshgrid(grid.x, grid.y)
@@ -312,7 +309,9 @@ def interpolate_correction_to_grid(
     return interp_corr
 
 
-def create_empty_composite(grid: CompositeGrid, radar_codes: list[str] | None = None) -> xr.Dataset:
+def create_empty_composite(
+    grid: CompositeGrid, radar_codes: list[str] | None = None
+) -> xr.Dataset:
     """Create an empty composite Dataset with all NaN values.
 
     Used when no radars have usable VPR corrections (e.g., no precipitation).
@@ -405,7 +404,9 @@ def composite_corrections(
         )
 
         # Compute weights (quality scaled by distance)
-        w = weight_func(distances[i], quality_weights[i], max_distance_m=max_range_km * 1000)
+        w = weight_func(
+            distances[i], quality_weights[i], max_distance_m=max_range_km * 1000
+        )
 
         # Zero weight beyond max range
         w[distances[i] > max_range_km * 1000] = 0.0

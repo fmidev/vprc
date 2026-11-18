@@ -57,7 +57,9 @@ class LegacyProfileFooter:
     minute: int
 
 
-def parse_legacy_profile(path: str | Path) -> tuple[xr.Dataset, LegacyProfileHeader, LegacyProfileFooter]:
+def parse_legacy_profile(
+    path: str | Path,
+) -> tuple[xr.Dataset, LegacyProfileHeader, LegacyProfileFooter]:
     """Parse a legacy .profile file from allprof_prodx2.pl.
 
     The .profile format consists of:
@@ -109,12 +111,12 @@ def _parse_header(line: str) -> LegacyProfileHeader:
     mds = float(parts[3])
 
     # Parse date: "24.08." "2025" "11:00"
-    date_str = parts[4].rstrip('.')  # Remove trailing dot
+    date_str = parts[4].rstrip(".")  # Remove trailing dot
     year = int(parts[5])
     time_str = parts[6]
 
-    day, month = map(int, date_str.split('.'))
-    hour, minute = map(int, time_str.split(':'))
+    day, month = map(int, date_str.split("."))
+    hour, minute = map(int, time_str.split(":"))
 
     timestamp = datetime(year, month, day, hour, minute)
 
@@ -200,20 +202,20 @@ def _parse_data(lines: list[str], header: LegacyProfileHeader) -> xr.Dataset:
 
     ds = xr.Dataset(
         {
-            'lin_dbz': (['height'], np.array(lin_dbz)),
-            'log_dbz': (['height'], np.array(log_dbz)),
-            'corrected_dbz': (['height'], np.array(corrected_dbz)),
-            'kor_profile': (['height'], np.array(kor_profile)),
-            'clim_dbz': (['height'], np.array(clim_dbz)),
-            'zcount': (['height'], np.array(zcount)),
+            "lin_dbz": (["height"], np.array(lin_dbz)),
+            "log_dbz": (["height"], np.array(log_dbz)),
+            "corrected_dbz": (["height"], np.array(corrected_dbz)),
+            "kor_profile": (["height"], np.array(kor_profile)),
+            "clim_dbz": (["height"], np.array(clim_dbz)),
+            "zcount": (["height"], np.array(zcount)),
         },
-        coords={'height': height_arr},
+        coords={"height": height_arr},
         attrs={
-            'radar_name': header.radar_name,
-            'product': header.product,
-            'step': header.step,
-            'mds': header.mds,
-            'timestamp': header.timestamp.isoformat(),
+            "radar_name": header.radar_name,
+            "product": header.product,
+            "step": header.step,
+            "mds": header.mds,
+            "timestamp": header.timestamp.isoformat(),
         },
     )
 
@@ -256,7 +258,7 @@ def parse_legacy_cor(path: str | Path) -> tuple[xr.Dataset, LegacyCorHeader]:
         with dimensions (range_km, correction_type).
     """
     path = Path(path)
-    lines = path.read_text().strip().split('\n')
+    lines = path.read_text().strip().split("\n")
 
     # Parse header
     header = _parse_cor_header(lines[0])
@@ -291,10 +293,10 @@ def _parse_cor_header(line: str) -> LegacyCorHeader:
     precip_code = int(parts[10])
 
     # Find max_dBZ and max_height by label
-    max_dbz_idx = parts.index('max_dBZ') + 1
+    max_dbz_idx = parts.index("max_dBZ") + 1
     max_dbz = float(parts[max_dbz_idx])
 
-    max_height_idx = parts.index('max_height') + 1
+    max_height_idx = parts.index("max_height") + 1
     max_height = int(parts[max_height_idx])
 
     # Quality weight and freezing height above antenna follow max_height.
@@ -302,7 +304,7 @@ def _parse_cor_header(line: str) -> LegacyCorHeader:
     freezing_level_m = float(parts[max_height_idx + 2])
 
     # Elevation angles after 'ELEVS'
-    elevs_idx = parts.index('ELEVS') + 1
+    elevs_idx = parts.index("ELEVS") + 1
     elevation_angles = [float(e) for e in parts[elevs_idx:]]
 
     return LegacyCorHeader(
@@ -369,27 +371,35 @@ def _parse_cor_data(lines: list[str], header: LegacyCorHeader) -> xr.Dataset:
         beam_heights.append(row_height)
 
     range_arr = np.array(ranges)
-    type_labels = ['cappi_500', 'cappi_1000'] + [f'elev_{i+1}' for i in range(n_elevs)]
+    type_labels = ["cappi_500", "cappi_1000"] + [
+        f"elev_{i + 1}" for i in range(n_elevs)
+    ]
 
     ds = xr.Dataset(
         {
-            'correction_klim_db': (['range_km', 'correction_type'], np.array(corrections_klim)),
-            'correction_rain_db': (['range_km', 'correction_type'], np.array(corrections_rain)),
-            'beam_height_m': (['range_km', 'correction_type'], np.array(beam_heights)),
+            "correction_klim_db": (
+                ["range_km", "correction_type"],
+                np.array(corrections_klim),
+            ),
+            "correction_rain_db": (
+                ["range_km", "correction_type"],
+                np.array(corrections_rain),
+            ),
+            "beam_height_m": (["range_km", "correction_type"], np.array(beam_heights)),
         },
         coords={
-            'range_km': range_arr,
-            'correction_type': type_labels,
+            "range_km": range_arr,
+            "correction_type": type_labels,
         },
         attrs={
-            'radar_name': header.radar_name,
-            'product': header.product,
-            'max_dbz': header.max_dbz,
-            'max_height': header.max_height,
-            'quality_weight': header.quality_weight,
-            'freezing_level_m': header.freezing_level_m,
-            'timestamp': header.timestamp.isoformat(),
-            'elevation_angles': header.elevation_angles,
+            "radar_name": header.radar_name,
+            "product": header.product,
+            "max_dbz": header.max_dbz,
+            "max_height": header.max_height,
+            "quality_weight": header.quality_weight,
+            "freezing_level_m": header.freezing_level_m,
+            "timestamp": header.timestamp.isoformat(),
+            "elevation_angles": header.elevation_angles,
         },
     )
 
@@ -427,7 +437,7 @@ def parse_legacy_corave(path: str | Path) -> tuple[xr.Dataset, LegacyCoraveHeade
         Tuple of (dataset, header) where dataset contains averaged corrections.
     """
     path = Path(path)
-    lines = path.read_text().strip().split('\n')
+    lines = path.read_text().strip().split("\n")
 
     # Parse header
     header = _parse_corave_header(lines[0])
@@ -461,7 +471,7 @@ def _parse_corave_header(line: str) -> LegacyCoraveHeader:
     freezing_level_m = float(parts[9])
 
     # Elevation angles after 'ELEVS'
-    elevs_idx = parts.index('ELEVS') + 1
+    elevs_idx = parts.index("ELEVS") + 1
     elevation_angles = [float(e) for e in parts[elevs_idx:]]
 
     return LegacyCoraveHeader(
@@ -521,26 +531,34 @@ def _parse_corave_data(lines: list[str], header: LegacyCoraveHeader) -> xr.Datas
         count_rain.append(int(parts[-1]))
 
     range_arr = np.array(ranges)
-    type_labels = ['cappi_500', 'cappi_1000'] + [f'elev_{i+1}' for i in range(n_elevs)]
+    type_labels = ["cappi_500", "cappi_1000"] + [
+        f"elev_{i + 1}" for i in range(n_elevs)
+    ]
 
     ds = xr.Dataset(
         {
-            'correction_avg_db': (['range_km', 'correction_type'], np.array(corrections_avg)),
-            'correction_rain_db': (['range_km', 'correction_type'], np.array(corrections_rain)),
-            'beam_height_m': (['range_km', 'correction_type'], np.array(beam_heights)),
-            'count_klim': (['range_km'], np.array(count_klim)),
-            'count_rain': (['range_km'], np.array(count_rain)),
+            "correction_avg_db": (
+                ["range_km", "correction_type"],
+                np.array(corrections_avg),
+            ),
+            "correction_rain_db": (
+                ["range_km", "correction_type"],
+                np.array(corrections_rain),
+            ),
+            "beam_height_m": (["range_km", "correction_type"], np.array(beam_heights)),
+            "count_klim": (["range_km"], np.array(count_klim)),
+            "count_rain": (["range_km"], np.array(count_rain)),
         },
         coords={
-            'range_km': range_arr,
-            'correction_type': type_labels,
+            "range_km": range_arr,
+            "correction_type": type_labels,
         },
         attrs={
-            'radar_name': header.radar_name,
-            'product': header.product,
-            'timestamp': header.timestamp.isoformat(),
-            'elevation_angles': header.elevation_angles,
-            'freezing_level_m': header.freezing_level_m,
+            "radar_name": header.radar_name,
+            "product": header.product,
+            "timestamp": header.timestamp.isoformat(),
+            "elevation_angles": header.elevation_angles,
+            "freezing_level_m": header.freezing_level_m,
         },
     )
 

@@ -12,20 +12,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from vprc.io import (
-    VVPHeader,
-    _parse_vvp_header,
-    _parse_vvp_file,
-    _vvp_dataframe_to_xarray,
-    _load_radar_defaults,
-    _build_radar_name_to_code_map,
-    _radar_name_to_code,
-    _get_radar_metadata,
-    read_vvp,
-)
 from vprc.config import list_radar_codes, resolve_radar_code
 from vprc.constants import MDS
 from vprc.exceptions import NoUsableProfileError
+from vprc.io import (
+    VVPHeader,
+    _build_radar_name_to_code_map,
+    _get_radar_metadata,
+    _load_radar_defaults,
+    _parse_vvp_file,
+    _parse_vvp_header,
+    _radar_name_to_code,
+    _vvp_dataframe_to_xarray,
+    read_vvp,
+)
 
 # Test data path
 TEST_DATA_DIR = Path(__file__).parent / "data"
@@ -91,8 +91,8 @@ class TestParseVVPFile:
         # Check DataFrame structure
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 35  # Number of height levels in sample file
-        assert df['height'].min() == 100
-        assert df['height'].max() == 6900
+        assert df["height"].min() == 100
+        assert df["height"].max() == 6900
 
     def test_dataframe_columns(self):
         """Test that DataFrame has expected columns."""
@@ -102,15 +102,25 @@ class TestParseVVPFile:
         _, df = _parse_vvp_file(SAMPLE_VVP_FILE)
 
         expected_cols = [
-            'height', 'count', 'zcount',
-            'wind_speed', 'wind_speed_std',
-            'direction', 'direction_std',
-            'vertical', 'vertical_std',
-            'lin_dbz', 'lin_dbz_std',
-            'log_dbz', 'log_dbz_std',
-            'divergence', 'divergence_std',
-            'deformation', 'deformation_std',
-            'axis_of_dil', 'axis_of_dil_std'
+            "height",
+            "count",
+            "zcount",
+            "wind_speed",
+            "wind_speed_std",
+            "direction",
+            "direction_std",
+            "vertical",
+            "vertical_std",
+            "lin_dbz",
+            "lin_dbz_std",
+            "log_dbz",
+            "log_dbz_std",
+            "divergence",
+            "divergence_std",
+            "deformation",
+            "deformation_std",
+            "axis_of_dil",
+            "axis_of_dil_std",
         ]
 
         assert list(df.columns) == expected_cols
@@ -123,7 +133,7 @@ class TestParseVVPFile:
         _, df = _parse_vvp_file(SAMPLE_VVP_FILE)
 
         # Check that heights are monotonically increasing
-        assert df['height'].is_monotonic_increasing
+        assert df["height"].is_monotonic_increasing
 
     def test_dataframe_height_dtype(self):
         """Test that height column is integer type."""
@@ -132,7 +142,7 @@ class TestParseVVPFile:
 
         _, df = _parse_vvp_file(SAMPLE_VVP_FILE)
 
-        assert df['height'].dtype == int
+        assert df["height"].dtype == int
 
     def test_dataframe_values(self):
         """Test specific data values from sample file."""
@@ -142,17 +152,17 @@ class TestParseVVPFile:
         _, df = _parse_vvp_file(SAMPLE_VVP_FILE)
 
         # Check first row (height=100 in sorted data)
-        row_100 = df[df['height'] == 100].iloc[0]
-        assert row_100['count'] == 1326
-        assert row_100['zcount'] == 1326
-        assert abs(row_100['wind_speed'] - 5.5) < 0.01
-        assert abs(row_100['direction'] - 350.0) < 0.01
+        row_100 = df[df["height"] == 100].iloc[0]
+        assert row_100["count"] == 1326
+        assert row_100["zcount"] == 1326
+        assert abs(row_100["wind_speed"] - 5.5) < 0.01
+        assert abs(row_100["direction"] - 350.0) < 0.01
 
         # Check a middle row (height=1500)
-        row_1500 = df[df['height'] == 1500].iloc[0]
-        assert row_1500['count'] == 5000
-        assert abs(row_1500['wind_speed'] - 7.5) < 0.01
-        assert abs(row_1500['lin_dbz'] - 30.0) < 0.1
+        row_1500 = df[df["height"] == 1500].iloc[0]
+        assert row_1500["count"] == 5000
+        assert abs(row_1500["wind_speed"] - 7.5) < 0.01
+        assert abs(row_1500["lin_dbz"] - 30.0) < 0.1
 
     def test_parse_nonexistent_file(self):
         """Test that parsing nonexistent file raises FileNotFoundError."""
@@ -206,6 +216,7 @@ class TestVVPDataframeToXarray:
 
         # Check that it's an xarray Dataset
         import xarray as xr
+
         assert isinstance(ds, xr.Dataset)
 
     def test_xarray_dimensions(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
@@ -218,9 +229,9 @@ class TestVVPDataframeToXarray:
         header, df = sample_data
         ds = _vvp_dataframe_to_xarray(df, header)
 
-        assert 'height' in ds.dims
+        assert "height" in ds.dims
         # Original 35 levels minus 1 dropped (below antenna)
-        assert ds.sizes['height'] == len(df) - 1
+        assert ds.sizes["height"] == len(df) - 1
 
     def test_xarray_coordinates(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has correct coordinates.
@@ -232,13 +243,13 @@ class TestVVPDataframeToXarray:
         header, df = sample_data
         ds = _vvp_dataframe_to_xarray(df, header)
 
-        assert 'height' in ds.coords
+        assert "height" in ds.coords
         # 35 input levels, 1 dropped (below antenna)
-        assert len(ds.coords['height']) == len(df) - 1
+        assert len(ds.coords["height"]) == len(df) - 1
         # Lowest remaining level: 300m ASL - 174m = 126m above antenna
-        assert ds.coords['height'].min().values == 126
+        assert ds.coords["height"].min().values == 126
         # Highest level: 6900m ASL - 174m = 6726m above antenna
-        assert ds.coords['height'].max().values == 6726
+        assert ds.coords["height"].max().values == 6726
 
     def test_xarray_variables(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has expected data variables."""
@@ -246,16 +257,25 @@ class TestVVPDataframeToXarray:
         ds = _vvp_dataframe_to_xarray(df, header)
 
         expected_vars = [
-            'sample_count', 'zcount',
-            'wind_speed', 'wind_speed_std',
-            'direction', 'direction_std',
-            'vertical', 'vertical_std',
-            'lin_dbz', 'lin_dbz_std',
-            'log_dbz', 'log_dbz_std',
-            'divergence', 'divergence_std',
-            'deformation', 'deformation_std',
-            'axis_of_dil', 'axis_of_dil_std',
-            'corrected_dbz'  # Added by conversion function
+            "sample_count",
+            "zcount",
+            "wind_speed",
+            "wind_speed_std",
+            "direction",
+            "direction_std",
+            "vertical",
+            "vertical_std",
+            "lin_dbz",
+            "lin_dbz_std",
+            "log_dbz",
+            "log_dbz_std",
+            "divergence",
+            "divergence_std",
+            "deformation",
+            "deformation_std",
+            "axis_of_dil",
+            "axis_of_dil_std",
+            "corrected_dbz",  # Added by conversion function
         ]
 
         for var in expected_vars:
@@ -267,7 +287,7 @@ class TestVVPDataframeToXarray:
         ds = _vvp_dataframe_to_xarray(df, header)
 
         # Should be equal initially
-        assert (ds['corrected_dbz'] == ds['lin_dbz']).all()
+        assert (ds["corrected_dbz"] == ds["lin_dbz"]).all()
 
     def test_xarray_metadata(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has correct metadata attributes."""
@@ -278,14 +298,14 @@ class TestVVPDataframeToXarray:
         }
         ds = _vvp_dataframe_to_xarray(df, header, radar_meta, SAMPLE_VVP_FILE)
 
-        assert ds.attrs['radar'] == 'KANKAANPAA'
-        assert ds.attrs['product'] == 'VVP_40'
-        assert ds.attrs['scan_type'] == 'PPI1_A'
-        assert ds.attrs['timestamp'] == '2025-08-24T11:00:00'
-        assert ds.attrs['elevation_angles'] == [0.7, 1.5, 3.0]
+        assert ds.attrs["radar"] == "KANKAANPAA"
+        assert ds.attrs["product"] == "VVP_40"
+        assert ds.attrs["scan_type"] == "PPI1_A"
+        assert ds.attrs["timestamp"] == "2025-08-24T11:00:00"
+        assert ds.attrs["elevation_angles"] == [0.7, 1.5, 3.0]
         assert ds.attrs["antenna_height_m"] == 174
-        assert ds.attrs['lowest_level_offset_m'] == 126
-        assert 'source_file' in ds.attrs
+        assert ds.attrs["lowest_level_offset_m"] == 126
+        assert "source_file" in ds.attrs
 
     def test_xarray_data_access(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
         """Test accessing data from xarray Dataset.
@@ -298,8 +318,8 @@ class TestVVPDataframeToXarray:
         # Test selection by height (above antenna)
         # Original 1500m ASL - 174m antenna = 1326m above antenna
         data_at_1326 = ds.sel(height=1326)
-        assert data_at_1326['sample_count'].values == 5000
-        assert abs(float(data_at_1326['wind_speed'].values) - 7.5) < 0.01
+        assert data_at_1326["sample_count"].values == 5000
+        assert abs(float(data_at_1326["wind_speed"].values) - 7.5) < 0.01
 
 
 class TestParseVVPToXarray:
@@ -314,9 +334,10 @@ class TestParseVVPToXarray:
 
         # Check dataset
         import xarray as xr
+
         assert isinstance(ds, xr.Dataset)
-        assert 'height' in ds.dims
-        assert 'corrected_dbz' in ds.data_vars
+        assert "height" in ds.dims
+        assert "corrected_dbz" in ds.data_vars
 
     def test_parse_to_xarray_with_metadata(self):
         """Test parsing with custom radar metadata."""
@@ -334,7 +355,7 @@ class TestParseVVPToXarray:
 
         assert ds.attrs["antenna_height_m"] == antenna_height
         # freezing_level converted from ASL (2000) to above-antenna (2000 - 174)
-        assert ds.attrs['freezing_level_m'] == 2000 - antenna_height
+        assert ds.attrs["freezing_level_m"] == 2000 - antenna_height
 
     def test_roundtrip_consistency(self):
         """Test that step-by-step and high-level APIs produce same results."""
@@ -349,8 +370,8 @@ class TestParseVVPToXarray:
         ds2 = read_vvp(SAMPLE_VVP_FILE)
 
         # Data should be identical
-        assert (ds1['lin_dbz'] == ds2['lin_dbz']).all()
-        assert (ds1['wind_speed'] == ds2['wind_speed']).all()
+        assert (ds1["lin_dbz"] == ds2["lin_dbz"]).all()
+        assert (ds1["wind_speed"] == ds2["wind_speed"]).all()
 
 
 class TestEdgeCases:
@@ -368,7 +389,9 @@ class TestEdgeCases:
         with pytest.raises(NoUsableProfileError, match="at or above"):
             _vvp_dataframe_to_xarray(df[df.height <= 300], header, geometry)
 
-    @pytest.mark.parametrize("freezing_level", [float("nan"), float("inf"), "2000", True])
+    @pytest.mark.parametrize(
+        "freezing_level", [float("nan"), float("inf"), "2000", True]
+    )
     def test_invalid_freezing_level_raises(self, freezing_level):
         with pytest.raises(ValueError, match="freezing_level_m must be finite"):
             read_vvp(SAMPLE_VVP_FILE, {"freezing_level_m": freezing_level})
@@ -430,30 +453,30 @@ class TestEdgeCases:
         antenna_height = 174
 
         # Case 1: Unknown - No metadata provided
-        ds1 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'antenna_height_km': 0.174})
-        assert ds1.attrs.get('freezing_level_m') is None
+        ds1 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={"antenna_height_km": 0.174})
+        assert ds1.attrs.get("freezing_level_m") is None
 
         # Case 1: Unknown - freezing_level_m is None
-        ds2 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': None})
-        assert ds2.attrs.get('freezing_level_m') is None
+        ds2 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={"freezing_level_m": None})
+        assert ds2.attrs.get("freezing_level_m") is None
 
         # Case 2: No freezing layer - negative (below surface)
-        ds3 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': -100})
-        assert ds3.attrs.get('freezing_level_m') == 0
+        ds3 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={"freezing_level_m": -100})
+        assert ds3.attrs.get("freezing_level_m") == 0
 
         # Case 2: No freezing layer - zero (at sea level)
-        ds4 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': 0})
-        assert ds4.attrs.get('freezing_level_m') == 0
+        ds4 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={"freezing_level_m": 0})
+        assert ds4.attrs.get("freezing_level_m") == 0
 
         # Case 2b: Freezing level positive ASL but below antenna (e.g., 100m ASL < 174m antenna)
         # No melting layer visible to radar → normalized to 0
-        ds4b = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': 100})
-        assert ds4b.attrs.get('freezing_level_m') == 0
+        ds4b = read_vvp(SAMPLE_VVP_FILE, radar_metadata={"freezing_level_m": 100})
+        assert ds4b.attrs.get("freezing_level_m") == 0
 
         # Case 3: Valid freezing layer - positive ASL value
         # Input 2000m ASL -> stored as 2000 - 174 = 1826m above antenna
-        ds5 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={'freezing_level_m': 2000})
-        assert ds5.attrs['freezing_level_m'] == 2000 - antenna_height
+        ds5 = read_vvp(SAMPLE_VVP_FILE, radar_metadata={"freezing_level_m": 2000})
+        assert ds5.attrs["freezing_level_m"] == 2000 - antenna_height
 
 
 class TestRadarConfiguration:
@@ -464,29 +487,29 @@ class TestRadarConfiguration:
         config = _load_radar_defaults()
 
         # Check that all expected radar codes are present
-        assert 'KAN' in config
-        assert 'VAN' in config
-        assert 'defaults' in config
+        assert "KAN" in config
+        assert "VAN" in config
+        assert "defaults" in config
 
         # Check structure of a known radar
-        assert 'antenna_height_m' in config['KAN']
-        assert 'lowest_level_offset_m' in config['KAN']
+        assert "antenna_height_m" in config["KAN"]
+        assert "lowest_level_offset_m" in config["KAN"]
 
         # Check structure of defaults section; geometry has no default
         assert "antenna_height_m" not in config["defaults"]
         assert "lowest_level_offset_m" not in config["defaults"]
-        assert 'beamwidth_deg' in config['defaults']
+        assert "beamwidth_deg" in config["defaults"]
 
         # Verify known values from Perl reference
-        assert config['KAN']['antenna_height_m'] == 174
-        assert config['KAN']['lowest_level_offset_m'] == 126
+        assert config["KAN"]["antenna_height_m"] == 174
+        assert config["KAN"]["lowest_level_offset_m"] == 126
 
     def test_get_radar_metadata_known_radar(self):
         """Test retrieving metadata for a known radar code."""
-        meta = _get_radar_metadata('KAN')
+        meta = _get_radar_metadata("KAN")
 
-        assert meta['antenna_height_m'] == 174
-        assert meta['lowest_level_offset_m'] == 126
+        assert meta["antenna_height_m"] == 174
+        assert meta["lowest_level_offset_m"] == 126
 
     def test_get_radar_metadata_unknown_radar_has_no_geometry(self):
         """[defaults] does not provide geometry for unknown radar codes."""
@@ -500,14 +523,14 @@ class TestRadarConfiguration:
             "UNKNOWN", {"antenna_height_m": 100, "lowest_level_offset_m": 200}
         )
         assert (meta["antenna_height_m"], meta["lowest_level_offset_m"]) == (100, 200)
-        assert meta['beamwidth_deg'] == 0.95
+        assert meta["beamwidth_deg"] == 0.95
 
     def test_get_radar_metadata_with_override(self):
         """Test that override metadata takes precedence."""
         meta = _get_radar_metadata(
             "KAN", {"antenna_height_m": 999, "lowest_level_offset_m": 1}
         )
-        assert meta['antenna_height_m'] == 999
+        assert meta["antenna_height_m"] == 999
         assert meta["lowest_level_offset_m"] == 1
 
     @pytest.mark.parametrize("key", ["antenna_height_m", "lowest_level_offset_m"])
@@ -553,39 +576,39 @@ class TestRadarConfiguration:
 
     def test_get_radar_metadata_with_additional_fields(self):
         """Test adding additional fields via override."""
-        meta = _get_radar_metadata('KAN', {'freezing_level_m': 2000})
+        meta = _get_radar_metadata("KAN", {"freezing_level_m": 2000})
 
         # Original fields from TOML
-        assert meta['antenna_height_m'] == 174
-        assert meta['lowest_level_offset_m'] == 126
+        assert meta["antenna_height_m"] == 174
+        assert meta["lowest_level_offset_m"] == 126
         # New field from override
-        assert meta['freezing_level_m'] == 2000
+        assert meta["freezing_level_m"] == 2000
 
     def test_get_radar_metadata_includes_beamwidth(self):
         """Test that beamwidth_deg is loaded from [defaults] section."""
-        meta = _get_radar_metadata('KAN')
+        meta = _get_radar_metadata("KAN")
 
         # Should include beamwidth from [defaults] section
-        assert 'beamwidth_deg' in meta
-        assert meta['beamwidth_deg'] == 0.95
+        assert "beamwidth_deg" in meta
+        assert meta["beamwidth_deg"] == 0.95
 
     def test_get_radar_metadata_beamwidth_can_be_overridden(self):
         """Test that beamwidth_deg can be overridden per-radar."""
-        meta = _get_radar_metadata('KAN', {'beamwidth_deg': 1.0})
+        meta = _get_radar_metadata("KAN", {"beamwidth_deg": 1.0})
 
-        assert meta['beamwidth_deg'] == 1.0
+        assert meta["beamwidth_deg"] == 1.0
 
     def test_list_radar_codes_returns_enabled_by_default(self):
         """Test that list_radar_codes returns enabled radars by default."""
         codes = list_radar_codes()
 
         # All radars in default config are enabled
-        assert 'KAN' in codes
-        assert 'VAN' in codes
-        assert 'VIH' in codes
+        assert "KAN" in codes
+        assert "VAN" in codes
+        assert "VIH" in codes
         # Should not include special sections
-        assert 'defaults' not in codes
-        assert 'network' not in codes
+        assert "defaults" not in codes
+        assert "network" not in codes
 
     def test_list_radar_codes_enabled_only_false(self):
         """Test that list_radar_codes(enabled_only=False) returns all radars."""
@@ -618,29 +641,29 @@ antenna_height_m = 181
 # enabled not specified, should inherit from defaults (true)
 """)
 
-        old_env = os.environ.get('VPRC_RADAR_CONFIG')
+        old_env = os.environ.get("VPRC_RADAR_CONFIG")
         try:
-            os.environ['VPRC_RADAR_CONFIG'] = str(custom_config)
+            os.environ["VPRC_RADAR_CONFIG"] = str(custom_config)
             _load_radar_defaults.cache_clear()
             _build_radar_name_to_code_map.cache_clear()
 
             # enabled_only=True (default) should exclude VAN
             codes_enabled = list_radar_codes(enabled_only=True)
-            assert 'KAN' in codes_enabled
-            assert 'VIH' in codes_enabled
-            assert 'VAN' not in codes_enabled
+            assert "KAN" in codes_enabled
+            assert "VIH" in codes_enabled
+            assert "VAN" not in codes_enabled
 
             # enabled_only=False should include all
             codes_all = list_radar_codes(enabled_only=False)
-            assert 'KAN' in codes_all
-            assert 'VIH' in codes_all
-            assert 'VAN' in codes_all
+            assert "KAN" in codes_all
+            assert "VIH" in codes_all
+            assert "VAN" in codes_all
 
         finally:
             if old_env is not None:
-                os.environ['VPRC_RADAR_CONFIG'] = old_env
+                os.environ["VPRC_RADAR_CONFIG"] = old_env
             else:
-                os.environ.pop('VPRC_RADAR_CONFIG', None)
+                os.environ.pop("VPRC_RADAR_CONFIG", None)
             _load_radar_defaults.cache_clear()
             _build_radar_name_to_code_map.cache_clear()
 
@@ -652,11 +675,11 @@ antenna_height_m = 181
         ds = read_vvp(SAMPLE_VVP_FILE)
 
         # Should have loaded KAN radar defaults
-        assert ds.attrs['radar_code'] == 'KAN'
-        assert ds.attrs['antenna_height_m'] == 174
-        assert ds.attrs['lowest_level_offset_m'] == 126
+        assert ds.attrs["radar_code"] == "KAN"
+        assert ds.attrs["antenna_height_m"] == 174
+        assert ds.attrs["lowest_level_offset_m"] == 126
         # Should also include beamwidth from [defaults] section
-        assert ds.attrs['beamwidth_deg'] == 0.95
+        assert ds.attrs["beamwidth_deg"] == 0.95
 
     def test_read_vvp_with_override(self):
         """Test precedence: function parameter > TOML defaults."""
@@ -674,13 +697,13 @@ antenna_height_m = 181
         )
 
         # Overridden values
-        assert ds.attrs['antenna_height_m'] == 200
+        assert ds.attrs["antenna_height_m"] == 200
         assert ds.attrs["lowest_level_offset_m"] == 100
         assert int(ds.height[0]) == 100
         # TOML value for a field not overridden
         assert ds.attrs["latitude"] == pytest.approx(61.81085)
         # freezing_level converted from ASL (2500) to above-antenna (2500 - 200 = 2300)
-        assert ds.attrs['freezing_level_m'] == 2300
+        assert ds.attrs["freezing_level_m"] == 2300
 
     def test_custom_config_via_env_var(self, tmp_path):
         """Test loading custom TOML via VPRC_RADAR_CONFIG environment variable."""
@@ -697,23 +720,23 @@ lowest_level_offset_m = 50
 """)
 
         # Set environment variable and clear cache
-        old_env = os.environ.get('VPRC_RADAR_CONFIG')
+        old_env = os.environ.get("VPRC_RADAR_CONFIG")
         try:
-            os.environ['VPRC_RADAR_CONFIG'] = str(custom_config)
+            os.environ["VPRC_RADAR_CONFIG"] = str(custom_config)
             # Clear the cache to force reload
             _load_radar_defaults.cache_clear()
 
             # Test that custom config is loaded
             config = _load_radar_defaults()
-            assert config['KAN']['antenna_height_m'] == 999
-            assert config['KAN']['lowest_level_offset_m'] == 888
+            assert config["KAN"]["antenna_height_m"] == 999
+            assert config["KAN"]["lowest_level_offset_m"] == 888
 
         finally:
             # Restore environment
             if old_env is not None:
-                os.environ['VPRC_RADAR_CONFIG'] = old_env
+                os.environ["VPRC_RADAR_CONFIG"] = old_env
             else:
-                os.environ.pop('VPRC_RADAR_CONFIG', None)
+                os.environ.pop("VPRC_RADAR_CONFIG", None)
             # Clear cache again to restore default
             _load_radar_defaults.cache_clear()
 
@@ -733,9 +756,9 @@ beamwidth_deg = 1.2
 custom_field = 123
 """)
 
-        old_env = os.environ.get('VPRC_RADAR_CONFIG')
+        old_env = os.environ.get("VPRC_RADAR_CONFIG")
         try:
-            os.environ['VPRC_RADAR_CONFIG'] = str(custom_config)
+            os.environ["VPRC_RADAR_CONFIG"] = str(custom_config)
             _load_radar_defaults.cache_clear()
             _build_radar_name_to_code_map.cache_clear()
 
@@ -750,7 +773,7 @@ custom_field = 123
             )
 
             # Function parameters win
-            assert ds.attrs['antenna_height_m'] == 300
+            assert ds.attrs["antenna_height_m"] == 300
             assert ds.attrs["lowest_level_offset_m"] == 200
             assert ds.attrs["custom_field"] == 7
             # Custom TOML provides this
@@ -758,9 +781,9 @@ custom_field = 123
 
         finally:
             if old_env is not None:
-                os.environ['VPRC_RADAR_CONFIG'] = old_env
+                os.environ["VPRC_RADAR_CONFIG"] = old_env
             else:
-                os.environ.pop('VPRC_RADAR_CONFIG', None)
+                os.environ.pop("VPRC_RADAR_CONFIG", None)
             _load_radar_defaults.cache_clear()
             _build_radar_name_to_code_map.cache_clear()
 
@@ -773,27 +796,27 @@ class TestRadarNameMapping:
         name_map = _build_radar_name_to_code_map()
 
         # Check that all known radars are present
-        assert 'KANKAANPAA' in name_map
-        assert 'VANTAA' in name_map
-        assert 'LUOSTO' in name_map
+        assert "KANKAANPAA" in name_map
+        assert "VANTAA" in name_map
+        assert "LUOSTO" in name_map
 
         # Verify correct mappings based on Perl reference
-        assert name_map['KANKAANPAA'] == 'KAN'
-        assert name_map['VANTAA'] == 'VAN'
-        assert name_map['IKAALINEN'] == 'IKA'
-        assert name_map['KESALAHTI'] == 'KES'
-        assert name_map['PETAJAVESI'] == 'PET'
-        assert name_map['ANJALANKOSKI'] == 'ANJ'
-        assert name_map['KUOPIO'] == 'KUO'
-        assert name_map['UTAJARVI'] == 'UTA'
-        assert name_map['LUOSTO'] == 'LUO'
-        assert name_map['KAUNISPAA'] == 'KAU'
-        assert name_map['VIMPELI'] == 'VIM'
-        assert name_map['NURMES'] == 'NUR'
-        assert name_map['VIHTI'] == 'VIH'
+        assert name_map["KANKAANPAA"] == "KAN"
+        assert name_map["VANTAA"] == "VAN"
+        assert name_map["IKAALINEN"] == "IKA"
+        assert name_map["KESALAHTI"] == "KES"
+        assert name_map["PETAJAVESI"] == "PET"
+        assert name_map["ANJALANKOSKI"] == "ANJ"
+        assert name_map["KUOPIO"] == "KUO"
+        assert name_map["UTAJARVI"] == "UTA"
+        assert name_map["LUOSTO"] == "LUO"
+        assert name_map["KAUNISPAA"] == "KAU"
+        assert name_map["VIMPELI"] == "VIM"
+        assert name_map["NURMES"] == "NUR"
+        assert name_map["VIHTI"] == "VIH"
         assert name_map["KORPPOO"] == "KOR"
         assert name_map["KOR"] == "KOR"  # Alias: older headers, Perl match
-        assert name_map['KERAVA'] == 'KER'
+        assert name_map["KERAVA"] == "KER"
 
         # 15 radars, excluding 'other'; Korppoo has one alias
         assert len(set(name_map.values())) == 15
@@ -802,23 +825,23 @@ class TestRadarNameMapping:
     def test_build_radar_name_to_code_map_excludes_other(self):
         """Test that 'other' section is not included in name mapping."""
         name_map = _build_radar_name_to_code_map()
-        assert 'other' not in name_map.values()
+        assert "other" not in name_map.values()
 
     def test_radar_name_to_code_known_radar(self):
         """Test converting known radar names to codes."""
-        assert _radar_name_to_code('KANKAANPAA') == 'KAN'
-        assert _radar_name_to_code('VANTAA') == 'VAN'
-        assert _radar_name_to_code('LUOSTO') == 'LUO'
+        assert _radar_name_to_code("KANKAANPAA") == "KAN"
+        assert _radar_name_to_code("VANTAA") == "VAN"
+        assert _radar_name_to_code("LUOSTO") == "LUO"
 
     def test_radar_name_to_code_case_insensitive(self):
         """Test that name matching is case-insensitive."""
-        assert _radar_name_to_code('kankaanpaa') == 'KAN'
-        assert _radar_name_to_code('Kankaanpaa') == 'KAN'
-        assert _radar_name_to_code('KANKAANPAA') == 'KAN'
+        assert _radar_name_to_code("kankaanpaa") == "KAN"
+        assert _radar_name_to_code("Kankaanpaa") == "KAN"
+        assert _radar_name_to_code("KANKAANPAA") == "KAN"
 
     def test_radar_name_to_code_unknown_radar(self):
         """Test that unknown radar names are returned unchanged."""
-        unknown_name = 'UNKNOWN_RADAR'
+        unknown_name = "UNKNOWN_RADAR"
         assert _radar_name_to_code(unknown_name) == unknown_name
 
     def test_radar_name_to_code_with_custom_toml(self, tmp_path):
@@ -836,20 +859,20 @@ antenna_height_m = 200
 lowest_level_offset_m = 100
 """)
 
-        old_env = os.environ.get('VPRC_RADAR_CONFIG')
+        old_env = os.environ.get("VPRC_RADAR_CONFIG")
         try:
-            os.environ['VPRC_RADAR_CONFIG'] = str(custom_config)
+            os.environ["VPRC_RADAR_CONFIG"] = str(custom_config)
             _load_radar_defaults.cache_clear()
             _build_radar_name_to_code_map.cache_clear()
 
             # Test that custom radar is in mapping
-            assert _radar_name_to_code('TESTDAR') == 'TST'
+            assert _radar_name_to_code("TESTDAR") == "TST"
 
         finally:
             if old_env is not None:
-                os.environ['VPRC_RADAR_CONFIG'] = old_env
+                os.environ["VPRC_RADAR_CONFIG"] = old_env
             else:
-                os.environ.pop('VPRC_RADAR_CONFIG', None)
+                os.environ.pop("VPRC_RADAR_CONFIG", None)
             _load_radar_defaults.cache_clear()
             _build_radar_name_to_code_map.cache_clear()
 
@@ -861,12 +884,12 @@ lowest_level_offset_m = 100
         ds = read_vvp(SAMPLE_VVP_FILE)
 
         # File contains "KANKAANPAA", should map to "KAN"
-        assert ds.attrs['radar'] == 'KANKAANPAA'
-        assert ds.attrs['radar_code'] == 'KAN'
+        assert ds.attrs["radar"] == "KANKAANPAA"
+        assert ds.attrs["radar_code"] == "KAN"
 
         # And should load KAN's configuration
-        assert ds.attrs['antenna_height_m'] == 174
-        assert ds.attrs['lowest_level_offset_m'] == 126
+        assert ds.attrs["antenna_height_m"] == 174
+        assert ds.attrs["lowest_level_offset_m"] == 126
 
     def test_name_field_required_in_toml(self):
         """Test that TOML entries without 'name' field are skipped in mapping."""
@@ -881,29 +904,30 @@ lowest_level_offset_m = 100
         """Test that TOML names exactly match Perl reference implementation."""
         # Based on allprof_prodx2.pl lines 75-135
         expected_mappings = {
-            'VANTAA': 'VAN',
-            'KERAVA': 'KER',
-            'IKAALINEN': 'IKA',
-            'KANKAANPAA': 'KAN',
-            'KESALAHTI': 'KES',
-            'PETAJAVESI': 'PET',
-            'ANJALANKOSKI': 'ANJ',
-            'KUOPIO': 'KUO',
-            'KOR': 'KOR',
-            'UTAJARVI': 'UTA',
-            'LUOSTO': 'LUO',
-            'KAUNISPAA': 'KAU',
-            'VIMPELI': 'VIM',
-            'NURMES': 'NUR',
-            'VIHTI': 'VIH',
+            "VANTAA": "VAN",
+            "KERAVA": "KER",
+            "IKAALINEN": "IKA",
+            "KANKAANPAA": "KAN",
+            "KESALAHTI": "KES",
+            "PETAJAVESI": "PET",
+            "ANJALANKOSKI": "ANJ",
+            "KUOPIO": "KUO",
+            "KOR": "KOR",
+            "UTAJARVI": "UTA",
+            "LUOSTO": "LUO",
+            "KAUNISPAA": "KAU",
+            "VIMPELI": "VIM",
+            "NURMES": "NUR",
+            "VIHTI": "VIH",
         }
 
         name_map = _build_radar_name_to_code_map()
 
         for name, expected_code in expected_mappings.items():
             assert name in name_map, f"Missing radar name: {name}"
-            assert name_map[name] == expected_code, \
+            assert name_map[name] == expected_code, (
                 f"Wrong code for {name}: expected {expected_code}, got {name_map[name]}"
+            )
 
     # Header names of the operational radars, verified against VVP files
     # in November 2026.

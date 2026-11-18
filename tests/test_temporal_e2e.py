@@ -22,22 +22,21 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from vprc import process_vvp, average_corrections
+from vprc import average_corrections, process_vvp
 from vprc.temporal import MIN_AGE_WEIGHT
 from vprc.vpr_correction import VPRCorrectionResult
 
 from .legacy_parser import parse_legacy_cor, parse_legacy_corave
 
-
 # Paths to test data
-DATA_DIR = Path(__file__).parent / 'data'
+DATA_DIR = Path(__file__).parent / "data"
 
 # VIM radar VVP files (7 timesteps)
-VIM_FILES = sorted(DATA_DIR.glob('202208171*_VIM.VVP_40.txt'))
+VIM_FILES = sorted(DATA_DIR.glob("202208171*_VIM.VVP_40.txt"))
 
 # Expected legacy outputs
-VIM_COR_FILES = sorted(DATA_DIR.glob('202208171*_VIM.VVP_40.cor'))
-VIM_CORAVE = DATA_DIR / '202208171245_VIM.VVP_40.corave'
+VIM_COR_FILES = sorted(DATA_DIR.glob("202208171*_VIM.VVP_40.cor"))
+VIM_CORAVE = DATA_DIR / "202208171245_VIM.VVP_40.corave"
 
 
 class TestTemporalAveragingE2E:
@@ -46,14 +45,18 @@ class TestTemporalAveragingE2E:
     def test_data_files_exist(self):
         """Verify all required test data files exist."""
         assert len(VIM_FILES) == 7, f"Expected 7 VIM VVP files, found {len(VIM_FILES)}"
-        assert len(VIM_COR_FILES) == 7, f"Expected 7 VIM .cor files, found {len(VIM_COR_FILES)}"
+        assert len(VIM_COR_FILES) == 7, (
+            f"Expected 7 VIM .cor files, found {len(VIM_COR_FILES)}"
+        )
         assert VIM_CORAVE.exists(), f"Expected .corave file not found: {VIM_CORAVE}"
 
     def test_process_all_vim_profiles(self):
         """Verify all VIM profiles can be processed."""
         for vvp_file in VIM_FILES:
             result = process_vvp(vvp_file)
-            assert result.vpr_correction is not None, f"VPR correction failed for {vvp_file}"
+            assert result.vpr_correction is not None, (
+                f"VPR correction failed for {vvp_file}"
+            )
             assert result.vpr_correction.usable, f"VPR not usable for {vvp_file}"
 
     def test_average_corrections_produces_result(self):
@@ -68,7 +71,7 @@ class TestTemporalAveragingE2E:
 
         averaged = average_corrections(results)
         assert averaged.usable
-        assert 'cappi_correction_db' in averaged.corrections
+        assert "cappi_correction_db" in averaged.corrections
 
     def test_averaged_corrections_reasonable_values(self):
         """Verify averaged corrections are in reasonable range."""
@@ -81,7 +84,7 @@ class TestTemporalAveragingE2E:
         averaged = average_corrections(results)
 
         # Corrections should be in reasonable dB range
-        cappi_corr = averaged.corrections['cappi_correction_db']
+        cappi_corr = averaged.corrections["cappi_correction_db"]
         assert np.all(cappi_corr >= -30), "Corrections should not be below -30 dB"
         assert np.all(cappi_corr <= 30), "Corrections should not exceed 30 dB"
 
@@ -126,8 +129,8 @@ class TestTemporalAveragingE2E:
 
         # Legacy shows count=7 for all ranges
         legacy_ds, _ = parse_legacy_corave(VIM_CORAVE)
-        assert np.all(legacy_ds['count_klim'] == 7)
-        assert np.all(legacy_ds['count_rain'] == 7)
+        assert np.all(legacy_ds["count_klim"] == 7)
+        assert np.all(legacy_ds["count_rain"] == 7)
 
 
 class TestLegacyWeightingComparison:
@@ -162,6 +165,7 @@ class TestLegacyWeightingComparison:
         # Create 7 equally-spaced timestamps (15 min apart)
         base = datetime(2022, 8, 17, 11, 0)
         from datetime import timedelta
+
         timestamps = [base + timedelta(minutes=15 * i) for i in range(7)]
 
         py_weights = _compute_age_weights(timestamps)
@@ -214,15 +218,15 @@ class TestCorParserValidation:
         cor_file = VIM_COR_FILES[0]
         ds, header = parse_legacy_cor(cor_file)
 
-        assert header.radar_name == 'VIMPELI'
-        assert header.product == 'VVP_40'
+        assert header.radar_name == "VIMPELI"
+        assert header.product == "VVP_40"
         assert len(header.elevation_angles) == 4
         assert header.elevation_angles == [0.3, 0.7, 1.5, 3.0]
 
         # Check data structure
-        assert 'correction_klim_db' in ds
-        assert 'correction_rain_db' in ds
-        assert 'beam_height_m' in ds
+        assert "correction_klim_db" in ds
+        assert "correction_rain_db" in ds
+        assert "beam_height_m" in ds
 
         # Range should go 1-251 km (legacy includes 251)
         assert ds.range_km.min() == 1
@@ -232,16 +236,16 @@ class TestCorParserValidation:
         """Verify .corave file parsing."""
         ds, header = parse_legacy_corave(VIM_CORAVE)
 
-        assert header.radar_name == 'VIMPELI'
-        assert header.product == 'VVP_40'
+        assert header.radar_name == "VIMPELI"
+        assert header.product == "VVP_40"
         assert len(header.elevation_angles) == 4
 
         # Check data structure
-        assert 'correction_avg_db' in ds
-        assert 'correction_rain_db' in ds
-        assert 'count_klim' in ds
-        assert 'count_rain' in ds
+        assert "correction_avg_db" in ds
+        assert "correction_rain_db" in ds
+        assert "count_klim" in ds
+        assert "count_rain" in ds
 
         # Sample counts should all be 7 (7 input files)
-        assert np.all(ds['count_klim'] == 7)
-        assert np.all(ds['count_rain'] == 7)
+        assert np.all(ds["count_klim"] == 7)
+        assert np.all(ds["count_rain"] == 7)

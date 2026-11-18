@@ -4,18 +4,18 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from vprc.constants import DEFAULT_BEAMWIDTH_DEG, FINE_GRID_RESOLUTION_M, MDS, STEP
 from vprc.vpr_correction import (
     VPRCorrectionResult,
-    interpolate_to_fine_grid,
     compute_beam_height,
-    solve_elevation_for_height,
     compute_beam_weight,
-    convolve_beam_with_profile,
     compute_correction_for_range,
-    compute_vpr_correction,
     compute_quality_weight,
+    compute_vpr_correction,
+    convolve_beam_with_profile,
+    interpolate_to_fine_grid,
+    solve_elevation_for_height,
 )
-from vprc.constants import MDS, STEP, FINE_GRID_RESOLUTION_M, DEFAULT_BEAMWIDTH_DEG
 
 
 def make_test_dataset(
@@ -204,7 +204,9 @@ class TestConvolveBeamWithProfile:
     def test_unblocked_uniform_profile_no_change(self):
         """An unblocked beam observes the uniform profile unchanged."""
         n_layers = 600
-        fine_heights = np.arange(0, n_layers * FINE_GRID_RESOLUTION_M, FINE_GRID_RESOLUTION_M)
+        fine_heights = np.arange(
+            0, n_layers * FINE_GRID_RESOLUTION_M, FINE_GRID_RESOLUTION_M
+        )
         uniform_z = np.ones(n_layers) * 100.0  # Uniform Z
 
         z1 = convolve_beam_with_profile(fine_heights, uniform_z, 4000, 100000)
@@ -229,7 +231,9 @@ class TestConvolveBeamWithProfile:
     def test_peak_at_beam_center_maximizes_z(self):
         """Profile with peak at beam center produces maximum observed Z."""
         n_layers = 600
-        fine_heights = np.arange(0, n_layers * FINE_GRID_RESOLUTION_M, FINE_GRID_RESOLUTION_M)
+        fine_heights = np.arange(
+            0, n_layers * FINE_GRID_RESOLUTION_M, FINE_GRID_RESOLUTION_M
+        )
 
         # Create profile with peak at 3000m
         peak_height = 3000
@@ -240,7 +244,9 @@ class TestConvolveBeamWithProfile:
         )
 
         # Beam centered on peak should see more Z than beam away from peak
-        z_on_peak = convolve_beam_with_profile(fine_heights, profile_z, peak_height, 100000)
+        z_on_peak = convolve_beam_with_profile(
+            fine_heights, profile_z, peak_height, 100000
+        )
         z_off_peak = convolve_beam_with_profile(fine_heights, profile_z, 1000, 100000)
 
         assert z_on_peak > z_off_peak
@@ -252,7 +258,9 @@ class TestComputeCorrectionForRange:
     def test_uniform_profile_zero_correction(self):
         """Uniform profile produces ~zero correction."""
         n_layers = 600
-        fine_heights = np.arange(0, n_layers * FINE_GRID_RESOLUTION_M, FINE_GRID_RESOLUTION_M)
+        fine_heights = np.arange(
+            0, n_layers * FINE_GRID_RESOLUTION_M, FINE_GRID_RESOLUTION_M
+        )
         uniform_z = np.ones(n_layers) * 100.0
 
         corr, beam_h = compute_correction_for_range(
@@ -265,7 +273,9 @@ class TestComputeCorrectionForRange:
     def test_decreasing_profile_positive_correction(self):
         """Profile decreasing with height produces positive correction."""
         n_layers = 600
-        fine_heights = np.arange(0, n_layers * FINE_GRID_RESOLUTION_M, FINE_GRID_RESOLUTION_M)
+        fine_heights = np.arange(
+            0, n_layers * FINE_GRID_RESOLUTION_M, FINE_GRID_RESOLUTION_M
+        )
         # Z decreases exponentially with height
         profile_z = 1000.0 * np.exp(-fine_heights / 3000.0)
         z_ground = profile_z[0]
@@ -288,7 +298,12 @@ class TestComputeCorrectionForRange:
     def test_no_echo_retains_previous_correction(self):
         heights = np.arange(0, 15000, 25)
         corr, _ = compute_correction_for_range(
-            heights, np.zeros(len(heights)), 100.0, 200, 10, 174,
+            heights,
+            np.zeros(len(heights)),
+            100.0,
+            200,
+            10,
+            174,
             previous_correction_db=12.3,
         )
         assert corr == pytest.approx(12.3)
@@ -338,12 +353,8 @@ class TestComputeVprCorrection:
 
     @pytest.mark.parametrize("no_echo", [False, True])
     def test_cappi_targets_are_above_sea_level(self, no_echo):
-        ds = make_test_dataset(
-            [MDS if no_echo else 30.0] * 50, antenna_height_m=174
-        )
-        result = compute_vpr_correction(
-            ds, freezing_level_m=2000, max_range_km=10
-        )
+        ds = make_test_dataset([MDS if no_echo else 30.0] * 50, antenna_height_m=174)
+        result = compute_vpr_correction(ds, freezing_level_m=2000, max_range_km=10)
         heights = result.corrections.cappi_beam_height_m
         assert heights.sel(range_km=10, cappi_height=500).item() == pytest.approx(326)
         assert heights.sel(range_km=1, cappi_height=1000).item() == pytest.approx(826)
@@ -360,12 +371,16 @@ class TestComputeVprCorrection:
     def test_shallow_echo_keeps_maximum_correction_above_echo(self):
         heights = list(range(100, 10000, 200))
         ds = make_test_dataset(
-            [30.0 if h <= 900 else MDS for h in heights], heights,
+            [30.0 if h <= 900 else MDS for h in heights],
+            heights,
             antenna_height_m=174,
         )
         result = compute_vpr_correction(
-            ds, elevation_angles_deg=(3.3,), include_clim=False,
-            max_range_km=250, range_step_km=50,
+            ds,
+            elevation_angles_deg=(3.3,),
+            include_clim=False,
+            max_range_km=250,
+            range_step_km=50,
         )
         # Unchanged pystycappi.pl gives +30 at all these ranges.
         np.testing.assert_array_equal(
@@ -376,12 +391,16 @@ class TestComputeVprCorrection:
     def test_echo_outside_legacy_beam_support_does_not_contribute(self):
         heights = list(range(100, 10000, 200))
         ds = make_test_dataset(
-            [50.0 if h == 3700 else 10.0 for h in heights], heights,
+            [50.0 if h == 3700 else 10.0 for h in heights],
+            heights,
             antenna_height_m=174,
         )
         result = compute_vpr_correction(
-            ds, elevation_angles_deg=(2.3,), max_range_km=50,
-            range_step_km=50, include_clim=False,
+            ds,
+            elevation_angles_deg=(2.3,),
+            max_range_km=50,
+            range_step_km=50,
+            include_clim=False,
         )
         # Unchanged pystycappi.pl: the 3700 m peak is outside the beam, dBc=0.
         assert result.corrections.elev_correction_db.item() == 0.0
@@ -389,8 +408,11 @@ class TestComputeVprCorrection:
     def test_correction_is_carried_beyond_entire_fine_grid(self):
         ds = make_test_dataset([30.0] * 50)
         result = compute_vpr_correction(
-            ds, elevation_angles_deg=(10.0,), max_range_km=250,
-            range_step_km=10, include_clim=False,
+            ds,
+            elevation_angles_deg=(10.0,),
+            max_range_km=250,
+            range_step_km=10,
+            include_clim=False,
         )
         np.testing.assert_array_equal(
             result.corrections.elev_correction_db.sel(range_km=[100, 150, 200, 250]),
@@ -402,7 +424,9 @@ class TestComputeVprCorrection:
         ds = make_test_dataset([MDS if no_echo else 30.0] * 50)
         ds.attrs.update(beamwidth_deg=1.1, horizon_angle_deg=0.8)
         kwargs = dict(
-            elevation_angles_deg=(0.5,), max_range_km=100, range_step_km=100,
+            elevation_angles_deg=(0.5,),
+            max_range_km=100,
+            range_step_km=100,
             freezing_level_m=2000,
         )
         metadata = compute_vpr_correction(ds, **kwargs)
@@ -413,9 +437,7 @@ class TestComputeVprCorrection:
             metadata.corrections.elev_correction_db,
             explicit.corrections.elev_correction_db,
         )
-        lower_horizon = compute_vpr_correction(
-            ds, horizon_angle_deg=0.0, **kwargs
-        )
+        lower_horizon = compute_vpr_correction(ds, horizon_angle_deg=0.0, **kwargs)
         assert metadata.corrections.elev_correction_db.item() > (
             lower_horizon.corrections.elev_correction_db.item()
         )
@@ -478,8 +500,9 @@ class TestIntegration:
 
     def test_process_vvp_computes_vpr_correction(self):
         """process_vvp includes VPR correction when usable."""
-        from vprc import process_vvp
         from pathlib import Path
+
+        from vprc import process_vvp
 
         # Use the test VVP file
         test_file = Path(__file__).parent / "data" / "202508241100_KAN.VVP_40.txt"
@@ -496,8 +519,9 @@ class TestIntegration:
 
     def test_process_vvp_skips_vpr_when_disabled(self):
         """process_vvp skips VPR correction when compute_vpr=False."""
-        from vprc import process_vvp
         from pathlib import Path
+
+        from vprc import process_vvp
 
         test_file = Path(__file__).parent / "data" / "202508241100_KAN.VVP_40.txt"
         if not test_file.exists():
@@ -506,6 +530,7 @@ class TestIntegration:
         result = process_vvp(test_file, compute_vpr=False)
 
         assert result.vpr_correction is None
+
 
 class TestQualityWeight:
     """Tests for profile quality weight calculation."""
@@ -548,9 +573,7 @@ class TestQualityWeight:
         assert compute_quality_weight(ds.drop_vars("zcount")) == 0.0
 
     def test_first_layer_top_and_strict_sample_threshold(self):
-        ds = make_test_dataset(
-            [30.0] * 8, zcounts=[1000] * 5 + [30, 100, 10000]
-        )
+        ds = make_test_dataset([30.0] * 8, zcounts=[1000] * 5 + [30, 100, 10000])
         assert compute_quality_weight(ds, layer_top_height_m=1300) == pytest.approx(
             5100 / (6 * 5000)
         )
@@ -798,8 +821,8 @@ class TestBrightBandSlopeAdjustment:
 
     def test_adjust_ground_reference_no_bb(self):
         """Without BB detection, original value is returned."""
-        from vprc.vpr_correction import adjust_ground_reference
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import adjust_ground_reference
 
         heights = np.array([100, 300, 500, 700])
         dbz_values = np.array([30.0, 28.0, 25.0, 22.0])
@@ -814,8 +837,8 @@ class TestBrightBandSlopeAdjustment:
 
     def test_adjust_ground_reference_bb_peak_at_surface(self):
         """BB peak at lowest level uses BB top value as reference."""
-        from vprc.vpr_correction import adjust_ground_reference
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import adjust_ground_reference
 
         heights = np.array([100, 300, 500, 700, 900])
         # Strong BB at surface: peak 40 dBZ at 100m, drops to 25 dBZ at 500m
@@ -838,8 +861,8 @@ class TestBrightBandSlopeAdjustment:
 
     def test_adjust_ground_reference_steep_bb_near_surface(self):
         """Steep BB near surface triggers slope adjustment."""
-        from vprc.vpr_correction import adjust_ground_reference
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import adjust_ground_reference
 
         heights = np.array([100, 300, 500, 700, 900])
         # BB just above surface: 35 dBZ at 300m (bottom), 20 dBZ at 700m (top)
@@ -864,8 +887,8 @@ class TestBrightBandSlopeAdjustment:
         assert was_adjusted
 
     def test_adjust_ground_reference_bottom_at_lowest_positive_level(self):
-        from vprc.vpr_correction import adjust_ground_reference
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import adjust_ground_reference
 
         heights = np.array([100, 300, 500, 700, 900])
         dbz_values = np.array([30.0, 40.0, 25.0, 20.0, 18.0])
@@ -878,8 +901,8 @@ class TestBrightBandSlopeAdjustment:
 
     def test_adjust_ground_reference_gentle_slope_no_adjustment(self):
         """Gentle slope below threshold does not trigger adjustment."""
-        from vprc.vpr_correction import adjust_ground_reference
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import adjust_ground_reference
 
         heights = np.array([100, 300, 500, 700, 900])
         # Gentle slope: 25 dBZ at 300m, 24.5 dBZ at 700m
@@ -914,8 +937,8 @@ class TestBrightBandSlopeAdjustment:
 
     def test_adjust_ground_reference_safety_cap(self):
         """Adjusted value is capped at observed lowest-level value."""
-        from vprc.vpr_correction import adjust_ground_reference
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import adjust_ground_reference
 
         heights = np.array([100, 300, 500, 700, 900, 1100, 1300])
         # BB with high top: extrapolated value would exceed observed
@@ -976,13 +999,16 @@ class TestBrightBandSlopeAdjustment:
         # The BB has slope = (32-30)/400*200 = 1.0 > 0.2, and bottom=300 < 600
         # So adjustment should trigger
         # Note: may be capped if extrapolated > original
-        assert result_with_bb.z_ground_dbz != result_no_bb.z_ground_dbz or \
-               result_with_bb.z_ground_dbz == 32.0  # Capped case
+        assert (
+            result_with_bb.z_ground_dbz != result_no_bb.z_ground_dbz
+            or result_with_bb.z_ground_dbz == 32.0
+        )  # Capped case
 
     def test_pipeline_passes_bb_result(self):
         """process_vvp passes BB result to compute_vpr_correction."""
-        from vprc import process_vvp
         from pathlib import Path
+
+        from vprc import process_vvp
 
         test_file = Path(__file__).parent / "data" / "202208171245_VIM.VVP_40.txt"
         if not test_file.exists():
@@ -1006,8 +1032,8 @@ class TestBBPeakAmplitudeCap:
 
     def test_cap_bb_peak_amplitude_no_bb(self):
         """No BB detected - returns unchanged dataset."""
-        from vprc.vpr_correction import cap_bb_peak_amplitude
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import cap_bb_peak_amplitude
 
         dbz_values = [35.0, 30.0, 25.0]
         heights = [100, 300, 500]
@@ -1022,8 +1048,8 @@ class TestBBPeakAmplitudeCap:
 
     def test_cap_bb_peak_amplitude_not_at_surface(self):
         """BB peak not at lowest level - returns unchanged dataset."""
-        from vprc.vpr_correction import cap_bb_peak_amplitude
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import cap_bb_peak_amplitude
 
         dbz_values = [30.0, 40.0, 25.0, 20.0]  # Peak at 300m
         heights = [100, 300, 500, 700]
@@ -1044,8 +1070,8 @@ class TestBBPeakAmplitudeCap:
 
     def test_cap_bb_peak_amplitude_below_threshold(self):
         """BB at surface but amplitude below cap - returns unchanged dataset."""
-        from vprc.vpr_correction import cap_bb_peak_amplitude
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import cap_bb_peak_amplitude
 
         dbz_values = [38.0, 30.0, 25.0]  # Peak at surface
         heights = [100, 300, 500]
@@ -1066,8 +1092,8 @@ class TestBBPeakAmplitudeCap:
 
     def test_cap_bb_peak_amplitude_exceeds_threshold(self):
         """BB at surface with high amplitude - peak is reduced."""
-        from vprc.vpr_correction import cap_bb_peak_amplitude
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import cap_bb_peak_amplitude
 
         dbz_values = [45.0, 30.0, 25.0]  # Peak at surface with 15 dB amplitude
         heights = [100, 300, 500]
@@ -1094,8 +1120,8 @@ class TestBBPeakAmplitudeCap:
 
     def test_cap_bb_peak_amplitude_custom_threshold(self):
         """Custom amplitude cap threshold is respected."""
-        from vprc.vpr_correction import cap_bb_peak_amplitude
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import cap_bb_peak_amplitude
 
         dbz_values = [40.0, 30.0, 25.0]  # 10 dB amplitude
         heights = [100, 300, 500]
@@ -1120,15 +1146,19 @@ class TestBBPeakAmplitudeCap:
 
     @pytest.mark.parametrize("include_raw", [False, True])
     def test_cap_is_not_applied_twice_after_profile_finalization(self, include_raw):
-        from vprc.vpr_correction import cap_bb_peak_amplitude
         from vprc.bright_band import BrightBandResult
+        from vprc.vpr_correction import cap_bb_peak_amplitude
 
         ds = make_test_dataset([45.0, 30.0, 25.0])
         if include_raw:
             ds["lin_dbz"] = ds.corrected_dbz.copy()
         bb = BrightBandResult(
-            detected=True, peak_height=100, bottom_height=-1, top_height=300,
-            peak_dbz=45.0, amplitude_above=15.0,
+            detected=True,
+            peak_height=100,
+            bottom_height=-1,
+            top_height=300,
+            peak_dbz=45.0,
+            amplitude_above=15.0,
         )
         finalized = cap_bb_peak_amplitude(ds, bb)
         repeated = cap_bb_peak_amplitude(finalized, bb)

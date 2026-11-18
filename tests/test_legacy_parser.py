@@ -57,8 +57,7 @@ def test_profile_sections(
     reference = PROFILE_PATH.read_text()
     expected_ds, expected_header, expected_footer = parse_legacy_profile(PROFILE_PATH)
     extra_layer = (
-        "2 7526 8326 12.0 0 0 1 0 0 0 0 0 0 0 0 0.0 0.0 3.0 "
-        "0.66 24 8 2025 11 0\n"
+        "2 7526 8326 12.0 0 0 1 0 0 0 0 0 0 0 0 0.0 0.0 3.0 0.66 24 8 2025 11 0\n"
         if multilayer
         else ""
     )
@@ -175,8 +174,7 @@ def test_correction_freezing_height_is_not_a_boolean_or_asl(
 ) -> None:
     if averaged:
         header = (
-            f"KANKAANPAA VVP_40 200 -45 24 08 2025 11 00 {freezing_height} "
-            "ELEVS 0.7\n"
+            f"KANKAANPAA VVP_40 200 -45 24 08 2025 11 00 {freezing_height} ELEVS 0.7\n"
         )
         text = header + "1 0.0 1.0 325 2.3 -0.2 825 -3.5 0.0 12 8 4\n"
     else:

@@ -171,9 +171,7 @@ def average_corrections(
             for r in sorted_results
             if r.z_ground_clim_dbz is not None
         ]
-        avg_z_ground_clim = float(
-            np.average(clim_references, weights=weights)
-        )
+        avg_z_ground_clim = float(np.average(clim_references, weights=weights))
 
     # Copy attrs from newest profile, update timestamp to latest
     avg_ds.attrs = dict(sorted_results[-1].corrections.attrs)
@@ -228,9 +226,7 @@ def _extract_timestamps(results: list[VPRCorrectionResult]) -> list[datetime]:
         try:
             ts = datetime.fromisoformat(ts_str)
         except (TypeError, ValueError) as e:
-            raise ValueError(
-                f"Result {i} has invalid timestamp '{ts_str}': {e}"
-            ) from e
+            raise ValueError(f"Result {i} has invalid timestamp '{ts_str}': {e}") from e
         timestamps.append(ts)
     return timestamps
 
@@ -262,9 +258,11 @@ def _compute_age_weights(timestamps: list[datetime]) -> np.ndarray:
 
     # age_fraction: 1.0 for oldest, 0.0 for newest
     # weight: MIN_AGE_WEIGHT for oldest, 1.0 for newest
-    weights = np.array([
-        1.0 - ((newest - t).total_seconds() / time_span) * (1.0 - MIN_AGE_WEIGHT)
-        for t in timestamps
-    ])
+    weights = np.array(
+        [
+            1.0 - ((newest - t).total_seconds() / time_span) * (1.0 - MIN_AGE_WEIGHT)
+            for t in timestamps
+        ]
+    )
 
     return weights

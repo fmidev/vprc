@@ -1,14 +1,15 @@
 """Tests for COG export functionality."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import xarray as xr
-from pathlib import Path
 
 from vprc.io.geotiff import (
     prepare_for_export,
-    write_correction_cog,
     write_composite_cogs,
+    write_correction_cog,
     write_weights_cog,
 )
 
@@ -285,7 +286,9 @@ class TestEmptyCompositeExport:
         """write_composite_cogs works with empty composite."""
         ds = self._create_empty_composite()
 
-        outputs = write_composite_cogs(ds, tmp_path, prefix="empty", include_weights=True)
+        outputs = write_composite_cogs(
+            ds, tmp_path, prefix="empty", include_weights=True
+        )
 
         assert len(outputs) == 3
         for path in outputs.values():

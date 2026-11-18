@@ -153,7 +153,7 @@ NO_BB_CLUTTER_FREEZING_LEVEL_M = 1000
 # Height offsets for BB spike restoration (meters)
 # After spike smoothing, restore original values at these offsets from BB peak
 # Perl: restores at bbalku-400, bbalku-200, bbalku, bbalku+200, bbalku+400
-BB_SPIKE_RESTORATION_OFFSETS = (-2*STEP, -STEP, 0, STEP, 2*STEP)
+BB_SPIKE_RESTORATION_OFFSETS = (-2 * STEP, -STEP, 0, STEP, 2 * STEP)
 
 # -----------------------------------------------------------------------------
 # Classification constants (from allprof_prodx2.pl)

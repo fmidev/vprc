@@ -16,31 +16,31 @@ Algorithm overview:
 
 from dataclasses import dataclass
 
+# Import for type annotation only
+from typing import TYPE_CHECKING
+
 import numpy as np
 import xarray as xr
 from wradlib.georef import bin_altitude
 from wradlib.trafo import idecibel
 
 from .constants import (
-    MDS,
-    FINE_GRID_RESOLUTION_M,
-    MAX_PROFILE_HEIGHT_M,
+    BB_PEAK_AMPLITUDE_CAP_DB,
+    BB_SLOPE_HEIGHT_LIMIT_M,
+    BB_SLOPE_THRESHOLD,
+    BEAM_SUPPORT_WIDTHS,
     DEFAULT_BEAMWIDTH_DEG,
-    MAX_CORRECTION_DB,
-    MIN_CORRECTION_THRESHOLD_DB,
     DEFAULT_CAPPI_HEIGHTS_M,
+    DEFAULT_HORIZON_ANGLE_DEG,
     DEFAULT_MAX_RANGE_KM,
     DEFAULT_RANGE_STEP_KM,
-    BB_SLOPE_THRESHOLD,
-    BB_SLOPE_HEIGHT_LIMIT_M,
-    BB_PEAK_AMPLITUDE_CAP_DB,
-    BEAM_SUPPORT_WIDTHS,
-    DEFAULT_HORIZON_ANGLE_DEG,
     EARTH_RADIUS_M,
+    FINE_GRID_RESOLUTION_M,
+    MAX_CORRECTION_DB,
+    MAX_PROFILE_HEIGHT_M,
+    MDS,
+    MIN_CORRECTION_THRESHOLD_DB,
 )
-
-# Import for type annotation only
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .bright_band import BrightBandResult
@@ -333,7 +333,8 @@ def compute_correction_for_range(
     horizon_height = (
         compute_beam_height(
             range_m, max(horizon_angle_deg, lower_angle), antenna_height_m
-        ) - antenna_height_m
+        )
+        - antenna_height_m
     )
     if is_cappi:
         resolution = float(fine_heights[1] - fine_heights[0])
@@ -736,8 +737,9 @@ def compute_vpr_correction(
         >>> result.corrections['cappi_correction_db'].sel(cappi_height=500, range_km=100)
         >>> result.corrections['cappi_blended_correction_db'].sel(cappi_height=500, range_km=100)
     """
-    from .climatology import generate_climatological_profile, get_clim_ground_reference
     import logging
+
+    from .climatology import generate_climatological_profile, get_clim_ground_reference
 
     logger = logging.getLogger(__name__)
 
@@ -997,7 +999,8 @@ def compute_vpr_correction(
             # Compute blended elevation corrections
             if quality_weight > 0:
                 elev_blended = (
-                    clim_weight * elev_clim_corrections + quality_weight * elev_corrections
+                    clim_weight * elev_clim_corrections
+                    + quality_weight * elev_corrections
                 ) / (clim_weight + quality_weight)
             else:
                 elev_blended = elev_clim_corrections.copy()
@@ -1090,8 +1093,14 @@ def _create_climatology_only_result(
     # If no freezing level, return empty result with zeros
     if freezing_level_m is None:
         data_vars = {
-            "cappi_correction_db": (["range_km", "cappi_height"], np.zeros((n_ranges, n_heights))),
-            "cappi_beam_height_m": (["range_km", "cappi_height"], np.zeros((n_ranges, n_heights))),
+            "cappi_correction_db": (
+                ["range_km", "cappi_height"],
+                np.zeros((n_ranges, n_heights)),
+            ),
+            "cappi_beam_height_m": (
+                ["range_km", "cappi_height"],
+                np.zeros((n_ranges, n_heights)),
+            ),
         }
         coords = {
             "range_km": ranges_km,
@@ -1199,8 +1208,14 @@ def _create_climatology_only_result(
 
         data_vars["elev_correction_db"] = (["range_km", "elevation"], elev_corrections)
         data_vars["elev_beam_height_m"] = (["range_km", "elevation"], elev_beam_heights)
-        data_vars["elev_clim_correction_db"] = (["range_km", "elevation"], elev_corrections)
-        data_vars["elev_blended_correction_db"] = (["range_km", "elevation"], elev_corrections)
+        data_vars["elev_clim_correction_db"] = (
+            ["range_km", "elevation"],
+            elev_corrections,
+        )
+        data_vars["elev_blended_correction_db"] = (
+            ["range_km", "elevation"],
+            elev_corrections,
+        )
         coords["elevation"] = list(elevation_angles_deg)
 
     correction_ds = xr.Dataset(

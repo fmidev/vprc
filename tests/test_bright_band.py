@@ -5,24 +5,24 @@ import pytest
 import xarray as xr
 
 from vprc.bright_band import (
-    BrightBandResult,
     BBRejectionReason,
+    BrightBandResult,
+    _compute_gradient_sum,
+    _determine_clutter_scenario,
+    _find_bb_candidates,
+    _refine_peak_height,
+    _validate_bright_band,
+    _validate_near_surface_bb,
+    apply_post_bb_clutter_correction,
     compute_dbz_gradient_per_step,
     detect_bright_band,
-    apply_post_bb_clutter_correction,
     restore_bb_spike,
-    _find_bb_candidates,
-    _compute_gradient_sum,
-    _validate_near_surface_bb,
-    _determine_clutter_scenario,
-    _validate_bright_band,
-    _refine_peak_height,
 )
 from vprc.constants import (
-    MDS,
-    STEP,
-    POST_BB_CLUTTER_THRESHOLD_DB,
     BB_SPIKE_RESTORATION_OFFSETS,
+    MDS,
+    POST_BB_CLUTTER_THRESHOLD_DB,
+    STEP,
 )
 
 
@@ -299,8 +299,9 @@ class TestRealData:
         but the signature is unmistakable in the profile.
         """
         from pathlib import Path
-        from vprc.io import read_vvp
+
         from vprc.clutter import remove_ground_clutter
+        from vprc.io import read_vvp
         from vprc.smoothing import smooth_spikes
 
         test_file = Path(__file__).parent / "data" / "202511071400_VIH.VVP_40.txt"
@@ -314,15 +315,21 @@ class TestRealData:
 
         # Peak around 2200m (±200m margin)
         assert result.peak_height is not None
-        assert 2000 <= result.peak_height <= 2400, f"Peak at {result.peak_height}m, expected ~2200m"
+        assert 2000 <= result.peak_height <= 2400, (
+            f"Peak at {result.peak_height}m, expected ~2200m"
+        )
 
         # Bottom around 1500m (±200m margin)
         assert result.bottom_height is not None
-        assert 1300 <= result.bottom_height <= 1700, f"Bottom at {result.bottom_height}m, expected ~1500m"
+        assert 1300 <= result.bottom_height <= 1700, (
+            f"Bottom at {result.bottom_height}m, expected ~1500m"
+        )
 
         # Top around 3000m (±200m margin)
         assert result.top_height is not None
-        assert 2800 <= result.top_height <= 3200, f"Top at {result.top_height}m, expected ~3000m"
+        assert 2800 <= result.top_height <= 3200, (
+            f"Top at {result.top_height}m, expected ~3000m"
+        )
 
         # Sanity checks on amplitudes
         assert result.amplitude_below is not None and result.amplitude_below > 5
@@ -483,7 +490,18 @@ class TestBBRejectionReason:
         # Create a profile with clear BB signature
         heights = list(range(100, 2500, 200))
         dbz_values = [
-            10, 12, 15, 18, 22, 26, 30, 35, 28, 22, 18, 15,
+            10,
+            12,
+            15,
+            18,
+            22,
+            26,
+            30,
+            35,
+            28,
+            22,
+            18,
+            15,
         ]
         ds = make_test_dataset(dbz_values, heights, freezing_level_m=1500)
 
@@ -861,7 +879,9 @@ class TestRestoreBBSpike:
 def test_actual_near_surface_bright_band_detection(values, peak, bottom, top):
     from vprc.smoothing import smooth_spikes
 
-    ds = make_test_dataset(values, freezing_level_m=300, zcount_values=[1000] * len(values))
+    ds = make_test_dataset(
+        values, freezing_level_m=300, zcount_values=[1000] * len(values)
+    )
     bb = detect_bright_band(smooth_spikes(ds))
     assert bb.detected
     assert (bb.peak_height, bb.bottom_height, bb.top_height) == (peak, bottom, top)
@@ -888,11 +908,15 @@ def test_validation_uses_upward_positive_outer_gradient(difference, rejected):
     ds = make_test_dataset([20] * 8)
     gradient = xr.DataArray(
         [0, 0, 0, 0, difference, 0, 0, 0],
-        coords={"height": ds.height}, dims="height",
+        coords={"height": ds.height},
+        dims="height",
     )
     bb = BrightBandResult(
-        detected=True, peak_height=700, bottom_height=500,
-        top_height=900, amplitude_above=8,
+        detected=True,
+        peak_height=700,
+        bottom_height=500,
+        top_height=900,
+        amplitude_above=8,
     )
     assert (_validate_bright_band(bb, gradient, ds, 100) is not None) == rejected
 
@@ -901,13 +925,20 @@ def test_four_hundred_metre_band_requires_outer_gradient_check():
     ds = make_test_dataset([20] * 8)
     gradient = xr.DataArray(
         [0, 3, 0, 0, 3, 0, 0, 0],
-        coords={"height": ds.height}, dims="height",
+        coords={"height": ds.height},
+        dims="height",
     )
     bb = BrightBandResult(
-        detected=True, peak_height=700, bottom_height=500,
-        top_height=900, amplitude_above=8,
+        detected=True,
+        peak_height=700,
+        bottom_height=500,
+        top_height=900,
+        amplitude_above=8,
     )
-    assert _validate_bright_band(bb, gradient, ds, 100) == BBRejectionReason.VALIDATION_FAILED
+    assert (
+        _validate_bright_band(bb, gradient, ds, 100)
+        == BBRejectionReason.VALIDATION_FAILED
+    )
 
 
 def test_candidate_must_be_within_five_hundred_metres_of_freezing_level():
@@ -922,7 +953,9 @@ def test_smoothed_bright_band_retains_raw_boundaries_and_amplitudes():
     from vprc.smoothing import smooth_spikes
 
     values = [10, 10, 10, 10, 10, 15, 35, 15, 10, 8, 6, 4, 2, 0]
-    ds = make_test_dataset(values, freezing_level_m=1300, zcount_values=[1000] * len(values))
+    ds = make_test_dataset(
+        values, freezing_level_m=1300, zcount_values=[1000] * len(values)
+    )
     smoothed = smooth_spikes(ds)
     assert float(smoothed.corrected_dbz.sel(height=1300)) == 15
     bb = detect_bright_band(smoothed)
@@ -943,7 +976,8 @@ def test_rejected_surface_bb_correction_reads_raw_profile():
     ds = make_test_dataset([35, 30, 25, 20, 18])
     ds["corrected_dbz"] = ("height", [23, 22, 21, 20, 18])
     bb = BrightBandResult(
-        detected=False, freezing_level_m=1500,
+        detected=False,
+        freezing_level_m=1500,
         rejection_reason=BBRejectionReason.NEAR_SURFACE_ZCOUNT,
     )
     corrected, _ = apply_post_bb_clutter_correction(ds, bb)
@@ -980,7 +1014,9 @@ def test_no_spurious_clutter_flag_when_post_bb_does_not_correct():
 
 def test_weighted_height_does_not_change_restoration_centre():
     values = [20, 35, 25, 20, 18, 16, 14, 12, 10, 8, 6, 4]
-    ds = make_test_dataset(values, freezing_level_m=300, zcount_values=[1000] * len(values))
+    ds = make_test_dataset(
+        values, freezing_level_m=300, zcount_values=[1000] * len(values)
+    )
     bb = detect_bright_band(ds)
     ds["corrected_dbz"] = ds.corrected_dbz.astype(float) - 2
     restored = restore_bb_spike(ds, bb)
@@ -994,14 +1030,18 @@ def test_five_point_refinement_uses_linear_reflectivity_weights():
     ds = make_test_dataset(values)
     heights = np.array([1100, 1300, 1500, 1700, 1900])
     weights = 10 ** (np.array([26, 30, 35, 28, 22]) / 10)
-    assert _refine_peak_height(ds, 1500) == pytest.approx(np.average(heights, weights=weights))
+    assert _refine_peak_height(ds, 1500) == pytest.approx(
+        np.average(heights, weights=weights)
+    )
     ds["corrected_dbz"].loc[{"height": 1100}] = 33
     assert _refine_peak_height(ds, 1500) == 1500  # Outer increase >= 2 dB.
 
 
 def test_invalid_outer_gradient_rejects_bb_using_zcount_not_wind_count():
     values = [10, 10, 10, 10, 10, 15, 35, 15, 10, 8, 6, 4, 2, 0]
-    ds = make_test_dataset(values, freezing_level_m=1300, zcount_values=[1000] * len(values))
+    ds = make_test_dataset(
+        values, freezing_level_m=1300, zcount_values=[1000] * len(values)
+    )
     ds["sample_count"] = ("height", [1000] * len(values))
     ds["zcount"].loc[{"height": 1700}] = 30
     bb = detect_bright_band(ds)

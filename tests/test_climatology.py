@@ -33,7 +33,9 @@ class TestClimatologicalProfile:
         base = 30.0  # 10 + 2.0 * 10
 
         # Below BB (FL-600 = 1400m): base value
-        assert ds["clim_dbz"].sel(height=1500, method="nearest").values == pytest.approx(base)
+        assert ds["clim_dbz"].sel(
+            height=1500, method="nearest"
+        ).values == pytest.approx(base)
 
         # Lower BB (FL-400 to FL-200): +3.5 dB
         # At 1700m (between 1600 and 1800)

@@ -31,7 +31,9 @@ def _set(
         if not np.issubdtype(ds["corrected_dbz"].dtype, np.floating):
             ds["corrected_dbz"] = ds["corrected_dbz"].astype(float)
         original = ds["corrected_dbz"].sel(height=height, drop=True)
-        ds["corrected_dbz"].loc[{"height": height}] = xr.where(condition, value, original)
+        ds["corrected_dbz"].loc[{"height": height}] = xr.where(
+            condition, value, original
+        )
 
 
 def correct_lower_boundary_spike(
@@ -91,14 +93,17 @@ def _smooth_at(
         & (_at(ds, "zcount", levels[2], 0) > sample_threshold)
     )
     direction = 1 if positive else -1
-    spike = valid & ((raw[1] - raw[0]) * direction > spike_threshold) & (
-        (raw[1] - raw[2]) * direction > spike_threshold
+    spike = (
+        valid
+        & ((raw[1] - raw[0]) * direction > spike_threshold)
+        & ((raw[1] - raw[2]) * direction > spike_threshold)
     )
     average = (working[0] + working[1] + working[2]) / 3
     residual = raw[1] - average
     large = (
         residual > large_spike_threshold
-        if positive else residual < large_spike_threshold
+        if positive
+        else residual < large_spike_threshold
     )
     correction = xr.where(large, (working[0] + working[2]) / 2, average)
     _set(ds, height + STEP, spike, correction)
@@ -118,13 +123,18 @@ def _smooth_spikes_rolling(
     if large_spike_threshold is None:
         large_spike_threshold = (
             LARGE_POSITIVE_SPIKE_THRESHOLD
-            if positive else LARGE_NEGATIVE_SPIKE_THRESHOLD
+            if positive
+            else LARGE_NEGATIVE_SPIKE_THRESHOLD
         )
     result = ds.copy(deep=True)
     for height in result.height.values:
         _smooth_at(
-            result, int(height), positive, sample_threshold,
-            spike_threshold, large_spike_threshold,
+            result,
+            int(height),
+            positive,
+            sample_threshold,
+            spike_threshold,
+            large_spike_threshold,
         )
     return result
 
@@ -218,16 +228,26 @@ def smooth_spikes(ds: xr.Dataset) -> xr.Dataset:
         correct_lower_boundary_spike(result, height)
         correct_upper_boundary_spike(result, height)
         _smooth_at(
-            result, height, True, MIN_SAMPLES,
-            SPIKE_AMPLITUDE_THRESHOLD, LARGE_POSITIVE_SPIKE_THRESHOLD,
+            result,
+            height,
+            True,
+            MIN_SAMPLES,
+            SPIKE_AMPLITUDE_THRESHOLD,
+            LARGE_POSITIVE_SPIKE_THRESHOLD,
         )
         _smooth_at(
-            result, height, False, MIN_SAMPLES,
-            SPIKE_AMPLITUDE_THRESHOLD, LARGE_NEGATIVE_SPIKE_THRESHOLD,
+            result,
+            height,
+            False,
+            MIN_SAMPLES,
+            SPIKE_AMPLITUDE_THRESHOLD,
+            LARGE_NEGATIVE_SPIKE_THRESHOLD,
         )
         _set(
-            result, height,
-            ~(_at(result, "zcount", height, 0) > MIN_SAMPLES), MDS,
+            result,
+            height,
+            ~(_at(result, "zcount", height, 0) > MIN_SAMPLES),
+            MDS,
         )
         fill_gap(result, height)
         remove_isolated_echo(result, height)

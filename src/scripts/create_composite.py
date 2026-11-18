@@ -20,14 +20,14 @@ import click
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from vprc import (
-    process_vvp,
     CompositeGrid,
     composite_corrections,
     create_empty_composite,
     get_radar_coords,
+    process_vvp,
 )
 from vprc.composite import RadarCorrection
-from vprc.io import write_composite_cogs, Compression
+from vprc.io import Compression, write_composite_cogs
 
 # Default test files
 DEFAULT_FILES = (
@@ -62,21 +62,24 @@ def extract_timestamp(filepath: Path) -> str:
     type=click.Path(exists=True, path_type=Path),
 )
 @click.option(
-    "--output-dir", "-o",
+    "--output-dir",
+    "-o",
     type=click.Path(path_type=Path),
     default=Path("local/output"),
     show_default=True,
     help="Output directory for COG files.",
 )
 @click.option(
-    "--freezing-level", "-f",
+    "--freezing-level",
+    "-f",
     type=float,
     default=3000.0,
     show_default=True,
     help="Freezing level in meters.",
 )
 @click.option(
-    "--resolution", "-r",
+    "--resolution",
+    "-r",
     type=float,
     default=1000.0,
     show_default=True,
@@ -103,7 +106,8 @@ def extract_timestamp(filepath: Path) -> str:
     help="Override quality weight for all radars (useful for testing).",
 )
 @click.option(
-    "--verbose", "-v",
+    "--verbose",
+    "-v",
     is_flag=True,
     help="Verbose output.",
 )
@@ -146,7 +150,9 @@ def main(
         # Get radar coordinates from config
         coords = get_radar_coords(radar_code)
         if coords is None:
-            raise click.ClickException(f"No coordinates configured for radar '{radar_code}'")
+            raise click.ClickException(
+                f"No coordinates configured for radar '{radar_code}'"
+            )
 
         lat, lon = coords
         attempted_radars.append((radar_code, lat, lon))
@@ -171,7 +177,9 @@ def main(
             else result.vpr_correction.quality_weight
         )
 
-        is_clim_only = result.vpr_correction.corrections.attrs.get("climatology_only", False)
+        is_clim_only = result.vpr_correction.corrections.attrs.get(
+            "climatology_only", False
+        )
 
         radar_corr = RadarCorrection(
             radar_code=radar_code,
@@ -184,7 +192,9 @@ def main(
         if verbose:
             clim_label = " (climatology-only)" if is_clim_only else ""
             click.echo(f"  Quality weight: {radar_corr.quality_weight:.3f}{clim_label}")
-            click.echo(f"  Ground reference: {result.vpr_correction.z_ground_dbz:.1f} dBZ")
+            click.echo(
+                f"  Ground reference: {result.vpr_correction.z_ground_dbz:.1f} dBZ"
+            )
 
         radar_corrections.append(radar_corr)
 
@@ -194,11 +204,15 @@ def main(
         range_km=max_range + 1,
     )
 
-    click.echo(f"Grid size: {len(grid.x)} x {len(grid.y)} = {len(grid.x) * len(grid.y)} cells")
+    click.echo(
+        f"Grid size: {len(grid.x)} x {len(grid.y)} = {len(grid.x) * len(grid.y)} cells"
+    )
 
     if not radar_corrections:
         # No usable corrections - this is a valid scenario (e.g., no precipitation)
-        click.echo("\nNo usable VPR corrections (no precipitation detected by any radar)")
+        click.echo(
+            "\nNo usable VPR corrections (no precipitation detected by any radar)"
+        )
         click.echo("Creating empty composite with no corrections...")
         composite = create_empty_composite(grid, radar_codes=attempted_codes)
     else:

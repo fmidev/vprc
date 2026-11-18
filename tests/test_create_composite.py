@@ -7,7 +7,6 @@ from unittest.mock import Mock, patch
 import pytest
 from click.testing import CliRunner
 
-
 SCRIPT = Path(__file__).parents[1] / "src" / "scripts" / "create_composite.py"
 KAN_FILE = Path(__file__).parent / "data" / "202308281000_KAN.VVP_40.txt"
 
@@ -17,7 +16,9 @@ def command():
     return runpy.run_path(str(SCRIPT))["main"]
 
 
-@pytest.mark.parametrize("error", [ValueError("invalid profile"), OSError("unreadable")])
+@pytest.mark.parametrize(
+    "error", [ValueError("invalid profile"), OSError("unreadable")]
+)
 def test_input_error_does_not_create_success_product(command, tmp_path, error):
     output = tmp_path / "output"
     with patch.dict(

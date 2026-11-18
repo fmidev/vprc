@@ -19,8 +19,14 @@ def make_profile(values, *, zcount=None, count=None, freezing_level=2000):
         {
             "lin_dbz": ("height", values.copy()),
             "corrected_dbz": ("height", values.copy()),
-            "zcount": ("height", zcount if zcount is not None else [1000] * len(values)),
-            "sample_count": ("height", count if count is not None else [0] * len(values)),
+            "zcount": (
+                "height",
+                zcount if zcount is not None else [1000] * len(values),
+            ),
+            "sample_count": (
+                "height",
+                count if count is not None else [0] * len(values),
+            ),
         },
         coords={"height": np.arange(100, 100 + 200 * len(values), 200)},
         attrs={"freezing_level_m": freezing_level},
@@ -37,7 +43,9 @@ def test_forward_gradient_uses_raw_reflectivity_and_zcount():
 
 @pytest.mark.parametrize("count", [0, 29, 30, np.nan])
 def test_gradient_requires_more_than_thirty_reflectivity_samples(count):
-    ds = make_profile([10, 15, 20, 25], zcount=[1000, count, 1000, 1000], count=[1000] * 4)
+    ds = make_profile(
+        [10, 15, 20, 25], zcount=[1000, count, 1000, 1000], count=[1000] * 4
+    )
     np.testing.assert_allclose(
         compute_gradient(ds), [np.nan, np.nan, 0.025, np.nan], equal_nan=True
     )

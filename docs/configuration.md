@@ -83,11 +83,11 @@ Values are resolved in this order (highest to lowest):
 from vprc import get_radar_metadata, get_radar_coords, list_radar_codes
 
 # Get all metadata for a radar
-meta = get_radar_metadata('KAN')
+meta = get_radar_metadata("KAN")
 print(meta)  # {'name': 'KANKAANPAA', 'antenna_height_m': 174, ...}
 
 # Get just coordinates
-lat, lon = get_radar_coords('VIH')
+lat, lon = get_radar_coords("VIH")
 print(f"Vihti radar: {lat}°N, {lon}°E")
 
 # List all configured radars
@@ -102,29 +102,28 @@ for code in list_radar_codes():
 from vprc import read_vvp
 
 # Uses package defaults from radar_defaults.toml
-ds = read_vvp('202508241100_KAN.VVP_40.txt')
-print(ds.attrs['antenna_height_m'])  # 174
-print(ds.attrs['beamwidth_deg'])     # 0.95 (from [defaults])
+ds = read_vvp("202508241100_KAN.VVP_40.txt")
+print(ds.attrs["antenna_height_m"])  # 174
+print(ds.attrs["beamwidth_deg"])  # 0.95 (from [defaults])
 ```
 
 ### Override Specific Fields
 
 ```python
 # Override freezing level from NWP data
-ds = read_vvp('202508241100_KAN.VVP_40.txt', {
-    'freezing_level_m': 2000
-})
+ds = read_vvp("202508241100_KAN.VVP_40.txt", {"freezing_level_m": 2000})
 
 # Override beamwidth for a specific radar
-ds = read_vvp('202508241100_KAN.VVP_40.txt', {
-    'beamwidth_deg': 1.0
-})
+ds = read_vvp("202508241100_KAN.VVP_40.txt", {"beamwidth_deg": 1.0})
 
 # Geometry overrides must come as a pair; overriding only one raises ValueError
-ds = read_vvp('202508241100_KAN.VVP_40.txt', {
-    'antenna_height_m': 174,
-    'lowest_level_offset_m': 126,
-})
+ds = read_vvp(
+    "202508241100_KAN.VVP_40.txt",
+    {
+        "antenna_height_m": 174,
+        "lowest_level_offset_m": 126,
+    },
+)
 ```
 
 ### Custom Configuration File
@@ -132,8 +131,8 @@ ds = read_vvp('202508241100_KAN.VVP_40.txt', {
 ```python
 import os
 
-os.environ['VPRC_RADAR_CONFIG'] = '/path/to/custom_radars.toml'
-ds = read_vvp('202508241100_KAN.VVP_40.txt')
+os.environ["VPRC_RADAR_CONFIG"] = "/path/to/custom_radars.toml"
+ds = read_vvp("202508241100_KAN.VVP_40.txt")
 ```
 
 Example custom TOML with radar-specific beamwidth:

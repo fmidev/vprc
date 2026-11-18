@@ -5,19 +5,18 @@ import pytest
 import xarray as xr
 from pyproj import CRS
 
+from vprc import average_corrections, process_vvp
 from vprc.composite import (
     CompositeGrid,
     RadarCorrection,
-    compute_radar_distances,
     composite_corrections,
+    compute_radar_distances,
     create_empty_composite,
     create_radar_correction,
-    inverse_distance_weight,
     interpolate_correction_to_grid,
+    inverse_distance_weight,
 )
-from vprc import process_vvp, average_corrections
 from vprc.vpr_correction import VPRCorrectionResult
-
 
 # Test data paths (2023-08-28 multi-radar data)
 TEST_DATA_DIR = "tests/data"
@@ -278,7 +277,9 @@ class TestCompositeCorrections:
 
         mock_corr = _create_mock_correction(constant_db=3.0)
         radars = [
-            RadarCorrection("KAN", *RADAR_COORDS["KAN"], mock_corr, 0.0),  # zero quality
+            RadarCorrection(
+                "KAN", *RADAR_COORDS["KAN"], mock_corr, 0.0
+            ),  # zero quality
         ]
 
         result = composite_corrections(radars, grid, max_range_km=300)
@@ -444,9 +445,7 @@ class TestWithRealData:
         radars = []
         for code, result in usable_radars.items():
             lat, lon = RADAR_COORDS[code]
-            radar_corr = create_radar_correction(
-                code, lat, lon, result.vpr_correction
-            )
+            radar_corr = create_radar_correction(code, lat, lon, result.vpr_correction)
             radars.append(radar_corr)
 
         # Create small test grid
@@ -532,7 +531,9 @@ def _create_mock_correction(constant_db: float = 2.0) -> VPRCorrectionResult:
     )
 
 
-def _create_climatology_only_correction(constant_db: float = 1.5) -> VPRCorrectionResult:
+def _create_climatology_only_correction(
+    constant_db: float = 1.5,
+) -> VPRCorrectionResult:
     """Create a mock climatology-only VPR correction result for testing.
 
     Args:
@@ -621,7 +622,9 @@ class TestClimatologyOnlyComposite:
         result = composite_corrections([observed, clim_only], grid)
 
         # Should have blended values between the two
-        valid = result["correction_db"].values[~np.isnan(result["correction_db"].values)]
+        valid = result["correction_db"].values[
+            ~np.isnan(result["correction_db"].values)
+        ]
         assert len(valid) > 0
 
         # Near the observed radar, values should be closer to 3.0
@@ -655,7 +658,9 @@ class TestClimatologyOnlyComposite:
 
         result = composite_corrections([observed, clim_only], grid)
 
-        valid = result["correction_db"].values[~np.isnan(result["correction_db"].values)]
+        valid = result["correction_db"].values[
+            ~np.isnan(result["correction_db"].values)
+        ]
 
         # Blended value should be closer to observed (4.0) than clim (0.0)
         # With quality weights 1.0 and 0.2, weighted average at same distance
@@ -692,6 +697,8 @@ class TestClimatologyOnlyComposite:
         assert valid_count > 0
 
         # Values should be in the expected range
-        valid = result["correction_db"].values[~np.isnan(result["correction_db"].values)]
+        valid = result["correction_db"].values[
+            ~np.isnan(result["correction_db"].values)
+        ]
         assert valid.min() >= 1.5
         assert valid.max() <= 3.0

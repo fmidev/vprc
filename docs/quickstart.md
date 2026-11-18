@@ -35,11 +35,11 @@ Use the config API to retrieve radar metadata programmatically:
 from vprc import get_radar_metadata, get_radar_coords, process_vvp
 
 # Get radar coordinates for compositing
-lat, lon = get_radar_coords('KAN')
+lat, lon = get_radar_coords("KAN")
 
 # Get all metadata
-meta = get_radar_metadata('VIH')
-print(meta['antenna_height_m'])  # 181
+meta = get_radar_metadata("VIH")
+print(meta["antenna_height_m"])  # 181
 
 # Override runtime parameters (e.g., freezing level from NWP)
 result = process_vvp(
@@ -115,6 +115,7 @@ products.
 @task.docker(image="quay.io/fmi/vprc:v0.2.0")
 def correct_vpr(vvp_file: str, radar_config: dict) -> dict:
     from vprc import process_vvp
+
     result = process_vvp(vvp_file, **radar_config)
     return {
         "usable": result.usable_for_vpr,

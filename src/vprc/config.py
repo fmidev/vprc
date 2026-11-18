@@ -228,8 +228,7 @@ def resolve_radar_code(radar_name: str) -> str:
     return code
 
 
-def _get_radar_metadata(radar_code: str,
-                        override_metadata: dict | None = None) -> dict:
+def _get_radar_metadata(radar_code: str, override_metadata: dict | None = None) -> dict:
     """Get radar metadata with proper precedence.
 
     Precedence (highest to lowest):

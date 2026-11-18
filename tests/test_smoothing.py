@@ -21,9 +21,15 @@ def make_profile(values, *, zcount=None, raw=None):
     values = np.asarray(values, dtype=float)
     return xr.Dataset(
         {
-            "lin_dbz": ("height", values.copy() if raw is None else np.asarray(raw, dtype=float)),
+            "lin_dbz": (
+                "height",
+                values.copy() if raw is None else np.asarray(raw, dtype=float),
+            ),
             "corrected_dbz": ("height", values.copy()),
-            "zcount": ("height", zcount if zcount is not None else [1000] * len(values)),
+            "zcount": (
+                "height",
+                zcount if zcount is not None else [1000] * len(values),
+            ),
             "sample_count": ("height", [0] * len(values)),
         },
         coords={"height": np.arange(100, 100 + 200 * len(values), 200)},
@@ -137,9 +143,21 @@ def test_isolated_echo_at_profile_edge():
     "values,counts,expected",
     [
         ([0, 10, 0, 10, 0, 0, 0, 0], [1000] * 8, [0, 0, 10 / 3, 5 / 3, 0, 0, 0, 0]),
-        ([MDS, MDS, 10, 20, MDS, MDS], [0, 0, 1000, 1000, 0, 0], [MDS, MDS, 15, 15, MDS, MDS]),
-        ([20, 20, 35, 35, 20, 20, 20, 20], [1000, 1000, 0, 0, 1000, 1000, 1000, 1000], [20, 20, MDS, MDS, 20, 20, 20, 20]),
-        ([MDS, MDS, MDS, 25, 20, 22, 22, 22], [0, 0, 0, 1000, 1000, 1000, 1000, 1000], [MDS, MDS, MDS, 18, 20, 22, 22, 22]),
+        (
+            [MDS, MDS, 10, 20, MDS, MDS],
+            [0, 0, 1000, 1000, 0, 0],
+            [MDS, MDS, 15, 15, MDS, MDS],
+        ),
+        (
+            [20, 20, 35, 35, 20, 20, 20, 20],
+            [1000, 1000, 0, 0, 1000, 1000, 1000, 1000],
+            [20, 20, MDS, MDS, 20, 20, 20, 20],
+        ),
+        (
+            [MDS, MDS, MDS, 25, 20, 22, 22, 22],
+            [0, 0, 0, 1000, 1000, 1000, 1000, 1000],
+            [MDS, MDS, MDS, 18, 20, 22, 22, 22],
+        ),
     ],
 )
 def test_full_smoothing_matches_perl_sequences(values, counts, expected):
@@ -163,7 +181,9 @@ def test_time_profiles_are_processed_independently():
     ds = xr.concat([first, second], dim=xr.IndexVariable("time", [0, 1]))
     actual = smooth_spikes(ds)
     for t in ds.time.values:
-        xr.testing.assert_allclose(actual.sel(time=t, drop=True), smooth_spikes(ds.sel(time=t, drop=True)))
+        xr.testing.assert_allclose(
+            actual.sel(time=t, drop=True), smooth_spikes(ds.sel(time=t, drop=True))
+        )
 
 
 def test_empty_profile():

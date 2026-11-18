@@ -6,7 +6,12 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from vprc.temporal import average_corrections, _extract_timestamps, _compute_age_weights, MIN_AGE_WEIGHT
+from vprc.temporal import (
+    MIN_AGE_WEIGHT,
+    _compute_age_weights,
+    _extract_timestamps,
+    average_corrections,
+)
 from vprc.vpr_correction import VPRCorrectionResult
 
 
@@ -282,12 +287,8 @@ class TestAverageCorrections:
         t2 = datetime(2025, 8, 24, 11, 0)
 
         # Create with wrong timestamps in attrs
-        r1 = make_test_correction(
-            correction_value=0.0, timestamp=datetime(2000, 1, 1)
-        )
-        r2 = make_test_correction(
-            correction_value=3.0, timestamp=datetime(2000, 1, 2)
-        )
+        r1 = make_test_correction(correction_value=0.0, timestamp=datetime(2000, 1, 1))
+        r2 = make_test_correction(correction_value=3.0, timestamp=datetime(2000, 1, 2))
 
         # Override with explicit timestamps
         averaged = average_corrections([r1, r2], timestamps=[t1, t2])
@@ -329,7 +330,9 @@ class TestAverageCorrections:
 
         averaged = average_corrections(results)
 
-        assert set(averaged.corrections.data_vars) == set(results[0].corrections.data_vars)
+        assert set(averaged.corrections.data_vars) == set(
+            results[0].corrections.data_vars
+        )
         assert averaged.quality_weight == pytest.approx((0.2 * 0.2 + 1.0) / 1.2)
         assert averaged.z_ground_clim_dbz == 30.0
         for name in results[0].corrections.data_vars:
@@ -361,9 +364,9 @@ class TestAverageCorrections:
 
     def test_missing_blended_variable_raises(self):
         results = [make_test_correction(), make_test_correction()]
-        results[0].corrections["cappi_blended_correction_db"] = (
-            results[0].corrections.cappi_correction_db
-        )
+        results[0].corrections["cappi_blended_correction_db"] = results[
+            0
+        ].corrections.cappi_correction_db
         with pytest.raises(ValueError, match="incompatible correction variables"):
             average_corrections(results)
 
@@ -485,9 +488,9 @@ class TestComputeAgeWeights:
         base = datetime(2025, 8, 24, 10, 0)
         # Large gap at start, small gap at end
         timestamps = [
-            base,                          # oldest
-            base + timedelta(hours=9),     # close to newest
-            base + timedelta(hours=10),    # newest
+            base,  # oldest
+            base + timedelta(hours=9),  # close to newest
+            base + timedelta(hours=10),  # newest
         ]
         weights = _compute_age_weights(timestamps)
 

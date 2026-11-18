@@ -23,7 +23,7 @@ import numpy as np
 # Ensure package is importable when running from repo root
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from vprc import process_vvp, average_corrections
+from vprc import average_corrections, process_vvp
 from vprc.vpr_correction import VPRCorrectionResult
 
 # Default: Vimpeli test data (multiple timesteps)
@@ -59,7 +59,11 @@ def load_profiles(data_dir: Path | None = None, pattern: str | None = None) -> d
 
     # Extract VPR results with valid corrections
     vpr_results = [r.vpr_correction for r in results if r.vpr_correction is not None]
-    timestamps = [r.vpr_correction.corrections.attrs.get("timestamp") for r in results if r.vpr_correction is not None]
+    timestamps = [
+        r.vpr_correction.corrections.attrs.get("timestamp")
+        for r in results
+        if r.vpr_correction is not None
+    ]
 
     print(f"\n{len(vpr_results)} profiles usable for VPR correction")
 
@@ -90,7 +94,7 @@ def _format_timestamp(ts: str | None) -> str:
     # ISO format: 2022-08-17T11:00:00
     try:
         return ts[11:16]  # Extract HH:MM
-    except (IndexError, TypeError):
+    except IndexError, TypeError:
         return str(ts)[:5]
 
 
@@ -114,7 +118,9 @@ def plot_correction_comparison(
     fig, ax = plt.subplots(figsize=(10, 8))
 
     # Identify the newest (original) timestamp
-    original_ts = averaged.corrections.attrs.get("timestamp") if averaged is not None else None
+    original_ts = (
+        averaged.corrections.attrs.get("timestamp") if averaged is not None else None
+    )
 
     # Plot individual profiles with timestamps in legend
     for vpr in vpr_results:
@@ -133,13 +139,17 @@ def plot_correction_comparison(
 
     # Plot averaged profile
     if averaged is not None and "cappi_correction_db" in averaged.corrections:
-        avg_data = averaged.corrections["cappi_correction_db"].sel(cappi_height=cappi_height)
+        avg_data = averaged.corrections["cappi_correction_db"].sel(
+            cappi_height=cappi_height
+        )
         range_km = avg_data["range_km"].values
         avg_correction_db = avg_data.values
         # Get the "original" (newest) timestamp for the averaged result
         avg_ts = averaged.corrections.attrs.get("timestamp")
         avg_label = f"Averaged ({_format_timestamp(avg_ts)})"
-        ax.plot(range_km, avg_correction_db, color="black", linewidth=3, label=avg_label)
+        ax.plot(
+            range_km, avg_correction_db, color="black", linewidth=3, label=avg_label
+        )
 
     ax.set_xlabel("Range (km)")
     ax.set_ylabel("Correction (dB)")
@@ -175,7 +185,9 @@ def plot_z_ground_comparison(
     fig, ax = plt.subplots(figsize=(10, 5))
 
     z_grounds = [vpr.z_ground_dbz for vpr in vpr_results]
-    timestamps = [_format_timestamp(vpr.corrections.attrs.get("timestamp")) for vpr in vpr_results]
+    timestamps = [
+        _format_timestamp(vpr.corrections.attrs.get("timestamp")) for vpr in vpr_results
+    ]
     x = range(len(z_grounds))
 
     ax.bar(x, z_grounds, alpha=0.6, label="Individual profiles")
@@ -183,8 +195,13 @@ def plot_z_ground_comparison(
     ax.set_xticklabels(timestamps, rotation=45, ha="right")
 
     if averaged is not None:
-        ax.axhline(y=averaged.z_ground_dbz, color="red", linewidth=2, linestyle="--",
-                   label=f"Averaged: {averaged.z_ground_dbz:.1f} dBZ")
+        ax.axhline(
+            y=averaged.z_ground_dbz,
+            color="red",
+            linewidth=2,
+            linestyle="--",
+            label=f"Averaged: {averaged.z_ground_dbz:.1f} dBZ",
+        )
 
     ax.set_xlabel("Time")
     ax.set_ylabel("Ground reflectivity (dBZ)")

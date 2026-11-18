@@ -20,9 +20,7 @@ def compute_gradient(ds: xr.Dataset, min_samples: int = MIN_SAMPLES) -> xr.DataA
     """
     dbz = ds["lin_dbz"]
     heights = ds["height"]
-    gradient = dbz.diff("height", label="lower") / heights.diff(
-        "height", label="lower"
-    )
+    gradient = dbz.diff("height", label="lower") / heights.diff("height", label="lower")
     gradient = gradient.reindex(height=heights)
     valid = ds["zcount"] > min_samples
     return gradient.where(valid & valid.shift(height=-1, fill_value=False))
@@ -73,9 +71,10 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
             reference = float(raw.sel(height=above))
             for depth in range(offset + 1):
                 target = lowest + depth * STEP
-                extrapolated = reference - (
-                    offset + 1 - depth
-                ) * GROUND_CLUTTER_GRADIENT_THRESHOLD * STEP
+                extrapolated = (
+                    reference
+                    - (offset + 1 - depth) * GROUND_CLUTTER_GRADIENT_THRESHOLD * STEP
+                )
                 # Correct the legacy duplicated h1 assignment: extrapolate h0 too.
                 working.loc[{"height": target}] = min(
                     extrapolated, float(raw.sel(height=target))

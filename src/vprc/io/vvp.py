@@ -12,9 +12,9 @@ import pandas as pd
 import xarray as xr
 
 from ..config import (
-    _load_radar_defaults,
     _build_radar_name_to_code_map,
     _get_radar_metadata,
+    _load_radar_defaults,
     resolve_radar_code,
 )
 from ..constants import MDS, STEP
@@ -98,6 +98,7 @@ def _whole_meters(metadata: dict, key: str) -> int:
 @dataclass
 class VVPHeader:
     """Metadata from VVP file header line."""
+
     radar: str
     product: str
     scan_type: str
@@ -124,7 +125,9 @@ def _parse_vvp_header(header_line: str) -> VVPHeader:
     parts = header_line.strip().split()
 
     if len(parts) < 9:
-        raise ValueError(f"Invalid header: expected at least 9 fields, got {len(parts)}")
+        raise ValueError(
+            f"Invalid header: expected at least 9 fields, got {len(parts)}"
+        )
 
     radar = parts[0]
     product = parts[1]
@@ -136,9 +139,9 @@ def _parse_vvp_header(header_line: str) -> VVPHeader:
     minute = int(parts[7])
 
     # Find ELEVS: keyword and extract elevation angles
-    if 'ELEVS:' in parts:
-        elevs_idx = parts.index('ELEVS:')
-        elevation_angles = [float(x) for x in parts[elevs_idx + 1:]]
+    if "ELEVS:" in parts:
+        elevs_idx = parts.index("ELEVS:")
+        elevation_angles = [float(x) for x in parts[elevs_idx + 1 :]]
         if not all(np.isfinite(elevation_angles)):
             raise ValueError("Elevation angles must be finite")
     else:
@@ -151,7 +154,7 @@ def _parse_vvp_header(header_line: str) -> VVPHeader:
         product=product,
         scan_type=scan_type,
         timestamp=timestamp,
-        elevation_angles=elevation_angles
+        elevation_angles=elevation_angles,
     )
 
 
@@ -186,7 +189,7 @@ def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
     """
     filepath = Path(filepath)
 
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         lines = f.readlines()
 
     if not lines:
@@ -206,10 +209,10 @@ def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
     # Strategy: Skip header lines, read all numeric columns, then assign names
     df = pd.read_csv(
         filepath,
-        sep=r'\s+',
-        skiprows=3,          # Skip header, blank, and column name line
-        header=None,         # No header in data
-        engine='python'
+        sep=r"\s+",
+        skiprows=3,  # Skip header, blank, and column name line
+        header=None,  # No header in data
+        engine="python",
     )
 
     # Assign column names based on the structure:
@@ -218,16 +221,25 @@ def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
     # Total: 3 + 2*8 = 19 columns
 
     expected_cols = [
-        'height',
-        'count', 'zcount',
-        'wind_speed', 'wind_speed_std',
-        'direction', 'direction_std',
-        'vertical', 'vertical_std',
-        'lin_dbz', 'lin_dbz_std',
-        'log_dbz', 'log_dbz_std',
-        'divergence', 'divergence_std',
-        'deformation', 'deformation_std',
-        'axis_of_dil', 'axis_of_dil_std'
+        "height",
+        "count",
+        "zcount",
+        "wind_speed",
+        "wind_speed_std",
+        "direction",
+        "direction_std",
+        "vertical",
+        "vertical_std",
+        "lin_dbz",
+        "lin_dbz_std",
+        "log_dbz",
+        "log_dbz_std",
+        "divergence",
+        "divergence_std",
+        "deformation",
+        "deformation_std",
+        "axis_of_dil",
+        "axis_of_dil_std",
     ]
 
     if len(df.columns) != len(expected_cols):
@@ -237,27 +249,30 @@ def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
     df.columns = expected_cols
     if df.empty:
         raise ValueError(f"No profile data in {filepath}")
-    for column in ('height', 'count', 'zcount', 'lin_dbz'):
-        df[column] = pd.to_numeric(df[column], errors='raise')
+    for column in ("height", "count", "zcount", "lin_dbz"):
+        df[column] = pd.to_numeric(df[column], errors="raise")
         if not np.isfinite(df[column]).all():
             raise ValueError(f"Non-finite or missing {column} values in {filepath}")
 
     # Ensure height is integer
-    if (df['height'] % 1 != 0).any():
+    if (df["height"] % 1 != 0).any():
         raise ValueError(f"Profile heights must be integer meters in {filepath}")
-    df['height'] = df['height'].astype(int)
-    if df['height'].duplicated().any():
+    df["height"] = df["height"].astype(int)
+    if df["height"].duplicated().any():
         raise ValueError(f"Duplicate profile heights in {filepath}")
 
     # Sort by height ascending (files go high->low)
-    df = df.sort_values('height').reset_index(drop=True)
+    df = df.sort_values("height").reset_index(drop=True)
 
     return header, df
 
 
-def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
-                             radar_metadata: dict | None = None,
-                             source_file: Path | str | None = None) -> xr.Dataset:
+def _vvp_dataframe_to_xarray(
+    df: pd.DataFrame,
+    header: VVPHeader,
+    radar_metadata: dict | None = None,
+    source_file: Path | str | None = None,
+) -> xr.Dataset:
     """
     Convert parsed VVP DataFrame to xarray Dataset.
 
@@ -308,10 +323,10 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
             f"lowest_level_offset_m must be above the antenna, got {lowest_level_m}"
         )
     df = df.copy()
-    df['height'] = df['height'] - antenna_height_m
+    df["height"] = df["height"] - antenna_height_m
 
     # Drop levels at or below the antenna (non-positive heights)
-    df = df[df['height'] > 0].copy()
+    df = df[df["height"] > 0].copy()
     if df.empty:
         raise NoUsableProfileError("VVP profile has no levels above the antenna")
 
@@ -321,24 +336,24 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     )
 
     # Rename 'count' to 'sample_count' for consistency with processing modules
-    if 'count' in ds:
-        ds = ds.rename({'count': 'sample_count'})
-        ds['sample_count'].attrs['long_name'] = 'Wind sample count (Count)'
-    if 'zcount' in ds:
-        ds['zcount'].attrs['long_name'] = 'Reflectivity sample count (ZCnt)'
+    if "count" in ds:
+        ds = ds.rename({"count": "sample_count"})
+        ds["sample_count"].attrs["long_name"] = "Wind sample count (Count)"
+    if "zcount" in ds:
+        ds["zcount"].attrs["long_name"] = "Reflectivity sample count (ZCnt)"
 
     # Add corrected_dbz as a copy of lin_dbz (will be modified by processing)
-    ds['corrected_dbz'] = ds['lin_dbz'].copy()
+    ds["corrected_dbz"] = ds["lin_dbz"].copy()
 
     # Build metadata attributes
     attrs = {
-        'radar': header.radar,
-        'radar_code': radar_code,
-        'product': header.product,
-        'scan_type': header.scan_type,
-        'timestamp': header.timestamp.isoformat(),
-        'elevation_angles': header.elevation_angles,
-        'source_file': str(source_file) if source_file else 'unknown',
+        "radar": header.radar,
+        "radar_code": radar_code,
+        "product": header.product,
+        "scan_type": header.scan_type,
+        "timestamp": header.timestamp.isoformat(),
+        "elevation_angles": header.elevation_angles,
+        "source_file": str(source_file) if source_file else "unknown",
     }
 
     # Add radar-specific metadata
@@ -348,14 +363,14 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     # 3. Positive above-antenna: Valid freezing level for BB detection
     # (following Perl logic from allprof_prodx2.pl lines 359-362)
     metadata_copy = metadata.copy()
-    if 'freezing_level_m' in metadata_copy:
-        fl = metadata_copy['freezing_level_m']
+    if "freezing_level_m" in metadata_copy:
+        fl = metadata_copy["freezing_level_m"]
         if fl is not None:
             if not isinstance(fl, Real) or isinstance(fl, bool) or not np.isfinite(fl):
                 raise ValueError("freezing_level_m must be finite meters ASL or None")
             if fl <= 0:
                 # Explicitly no freezing layer (or below surface)
-                metadata_copy['freezing_level_m'] = 0
+                metadata_copy["freezing_level_m"] = 0
             else:
                 # Convert from ASL to above-antenna (same as height coordinate)
                 # If result is ≤0, freezing level is at/below antenna → no melting visible
@@ -370,8 +385,7 @@ def _vvp_dataframe_to_xarray(df: pd.DataFrame, header: VVPHeader,
     return ds
 
 
-def read_vvp(filepath: Path | str,
-             radar_metadata: dict | None = None) -> xr.Dataset:
+def read_vvp(filepath: Path | str, radar_metadata: dict | None = None) -> xr.Dataset:
     """
     Parse VVP file directly to xarray Dataset (high-level wrapper).
 
@@ -460,5 +474,5 @@ def height_to_sea_level(ds: xr.Dataset) -> xr.DataArray:
         >>> height_to_sea_level(ds).values[:3]  # Sea level
         array([300, 500, 700])
     """
-    antenna_height_m = ds.attrs.get('antenna_height_m', 0)
+    antenna_height_m = ds.attrs.get("antenna_height_m", 0)
     return ds.height + antenna_height_m

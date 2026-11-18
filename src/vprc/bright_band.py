@@ -23,16 +23,16 @@ import xarray as xr
 
 from .clutter import compute_gradient
 from .constants import (
+    BB_SPIKE_RESTORATION_OFFSETS,
+    LARGE_JUMP_THRESHOLD_DB,
+    LOW_BB_HEIGHT_M,
     MDS,
-    STEP,
     NEAR_SURFACE_BB_MIN_ZCOUNT,
     NEAR_SURFACE_BB_MIN_ZCOUNT_RATIO,
-    POST_BB_CLUTTER_THRESHOLD_DB,
-    LOW_BB_HEIGHT_M,
-    POST_BB_CLUTTER_HEIGHT_M,
-    LARGE_JUMP_THRESHOLD_DB,
     NO_BB_CLUTTER_FREEZING_LEVEL_M,
-    BB_SPIKE_RESTORATION_OFFSETS,
+    POST_BB_CLUTTER_HEIGHT_M,
+    POST_BB_CLUTTER_THRESHOLD_DB,
+    STEP,
 )
 
 logger = logging.getLogger(__name__)
@@ -157,10 +157,7 @@ def _find_bb_candidates(
             continue
 
         # Check all levels have valid data
-        valid = all(
-            hr < 0 or float(dbz.sel(height=hr).values) > MDS
-            for hr in required
-        )
+        valid = all(hr < 0 or float(dbz.sel(height=hr).values) > MDS for hr in required)
         if not valid:
             continue
 
@@ -168,12 +165,10 @@ def _find_bb_candidates(
         # Gradient sum at h and h+step (looking at gradient from h to h+200 and h+200 to h+400)
         grad_sum_here = _compute_gradient_sum(gradient, h)
         grad_sum_below = (
-            0.0 if h - 2 * step < 0
-            else _compute_gradient_sum(gradient, h - 2 * step)
+            0.0 if h - 2 * step < 0 else _compute_gradient_sum(gradient, h - 2 * step)
         )
         grad_sum_below2 = (
-            0.0 if h - step < 0
-            else _compute_gradient_sum(gradient, h - step)
+            0.0 if h - step < 0 else _compute_gradient_sum(gradient, h - step)
         )
 
         if np.isnan(grad_sum_here):
@@ -182,7 +177,11 @@ def _find_bb_candidates(
         # BB signature: grad sum at h is positive (local max forming),
         # grad sums below are non-positive (increasing toward peak)
         # Threshold of 2.5 from Perl: ($isotaulu[$i][$j][7] + $isotaulu[$i+400][$j][4]) >= 2.5
-        grad_at_plus_400 = float(gradient.sel(height=h + 2 * step).values) if h + 2 * step in heights else 0
+        grad_at_plus_400 = (
+            float(gradient.sel(height=h + 2 * step).values)
+            if h + 2 * step in heights
+            else 0
+        )
 
         if grad_sum_here + grad_at_plus_400 >= 2.5:
             # Check gradients below are non-positive
@@ -229,7 +228,9 @@ def _find_bb_boundaries(
             continue
 
         g1 = float(gradient.sel(height=k_below2).values) if k_below2 in heights else 0.0
-        g2 = float(gradient.sel(height=k_below).values) if k_below in heights else np.nan
+        g2 = (
+            float(gradient.sel(height=k_below).values) if k_below in heights else np.nan
+        )
 
         if np.isnan(g1) or np.isnan(g2):
             continue
@@ -254,7 +255,9 @@ def _find_bb_boundaries(
             continue
 
         g1 = float(gradient.sel(height=k).values) if k in heights else np.nan
-        g2 = float(gradient.sel(height=k_above).values) if k_above in heights else np.nan
+        g2 = (
+            float(gradient.sel(height=k_above).values) if k_above in heights else np.nan
+        )
 
         if np.isnan(g1) or np.isnan(g2):
             continue
@@ -327,9 +330,7 @@ def _validate_bright_band(
     # Perl: lines 1051-1075 in allprof_prodx2.pl
     if result.peak_height is not None:
         if result.peak_height in (lowest_height, lowest_height + STEP):
-            if not _validate_near_surface_bb(
-                ds, result.peak_height, result.top_height
-            ):
+            if not _validate_near_surface_bb(ds, result.peak_height, result.top_height):
                 return BBRejectionReason.NEAR_SURFACE_ZCOUNT
 
     return None
@@ -451,14 +452,20 @@ def _refine_peak_height(ds: xr.Dataset, peak: int) -> float:
         if not all(h in heights and float(values.sel(height=h)) > MDS for h in levels):
             return float(peak)
         if (
-            float(values.sel(height=peak - 2 * STEP) - values.sel(height=peak - STEP)) >= 2
-            or float(values.sel(height=peak + 2 * STEP) - values.sel(height=peak + STEP)) >= 2
+            float(values.sel(height=peak - 2 * STEP) - values.sel(height=peak - STEP))
+            >= 2
+            or float(
+                values.sel(height=peak + 2 * STEP) - values.sel(height=peak + STEP)
+            )
+            >= 2
         ):
             return float(peak)
     elif peak - STEP > 0:
         levels = [peak - STEP, peak, peak + STEP]
         required = levels + [peak + 2 * STEP]
-        if not all(h in heights and float(values.sel(height=h)) > MDS for h in required):
+        if not all(
+            h in heights and float(values.sel(height=h)) > MDS for h in required
+        ):
             return float(peak)
     else:
         return float(peak)
@@ -641,7 +648,8 @@ def apply_post_bb_clutter_correction(
     applied = False
     for scenario in scenarios:
         top = (
-            bb_result.bottom_height if scenario == "low_bb_bottom"
+            bb_result.bottom_height
+            if scenario == "low_bb_bottom"
             else lowest + POST_BB_CLUTTER_HEIGHT_M
         )
         for height in range(int(top), lowest, -STEP):
@@ -660,14 +668,20 @@ def apply_post_bb_clutter_correction(
                 corrected[index] if scenario == "high_bb_or_no_bb" else raw[index]
             )
             if raw[below] > threshold_reference + POST_BB_CLUTTER_THRESHOLD_DB:
-                reference = raw[index] if scenario == "near_surface_rejected" else corrected[index]
+                reference = (
+                    raw[index]
+                    if scenario == "near_surface_rejected"
+                    else corrected[index]
+                )
                 corrected[below] = reference + POST_BB_CLUTTER_THRESHOLD_DB
                 applied = True
                 if scenario == "high_bb_or_no_bb" and height + STEP in indices:
                     above = indices[height + STEP]
                     if corrected[above] - corrected[index] > LARGE_JUMP_THRESHOLD_DB:
                         corrected[index] = (corrected[index] + corrected[above]) / 2
-                        corrected[below] = corrected[index] + POST_BB_CLUTTER_THRESHOLD_DB
+                        corrected[below] = (
+                            corrected[index] + POST_BB_CLUTTER_THRESHOLD_DB
+                        )
             else:
                 corrected[below] = raw[below]
     result["corrected_dbz"].values = corrected
@@ -708,7 +722,10 @@ def _determine_clutter_scenario(
             return "high_bb_or_no_bb"
 
     if not bb_result.detected:
-        if freezing_level is not None and freezing_level <= NO_BB_CLUTTER_FREEZING_LEVEL_M:
+        if (
+            freezing_level is not None
+            and freezing_level <= NO_BB_CLUTTER_FREEZING_LEVEL_M
+        ):
             return "high_bb_or_no_bb"
 
     return None
@@ -766,8 +783,6 @@ def restore_bb_spike(ds: xr.Dataset, bb_result: BrightBandResult) -> xr.Dataset:
                 )
 
     if restored_count > 0:
-        logger.debug(
-            "Restored %d values around BB peak at %dm", restored_count, peak
-        )
+        logger.debug("Restored %d values around BB peak at %dm", restored_count, peak)
 
     return ds
