@@ -8,8 +8,9 @@ The weighting system is modular: different weight functions can be substituted
 via the `weight_func` parameter.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Protocol
 
 import numpy as np
 import xarray as xr
@@ -71,7 +72,7 @@ class CompositeGrid:
         ymax: float,
         resolution_m: float = 1000.0,
         crs: CRS | int = 3067,
-    ) -> "CompositeGrid":
+    ) -> CompositeGrid:
         """Create grid from bounding box.
 
         Args:
@@ -93,7 +94,7 @@ class CompositeGrid:
     @classmethod
     def for_finland(
         cls, resolution_m: float = 1000.0, crs: CRS | int = 3067
-    ) -> "CompositeGrid":
+    ) -> CompositeGrid:
         """Create grid covering Finland's radar coverage area.
 
         Uses approximate bounds that cover the FMI radar network.
@@ -123,7 +124,7 @@ class CompositeGrid:
         range_km: float = 251.0,
         resolution_m: float = 1000.0,
         crs: CRS | int = 3067,
-    ) -> "CompositeGrid":
+    ) -> CompositeGrid:
         """Create grid covering specified radars with given range.
 
         Computes the bounding box that encompasses all specified radar

@@ -87,7 +87,7 @@ def average_corrections(
         )
 
     # Sort by timestamp (oldest first)
-    sorted_pairs = sorted(zip(timestamps, results), key=lambda x: x[0])
+    sorted_pairs = sorted(zip(timestamps, results, strict=True), key=lambda x: x[0])
     sorted_results = [r for _, r in sorted_pairs]
     n = len(sorted_results)
 

@@ -6,7 +6,6 @@ Tests for VVP file parsing functionality.
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -209,7 +208,7 @@ class TestVVPDataframeToXarray:
             pytest.skip(f"Sample file not found: {SAMPLE_VVP_FILE}")
         return _parse_vvp_file(SAMPLE_VVP_FILE)
 
-    def test_convert_to_xarray(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
+    def test_convert_to_xarray(self, sample_data: tuple[VVPHeader | pd.DataFrame]):
         """Test conversion to xarray Dataset."""
         header, df = sample_data
         ds = _vvp_dataframe_to_xarray(df, header)
@@ -219,7 +218,7 @@ class TestVVPDataframeToXarray:
 
         assert isinstance(ds, xr.Dataset)
 
-    def test_xarray_dimensions(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
+    def test_xarray_dimensions(self, sample_data: tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has correct dimensions.
 
         Note: heights are converted to above-antenna coordinates, and levels
@@ -233,7 +232,7 @@ class TestVVPDataframeToXarray:
         # Original 35 levels minus 1 dropped (below antenna)
         assert ds.sizes["height"] == len(df) - 1
 
-    def test_xarray_coordinates(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
+    def test_xarray_coordinates(self, sample_data: tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has correct coordinates.
 
         Heights are converted to above-antenna: sea_level - antenna_height_m.
@@ -251,7 +250,7 @@ class TestVVPDataframeToXarray:
         # Highest level: 6900m ASL - 174m = 6726m above antenna
         assert ds.coords["height"].max().values == 6726
 
-    def test_xarray_variables(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
+    def test_xarray_variables(self, sample_data: tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has expected data variables."""
         header, df = sample_data
         ds = _vvp_dataframe_to_xarray(df, header)
@@ -281,7 +280,7 @@ class TestVVPDataframeToXarray:
         for var in expected_vars:
             assert var in ds.data_vars, f"Variable {var} not in dataset"
 
-    def test_xarray_corrected_dbz(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
+    def test_xarray_corrected_dbz(self, sample_data: tuple[VVPHeader | pd.DataFrame]):
         """Test that corrected_dbz is initialized as copy of lin_dbz."""
         header, df = sample_data
         ds = _vvp_dataframe_to_xarray(df, header)
@@ -289,7 +288,7 @@ class TestVVPDataframeToXarray:
         # Should be equal initially
         assert (ds["corrected_dbz"] == ds["lin_dbz"]).all()
 
-    def test_xarray_metadata(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
+    def test_xarray_metadata(self, sample_data: tuple[VVPHeader | pd.DataFrame]):
         """Test that xarray has correct metadata attributes."""
         header, df = sample_data
         radar_meta = {
@@ -307,7 +306,7 @@ class TestVVPDataframeToXarray:
         assert ds.attrs["lowest_level_offset_m"] == 126
         assert "source_file" in ds.attrs
 
-    def test_xarray_data_access(self, sample_data: Tuple[VVPHeader | pd.DataFrame]):
+    def test_xarray_data_access(self, sample_data: tuple[VVPHeader | pd.DataFrame]):
         """Test accessing data from xarray Dataset.
 
         Heights are above antenna, so 1500m ASL -> 1326m above antenna.

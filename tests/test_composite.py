@@ -3,7 +3,6 @@
 import numpy as np
 import pytest
 import xarray as xr
-from pyproj import CRS
 
 from vprc import average_corrections, process_vvp
 from vprc.composite import (
@@ -13,7 +12,6 @@ from vprc.composite import (
     compute_radar_distances,
     create_empty_composite,
     create_radar_correction,
-    interpolate_correction_to_grid,
     inverse_distance_weight,
 )
 from vprc.vpr_correction import VPRCorrectionResult

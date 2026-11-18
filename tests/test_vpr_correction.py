@@ -905,20 +905,10 @@ class TestBrightBandSlopeAdjustment:
         from vprc.vpr_correction import adjust_ground_reference
 
         heights = np.array([100, 300, 500, 700, 900])
-        # Gentle slope: 25 dBZ at 300m, 24.5 dBZ at 700m
-        # Slope = (25-24.5)/(700-300)*200 = 0.25 dBZ/200m ~= 0.25
-        # Still slightly above 0.2, so let's make it even gentler
         dbz_values = np.array([26.0, 25.0, 24.8, 24.5, 24.0])
-        bb_result = BrightBandResult(
-            detected=True,
-            peak_height=500,
-            bottom_height=300,  # Below 600m height limit
-            top_height=700,
-            peak_dbz=24.8,
-        )
-
-        # Slope = (25-24.5)/(700-300)*200 = 0.25 > 0.2, still triggers
-        # Let's make BB bottom higher than 600m to avoid trigger
+        # A BB bottomed at 300 m would still give a slope of
+        # (25-24.5)/(700-300)*200 = 0.25 > 0.2 and trigger adjustment, so the
+        # BB bottom is placed above the 600 m height limit instead.
         bb_result_high = BrightBandResult(
             detected=True,
             peak_height=900,

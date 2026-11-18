@@ -5,16 +5,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from numbers import Real
 from pathlib import Path
-from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from ..config import (
-    _build_radar_name_to_code_map,
     _get_radar_metadata,
-    _load_radar_defaults,
     resolve_radar_code,
 )
 from ..constants import MDS, STEP
@@ -103,7 +100,7 @@ class VVPHeader:
     product: str
     scan_type: str
     timestamp: datetime
-    elevation_angles: List[float]
+    elevation_angles: list[float]
 
 
 def _parse_vvp_header(header_line: str) -> VVPHeader:
@@ -158,7 +155,7 @@ def _parse_vvp_header(header_line: str) -> VVPHeader:
     )
 
 
-def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
+def _parse_vvp_file(filepath: Path | str) -> tuple[VVPHeader, pd.DataFrame]:
     """
     Parse a VVP vertical profile file.
 
@@ -189,7 +186,7 @@ def _parse_vvp_file(filepath: Path | str) -> Tuple[VVPHeader, pd.DataFrame]:
     """
     filepath = Path(filepath)
 
-    with open(filepath, "r") as f:
+    with open(filepath) as f:
         lines = f.readlines()
 
     if not lines:

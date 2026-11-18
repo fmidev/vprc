@@ -317,7 +317,7 @@ class TestAverageCorrections:
             make_test_correction(2.0, timestamp=t1, elevation_angles=[0.5]),
             make_test_correction(8.0, timestamp=t2, elevation_angles=[0.5]),
         ]
-        for result, quality in zip(results, [0.2, 1.0]):
+        for result, quality in zip(results, [0.2, 1.0], strict=True):
             result.quality_weight = quality
             result.z_ground_clim_dbz = 30.0
             result.corrections.attrs["quality_weight"] = quality

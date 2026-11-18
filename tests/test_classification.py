@@ -19,9 +19,7 @@ from vprc.classification import (
     finalize_profile_classification,
 )
 from vprc.constants import (
-    EVAPORATION_THRESHOLD_DB,
     MDS,
-    MIN_SAMPLES,
     SNOW_FREEZING_LEVEL_THRESHOLD_M,
 )
 
@@ -129,7 +127,7 @@ class TestFindEchoLayers:
         assert layers[0].top_height == 900
         assert layers[0].max_dbz == 20
         assert layers[0].max_dbz_height == 500
-        assert layers[0].touches_ground == True
+        assert layers[0].touches_ground
 
     def test_two_layers_with_gap(self):
         """Profile with gap in middle forms two layers."""
@@ -142,10 +140,10 @@ class TestFindEchoLayers:
         assert len(layers) == 2
         assert layers[0].bottom_height == 100
         assert layers[0].top_height == 300
-        assert layers[0].touches_ground == True
+        assert layers[0].touches_ground
         assert layers[1].bottom_height == 900
         assert layers[1].top_height == 1100
-        assert layers[1].touches_ground == False
+        assert not layers[1].touches_ground
 
     def test_no_echo(self):
         """Profile with all MDS values produces no layers."""
@@ -178,7 +176,7 @@ class TestFindEchoLayers:
 
         assert len(layers) == 1
         assert layers[0].bottom_height == 500
-        assert layers[0].touches_ground == False
+        assert not layers[0].touches_ground
 
 
 class TestClassifyLayer:
@@ -255,8 +253,8 @@ class TestClassifyProfile:
 
         assert result.num_layers == 1
         assert result.profile_type == LayerType.PRECIPITATION
-        assert result.usable_for_vpr == True
-        assert result.lowest_layer.touches_ground == True
+        assert result.usable_for_vpr
+        assert result.lowest_layer.touches_ground
 
     def test_clear_air_echo_profile(self):
         """Low, thin layer is classified as clear air."""
@@ -267,7 +265,7 @@ class TestClassifyProfile:
 
         assert result.num_layers == 1
         assert result.profile_type == LayerType.CLEAR_AIR_ECHO
-        assert result.usable_for_vpr == False
+        assert not result.usable_for_vpr
 
     def test_empty_profile(self):
         """Profile with no echo."""
@@ -278,7 +276,7 @@ class TestClassifyProfile:
 
         assert result.num_layers == 0
         assert result.profile_type == LayerType.UNKNOWN
-        assert result.usable_for_vpr == False
+        assert not result.usable_for_vpr
 
     def test_altostratus_profile(self):
         """Elevated layer without ground echo is altostratus."""
@@ -290,7 +288,7 @@ class TestClassifyProfile:
 
         assert result.num_layers == 1
         assert result.profile_type == LayerType.ALTOSTRATUS
-        assert result.usable_for_vpr == False
+        assert not result.usable_for_vpr
 
     def test_multiple_layers(self):
         """Profile with ground layer and elevated layer."""
@@ -336,9 +334,9 @@ class TestClassifyProfiles:
 
         assert len(results) == 2
         # First time: ground layer
-        assert results[0].lowest_layer.touches_ground == True
+        assert results[0].lowest_layer.touches_ground
         # Second time: elevated layer
-        assert results[1].lowest_layer.touches_ground == False
+        assert not results[1].lowest_layer.touches_ground
 
 
 class TestEvaporationCheck:

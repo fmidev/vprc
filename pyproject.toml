@@ -64,6 +64,13 @@ dev = [
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]
+# Nested conditions mirror the legacy validation steps, and short local
+# accessor lambdas keep the profile pattern expressions readable.
+ignore = ["SIM102", "E731"]
+
+[tool.ruff.lint.per-file-ignores]
+# Private names re-exported for backward compatibility.
+"src/vprc/io/__init__.py" = ["F401"]
 
 [tool.coverage.run]
 source_pkgs = ["vprc", "tests"]

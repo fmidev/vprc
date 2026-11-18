@@ -238,6 +238,8 @@ __all__ = [
     "VPRCorrectionResult",
     "compute_vpr_correction",
     "average_corrections",
+    "generate_climatological_profile",
+    "get_clim_ground_reference",
     "CompositeGrid",
     "RadarCorrection",
     "composite_corrections",

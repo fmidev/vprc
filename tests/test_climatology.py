@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from vprc.climatology import generate_climatological_profile, get_clim_ground_reference
-from vprc.constants import MDS, STEP
+from vprc.constants import MDS
 
 
 class TestClimatologicalProfile:

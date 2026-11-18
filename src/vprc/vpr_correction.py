@@ -482,7 +482,7 @@ def compute_bb_slope(
 def adjust_ground_reference(
     dbz_values: np.ndarray,
     heights: np.ndarray,
-    bb_result: "BrightBandResult",
+    bb_result: BrightBandResult,
     lowest_height: int,
     slope_threshold: float = BB_SLOPE_THRESHOLD,
     height_limit_m: int = BB_SLOPE_HEIGHT_LIMIT_M,
@@ -589,7 +589,7 @@ def adjust_ground_reference(
 
 def cap_bb_peak_amplitude(
     ds: xr.Dataset,
-    bb_result: "BrightBandResult",
+    bb_result: BrightBandResult,
     amplitude_cap_db: float = BB_PEAK_AMPLITUDE_CAP_DB,
 ) -> xr.Dataset:
     """Cap bright band peak amplitude when BB is at surface level.
@@ -679,7 +679,7 @@ def compute_vpr_correction(
     freezing_level_m: float | None = None,
     include_clim: bool = True,
     clim_weight: float = 0.2,
-    bb_result: "BrightBandResult | None" = None,
+    bb_result: BrightBandResult | None = None,
     is_precipitation: bool = True,
     layer_top_height_m: float | None = None,
     horizon_angle_deg: float | None = None,

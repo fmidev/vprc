@@ -1,7 +1,5 @@
 """Tests for COG export functionality."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -151,7 +149,7 @@ class TestWriteCorrectionCog:
         write_correction_cog(ds, output_path)
 
         with rasterio.open(output_path) as src:
-            data = src.read(1)
+            src.read(1)
             # Check that nodata value is set
             assert src.nodata is not None or np.isnan(src.nodata)
 

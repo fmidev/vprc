@@ -240,7 +240,7 @@ def main(
     )
 
     click.echo(f"\nCreated {len(outputs)} COG files:")
-    for var, path in outputs.items():
+    for path in outputs.values():
         size_kb = path.stat().st_size / 1024
         click.echo(f"  {path.name} ({size_kb:.1f} KB)")
 

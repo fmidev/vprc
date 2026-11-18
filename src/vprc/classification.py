@@ -470,7 +470,7 @@ def classify_profile(
 def finalize_profile_classification(
     classification: ProfileClassification,
     ds: xr.Dataset,
-    bb_result: "BrightBandResult",
+    bb_result: BrightBandResult,
 ) -> ProfileClassification:
     """Refresh first-layer statistics and reject evaporation after BB correction.
 
@@ -549,7 +549,7 @@ def classify_profiles(
 
 
 def classify_precipitation_type(
-    bb_result: "BrightBandResult",
+    bb_result: BrightBandResult,
     freezing_level_m: float | None,
     lowest_profile_height: int,
 ) -> PrecipitationType:
