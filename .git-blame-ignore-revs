@@ -1,0 +1,6 @@
+# Mechanical formatting commits skipped by `git blame`.
+# GitHub uses this file automatically; locally run:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# STYLE: format with Ruff and sort imports
+79adde580873950a28378e12e7285091d508c665
