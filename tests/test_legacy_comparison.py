@@ -694,6 +694,8 @@ def _assert_cappi_corrections_match_legacy(result, stem):
     [
         # Clear-air layer: no bright band search, but the no-BB clutter step.
         ("202512051200_KAN.VVP_40", "KAN", BBRejectionReason.NOT_PRECIPITATION),
+        # Lowest-level peak failing the outer gradient check as well.
+        ("202605052000_UTA.VVP_40", "UTA", BBRejectionReason.NEAR_SURFACE_ZCOUNT),
     ],
 )
 def test_positive_freezing_level_matches_legacy(stem, radar_code, rejection_reason):

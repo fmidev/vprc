@@ -1063,3 +1063,24 @@ def test_no_search_outside_precipitation():
     assert not bb.detected
     assert bb.rejection_reason == BBRejectionReason.NOT_PRECIPITATION
     assert bb.freezing_level_m == 1500
+
+
+def test_near_surface_count_check_precedes_outer_gradient_check():
+    """A near-surface peak with few samples is rejected as such even when the
+    outer gradient check fails too, so that its clutter correction applies."""
+    # Reflectivity rises 6 dB above the top, more than half the 8 dB amplitude.
+    values = [30, 26, 22, 28, 28, 28, 28, 28]
+    ds = make_test_dataset(values, zcount_values=[400] + [1000] * 7)
+    gradient = compute_dbz_gradient_per_step(ds)
+    bb = BrightBandResult(
+        detected=True,
+        peak_height=100,
+        bottom_height=-1,
+        top_height=500,
+        amplitude_above=8,
+    )
+    reason = _validate_bright_band(bb, gradient, ds, 100)
+    assert reason == BBRejectionReason.NEAR_SURFACE_ZCOUNT
+    ds["zcount"][0] = 1000
+    reason = _validate_bright_band(bb, gradient, ds, 100)
+    assert reason == BBRejectionReason.VALIDATION_FAILED

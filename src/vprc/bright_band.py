@@ -300,6 +300,13 @@ def _validate_bright_band(
     Returns:
         None if validation passes, or BBRejectionReason if rejected
     """
+    # A peak at the lowest two levels with few or decreasing samples is
+    # likely ground clutter. Check it first, also for bands failing the
+    # checks below, so that the near-surface clutter correction follows.
+    if result.peak_height in (lowest_height, lowest_height + STEP):
+        if not _validate_near_surface_bb(ds, result.peak_height, result.top_height):
+            return BBRejectionReason.NEAR_SURFACE_ZCOUNT
+
     if result.top_height is None or result.bottom_height is None:
         return BBRejectionReason.VALIDATION_FAILED
 
@@ -325,14 +332,6 @@ def _validate_bright_band(
         and float(outer_gradient.sel(height=below)) > 2
     ):
         return BBRejectionReason.VALIDATION_FAILED
-
-    # Near-surface BB validation: when the discrete peak is at lowest 1-2 levels,
-    # check sample counts (Zcount) are sufficient
-    # Perl: lines 1051-1075 in allprof_prodx2.pl
-    if result.peak_height is not None:
-        if result.peak_height in (lowest_height, lowest_height + STEP):
-            if not _validate_near_surface_bb(ds, result.peak_height, result.top_height):
-                return BBRejectionReason.NEAR_SURFACE_ZCOUNT
 
     return None
 
