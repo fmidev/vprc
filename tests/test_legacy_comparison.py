@@ -20,7 +20,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from vprc import PrecipitationType, get_radar_metadata, process_vvp
+from vprc import (
+    BBRejectionReason,
+    PrecipitationType,
+    get_radar_metadata,
+    process_vvp,
+)
 from vprc.constants import MDS, MIN_SAMPLES
 
 from .legacy_parser import parse_legacy_profile
@@ -633,7 +638,14 @@ def test_layers_reaching_ten_kilometres_match_legacy_profile(stem):
     ],
 )
 def test_near_surface_variants_match_legacy_profile_and_corrections(stem):
-    """Lowest-layer classification drives the correction, as in the reference.
+    """Lowest-layer classification drives the correction, as in the reference."""
+    result, expected, footer = _process_like_legacy(stem, "KAN")
+    _assert_profile_matches_legacy(result, expected, footer, stem)
+    _assert_cappi_corrections_match_legacy(result, stem)
+
+
+def _assert_cappi_corrections_match_legacy(result, stem):
+    """Compare CAPPI corrections with the reference .cor file.
 
     Unlike TestVPRCorrectionComparison, use Python's own classification
     rather than the reference's.
@@ -642,13 +654,14 @@ def test_near_surface_variants_match_legacy_profile_and_corrections(stem):
 
     from .legacy_parser import parse_legacy_cor
 
-    result, expected, footer = _process_like_legacy(stem, "KAN")
-    _assert_profile_matches_legacy(result, expected, footer, stem)
-
     legacy_cor, header = parse_legacy_cor(DATA_DIR / f"{stem}.cor")
     layer = result.classification.lowest_layer
+    # pystycappi.pl stores each level at its 25 m bin, int(h / 25), shifting
+    # the profile down by up to 24 m. Python keeps exact heights; compare on
+    # the binned heights so that the shift does not mask other differences.
+    dataset = result.dataset.assign_coords(height=result.dataset.height // 25 * 25)
     corrections = compute_vpr_correction(
-        result.dataset,
+        dataset,
         freezing_level_m=header.freezing_level_m,
         max_range_km=int(legacy_cor.range_km.max()),
         min_elevation_deg=header.elevation_angles[0],
@@ -672,3 +685,22 @@ def test_near_surface_variants_match_legacy_profile_and_corrections(stem):
                 atol=0.1,
                 err_msg=f"{python_variable} at {cappi_height} m for {stem}",
             )
+
+
+# Operational inputs with a positive HIRLAM freezing level; references from
+# running allprof_prodx2.pl and pystycappi.pl with the archived freezing level.
+@pytest.mark.parametrize(
+    ("stem", "radar_code", "rejection_reason"),
+    [
+        # Clear-air layer: no bright band search, but the no-BB clutter step.
+        ("202512051200_KAN.VVP_40", "KAN", BBRejectionReason.NOT_PRECIPITATION),
+    ],
+)
+def test_positive_freezing_level_matches_legacy(stem, radar_code, rejection_reason):
+    """Bright band search and the following clutter corrections match Perl."""
+    result, expected, footer = _process_like_legacy(stem, radar_code)
+    assert footer.freezing_level > 0
+    assert result.bright_band.rejection_reason == rejection_reason
+    assert result.bright_band.clutter_correction_applied
+    _assert_profile_matches_legacy(result, expected, footer, stem)
+    _assert_cappi_corrections_match_legacy(result, stem)

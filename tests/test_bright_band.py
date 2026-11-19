@@ -1052,3 +1052,14 @@ def test_invalid_outer_gradient_rejects_bb_using_zcount_not_wind_count():
 def test_surface_bb_thickness_starts_at_zero_not_negative_sentinel():
     bb = BrightBandResult(detected=True, bottom_height=-1, top_height=700)
     assert bb.thickness == 700
+
+
+def test_no_search_outside_precipitation():
+    """A melting layer signature is searched only in precipitation profiles."""
+    values = [10, 12, 15, 18, 22, 26, 30, 35, 28, 22, 18, 15]
+    ds = make_test_dataset(values, list(range(100, 2500, STEP)), freezing_level_m=1500)
+    assert detect_bright_band(ds, layer_top=2300).detected
+    bb = detect_bright_band(ds, layer_top=2300, is_precipitation=False)
+    assert not bb.detected
+    assert bb.rejection_reason == BBRejectionReason.NOT_PRECIPITATION
+    assert bb.freezing_level_m == 1500

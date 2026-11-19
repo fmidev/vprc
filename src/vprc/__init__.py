@@ -165,7 +165,11 @@ def process_vvp(
     if classification.lowest_layer is not None:
         layer_top = classification.lowest_layer.top_height
 
-    bright_band = detect_bright_band(ds, layer_top=layer_top)
+    bright_band = detect_bright_band(
+        ds,
+        layer_top=layer_top,
+        is_precipitation=classification.usable_for_vpr,
+    )
 
     # Restore the measured band before applying surface and clutter corrections.
     ds = restore_bb_spike(ds, bright_band)

@@ -45,6 +45,7 @@ class BBRejectionReason(Enum):
     """
 
     NOT_REJECTED = "not_rejected"
+    NOT_PRECIPITATION = "not_precipitation"
     NO_CANDIDATES = "no_candidates"
     LAYER_TOO_LOW = "layer_too_low"
     FREEZING_LEVEL_INVALID = "freezing_level_invalid"
@@ -477,6 +478,7 @@ def _refine_peak_height(ds: xr.Dataset, peak: int) -> float:
 def detect_bright_band(
     ds: xr.Dataset,
     layer_top: int | None = None,
+    is_precipitation: bool = True,
 ) -> BrightBandResult:
     """Detect bright band in a vertical profile.
 
@@ -489,6 +491,9 @@ def detect_bright_band(
             Should have 'freezing_level_m' in attrs (can be None).
         layer_top: Upper limit of search (e.g., top of lowest layer).
             If None, uses top of profile.
+        is_precipitation: Whether the lowest layer is a precipitation layer
+            reaching the ground. A melting layer signature is not searched
+            in other profiles, such as clear-air or altostratus echo.
 
     Returns:
         BrightBandResult with detection status and parameters
@@ -508,6 +513,13 @@ def detect_bright_band(
         return BrightBandResult(
             freezing_level_m=freezing_level,
             rejection_reason=BBRejectionReason.NO_CANDIDATES,
+        )
+
+    # Legacy: the search requires `$kerrostaulu[1][$j][6] == 1`.
+    if not is_precipitation:
+        return BrightBandResult(
+            freezing_level_m=freezing_level,
+            rejection_reason=BBRejectionReason.NOT_PRECIPITATION,
         )
 
     # Determine search bounds
