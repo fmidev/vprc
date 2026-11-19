@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:  # reused by the release workflow
 
 jobs:
   check:
@@ -25,3 +26,19 @@ jobs:
         run: uv run pytest tests/
       - name: Build wheel
         run: uv build --wheel
+
+  lowest-dependencies:
+    # Verifies the lower bounds of the runtime dependencies in pyproject.toml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the oldest allowed runtime dependencies
+        run: |
+          uv venv
+          uv pip install --resolution lowest-direct .
+          uv pip install pytest click matplotlib
+      - name: Test
+        run: .venv/bin/python -m pytest tests/

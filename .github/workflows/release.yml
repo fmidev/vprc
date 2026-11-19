@@ -1,0 +1,76 @@
+name: Release
+
+# Pushing a version tag (e.g. v0.10.0) publishes to PyPI. Running the workflow
+# manually publishes the current commit as a dev version to TestPyPI.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # hatch-vcs derives the version from Git tags
+      - uses: astral-sh/setup-uv@v6
+      - name: Drop the local version part for TestPyPI
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          version=$(uvx --from hatchling==1.33.0 --with hatch-vcs==0.5.0 hatchling version)
+          echo "SETUPTOOLS_SCM_PRETEND_VERSION=${version%%+*}" >> "$GITHUB_ENV"
+      - name: Build sdist and wheel
+        run: uv build
+      - name: Check distributions
+        run: uvx twine check --strict dist/*
+      - name: Require a release version for tags
+        if: github.event_name == 'push'
+        run: |
+          ls dist
+          if ls dist | grep -qE '\.dev|\+'; then
+            echo "::error::Built version is not a clean release version; is the tag on a clean commit?"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/vprc/
+    permissions:
+      id-token: write  # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/vprc/
+    permissions:
+      id-token: write  # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
