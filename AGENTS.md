@@ -19,8 +19,8 @@ package in containers from external Airflow workflows; DAGs do not belong here.
   configuration. Versioning uses hatch-vcs and Git metadata.
 
 See [quickstart](docs/quickstart.md), [algorithm overview](docs/introduction.md),
-[configuration](docs/configuration.md) and [test guide](tests/README.md) for
-details rather than duplicating them here.
+[configuration](docs/configuration.md), [test guide](tests/README.md) and
+[release guide](docs/releasing.md) for details rather than duplicating them here.
 
 ## Setup and checks
 
@@ -38,13 +38,20 @@ Without uv: `python -m pip install -e . --group dev` (pip 25.1+).
 - Lint and format touched Python files with Ruff (configured in
   [pyproject.toml](pyproject.toml)): `uv run ruff check --fix <files>` and
   `uv run ruff format <files>`. [CI](.github/workflows/ci.yml) runs Ruff,
-  the full test suite and a wheel build on the whole tree.
+  the full test suite and a wheel build on the whole tree, and repeats the
+  tests with the oldest runtime dependency versions allowed by
+  `pyproject.toml`.
 - Type checking: `uv run mypy src/vprc tests`. Existing errors remain; do not
   add new ones in touched code.
 - Wheel build, for packaging changes: `uv build --wheel`.
-  [Containerfile](Containerfile) defines the production image build.
+  [Containerfile](Containerfile) defines the reproducible production image:
+  base images are pinned by digest and dependencies come from `uv.lock`.
 - Add or update dependencies with `uv add` (`uv add --dev` for development
-  tools) so `uv.lock` stays in sync; commit both files.
+  tools) so `uv.lock` stays in sync; commit both files. Give runtime
+  dependencies a lower bound that passes the oldest-dependency CI job.
+- Releases are Git tags; the version comes from hatch-vcs, never from the
+  source. Follow the [release guide](docs/releasing.md); do not tag or publish
+  unless asked.
 - Add regression tests in the corresponding test module when behavior changes.
   Reuse fixtures in [tests/data/](tests/data/) and the existing legacy parsers.
 - Report checks run and any failures or unavailable dependencies. Documentation-only
