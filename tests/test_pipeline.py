@@ -174,3 +174,22 @@ def test_nonprecipitation_uses_only_climatology(tmp_path):
         correction.corrections.cappi_blended_correction_db,
         correction.corrections.cappi_clim_correction_db,
     )
+
+
+@pytest.mark.parametrize("clim_weight", [0.2, 0.5])
+def test_clim_weight_reaches_correction_blend(clim_weight):
+    result = process_vvp(KAN_FILE, freezing_level_m=2000, clim_weight=clim_weight)
+    correction = result.vpr_correction
+    assert correction is not None
+    corrections = correction.corrections
+    assert corrections.attrs["clim_weight"] == clim_weight
+    quality = corrections.attrs["quality_weight"]
+    assert quality > 0
+    expected = (
+        clim_weight * corrections["cappi_clim_correction_db"]
+        + quality * corrections["cappi_correction_db"]
+    ) / (clim_weight + quality)
+    np.testing.assert_allclose(
+        corrections["cappi_blended_correction_db"], expected, atol=1e-9
+    )
+    assert "clim_weight" not in result.dataset.attrs

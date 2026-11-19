@@ -55,6 +55,7 @@ from .config import (
     get_radar_metadata,
     list_radar_codes,
 )
+from .constants import CLIMATOLOGICAL_WEIGHT
 from .exceptions import NoUsableProfileError
 from .io import read_vvp  # Used internally by process_vvp
 from .smoothing import smooth_spikes
@@ -97,6 +98,7 @@ def process_vvp(
     fallback_detected_freezing_level: bool = True,
     compute_vpr: bool = True,
     cappi_heights_m: tuple[int, ...] | None = None,
+    clim_weight: float = CLIMATOLOGICAL_WEIGHT,
     **kwargs,
 ) -> ProcessedProfile:
     """Process a VVP profile through the full correction pipeline.
@@ -113,6 +115,9 @@ def process_vvp(
         fallback_detected_freezing_level: Whether to fallback to detected freezing level if not provided (default True)
         compute_vpr: Whether to compute VPR correction factors (default True)
         cappi_heights_m: CAPPI heights for VPR correction (default 500, 1000)
+        clim_weight: Weight of the climatological correction when blending it
+            with the observed one, and the quality weight of a
+            climatology-only result
         **kwargs: Additional metadata passed to read_vvp()
 
     Returns:
@@ -208,6 +213,7 @@ def process_vvp(
             ds,
             freezing_level_m=freezing_level_m,
             cappi_heights_m=cappi_heights_m,
+            clim_weight=clim_weight,
             bb_result=bright_band,
             is_precipitation=classification.usable_for_vpr,
             layer_top_height_m=layer_top,
