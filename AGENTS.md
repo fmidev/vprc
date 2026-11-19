@@ -91,7 +91,9 @@ Without uv: `python -m pip install -e . --group dev` (pip 25.1+).
   `read_vvp()` starts the grid at the radar's `lowest_level_offset_m` (Perl
   `$alintaso`), even when the file lacks that level, and fills levels absent
   from the file as no-echo levels so stages can index `height ± STEP`; their
-  heights are in `attrs["missing_levels_m"]`. `smooth_spikes()` drops levels
+  heights are in `attrs["missing_levels_m"]`. An absent level is unknown, not
+  0 dBZ as in Perl; once `smooth_spikes()` fills it, its raw `lin_dbz` takes the
+  filled value. `smooth_spikes()` also drops levels
   at or above `PROFILE_TOP_M` (10 km above antenna) after using them as
   neighbours, as the legacy loops stop at `$i < 10000`.
   The correction calculation also uses a finer grid; do not assume every grid

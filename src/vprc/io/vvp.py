@@ -43,7 +43,8 @@ def _fill_missing_levels(
     samples; other variables are NaN. Their heights above antenna are listed
     in the ``missing_levels_m`` attribute, because the legacy post-bright-band
     clutter correction treats absent levels differently from measured no-echo
-    levels.
+    levels, and so that ``smooth_spikes()`` can replace the raw placeholder of
+    a gap it fills.
 
     Raises:
         ValueError: If the heights are not on the ``STEP`` grid through the

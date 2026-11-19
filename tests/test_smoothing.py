@@ -209,3 +209,19 @@ def test_levels_above_profile_top_are_only_neighbours():
     assert int(result.height.max()) == 9900
     assert float(result.corrected_dbz.sel(height=9900)) == 30
     assert result.attrs["missing_levels_m"] == [300]
+
+
+def test_filled_absent_level_takes_the_filled_raw_value():
+    """An absent level's MDS placeholder must not stay in raw-value arithmetic
+    once smoothing has filled it; an unfilled absent level stays no echo."""
+    values = [10, 15, MDS, 25, 25, MDS, MDS, MDS]
+    counts = [1000, 1000, 0, 1000, 1000, 0, 0, 0]
+    ds = make_profile(values, zcount=counts)
+    ds.attrs["missing_levels_m"] = [500, 1100]
+    result = smooth_spikes(ds)
+    assert float(result.corrected_dbz.sel(height=500)) == 20
+    assert float(result.lin_dbz.sel(height=500)) == 20
+    assert float(result.lin_dbz.sel(height=1100)) == MDS
+    # A present level with few samples keeps its measured raw value.
+    ds.attrs["missing_levels_m"] = []
+    assert float(smooth_spikes(ds).lin_dbz.sel(height=500)) == MDS

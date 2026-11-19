@@ -706,3 +706,29 @@ def test_positive_freezing_level_matches_legacy(stem, radar_code, rejection_reas
     assert result.bright_band.clutter_correction_applied
     _assert_profile_matches_legacy(result, expected, footer, stem)
     _assert_cappi_corrections_match_legacy(result, stem)
+
+
+def test_filled_absent_level_does_not_bound_the_bright_band():
+    """Kankaanpää 2026-04-25 03 UTC lacks 726 m above the antenna inside rain.
+
+    With its MDS placeholder as the raw value, the band bottom snapped to the
+    gap and the low-band clutter step drove the lowest levels to −42…−44 dBZ.
+    Perl reads the gap as 0 dBZ; Python uses the smoothed value instead, so
+    only that level differs from the reference.
+    """
+    stem = "202604250300_KAN.VVP_40"
+    result, expected, footer = _process_like_legacy(stem, "KAN")
+    absent = result.dataset.attrs["missing_levels_m"]
+    assert 726 in absent
+    assert result.bright_band.detected
+    assert result.bright_band.bottom_height == footer.bb_bottom
+    assert result.bright_band.top_height == footer.bb_top
+    heights = [h for h in expected.height.values if h not in absent and h <= 1926]
+    np.testing.assert_allclose(
+        result.dataset.corrected_dbz.sel(height=heights),
+        expected.corrected_dbz.sel(height=heights),
+        atol=0.1,
+        rtol=0.01,
+    )
+    # Perl's ground reference ($korarvo in korjausprof) was -13.2 dBZ.
+    assert result.vpr_correction.z_ground_dbz == pytest.approx(-13.2, abs=0.1)

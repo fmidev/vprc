@@ -252,6 +252,19 @@ def smooth_spikes(ds: xr.Dataset) -> xr.Dataset:
         fill_gap(result, height)
         remove_isolated_echo(result, height)
         _smooth_two_point_layer(result, height)
+    # A level absent from the VVP file has no measured raw value; its MDS
+    # placeholder would create ±40 dB raw gradients for bright band and clutter
+    # checks once the gap is filled. Legacy reads it as 0 dBZ instead.
+    filled = [
+        height
+        for height in result.attrs.get("missing_levels_m", ())
+        if height in result.height.values
+        and float(result["corrected_dbz"].sel(height=height)) > MDS
+    ]
+    if filled:
+        result["lin_dbz"].loc[{"height": filled}] = result["corrected_dbz"].sel(
+            height=filled
+        )
     result = result.sel(height=result.height < PROFILE_TOP_M)
     if "missing_levels_m" in result.attrs:
         result.attrs["missing_levels_m"] = [
