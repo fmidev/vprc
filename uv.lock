@@ -1265,12 +1265,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pyproj" },
-    { name = "rioxarray" },
-    { name = "wradlib" },
-    { name = "xarray" },
+    { name = "numpy", specifier = ">=2.3.2" },
+    { name = "pandas", specifier = ">=2.3.3" },
+    { name = "pyproj", specifier = ">=3.7.2" },
+    { name = "rioxarray", specifier = ">=0.19.0" },
+    { name = "wradlib", specifier = ">=2.5.0" },
+    { name = "xarray", specifier = ">=2025.9.0" },
 ]
 
 [package.metadata.requires-dev]

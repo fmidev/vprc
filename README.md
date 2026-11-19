@@ -1,13 +1,13 @@
 # vprc
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.txt)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/fmidev/vprc/blob/main/LICENSE.txt)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 [![Status: Beta](https://img.shields.io/badge/status-beta-yellow.svg)]()
 [![Docker Repository on Quay](https://quay.io/repository/fmi/vprc/status "Docker Repository on Quay")](https://quay.io/repository/fmi/vprc)
 
 Python implementation of the **Koistinen & Pohjola VPR (Vertical Profile Reflectivity) correction algorithm** for weather radar data. This modernization of a circa-2003 Perl codebase is designed for use in Apache Airflow workflows at FMI.
 
-📖 [Introduction](docs/introduction.md) · [Quick Start](docs/quickstart.md) · [Configuration](docs/configuration.md)
+📖 [Introduction](https://github.com/fmidev/vprc/blob/main/docs/introduction.md) · [Quick Start](https://github.com/fmidev/vprc/blob/main/docs/quickstart.md) · [Configuration](https://github.com/fmidev/vprc/blob/main/docs/configuration.md)
 
 ## Features
 
@@ -25,14 +25,20 @@ Python implementation of the **Koistinen & Pohjola VPR (Vertical Profile Reflect
 Requires Python 3.14+.
 
 ```bash
-# From source (development, with uv: creates .venv including dev tools)
+pip install vprc
+```
+
+For development, clone the repository and create the environment, including
+development tools, with [uv](https://docs.astral.sh/uv/):
+
+```bash
 git clone https://github.com/fmidev/vprc.git
 cd vprc
 uv sync
-
-# Or directly from GitHub
-pip install git+https://github.com/fmidev/vprc.git
 ```
+
+A container image for operational use is published at
+[quay.io/fmi/vprc](https://quay.io/repository/fmi/vprc).
 
 ## Project Structure
 
@@ -48,13 +54,13 @@ docs/              # Documentation
 uv run pytest tests/
 ```
 
-See [tests/README.md](tests/README.md) for details on test structure and coverage.
+See [tests/README.md](https://github.com/fmidev/vprc/blob/main/tests/README.md) for details on test structure and coverage.
 
 ## Contributing
 
 Contributions are welcome through Github.
 
-Coding agents: see [AGENTS.md](AGENTS.md) for development guidance.
+Coding agents: see [AGENTS.md](https://github.com/fmidev/vprc/blob/main/AGENTS.md) for development guidance.
 
 
 ## References
