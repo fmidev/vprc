@@ -73,9 +73,14 @@ quality weights for compositing. Non-finite values and incompatible grids are
 errors. Select the desired observation window in the calling workflow; the
 legacy operational window was six hours.
 
+`result.vpr_correction` is `None` when `compute_vpr=False` or when no freezing
+level is known: none was given and no bright band was detected to fall back on
+(`fallback_detected_freezing_level`). With a freezing level, an unusable profile
+still gets a climatology-only correction with observed quality 0.
+
 ## Low-Level API
 
-For finer control, use the individual processing functions:
+The individual stages are available for diagnostics:
 
 ```python
 from vprc import read_vvp
@@ -83,20 +88,25 @@ from vprc.clutter import remove_ground_clutter
 from vprc.smoothing import smooth_spikes
 from vprc.classification import classify_profile
 from vprc.bright_band import detect_bright_band
-from vprc.vpr_correction import compute_vpr_correction
 
-# Step through the pipeline manually
 ds = read_vvp("profile.txt", radar_metadata={"freezing_level_m": 2500})
 ds = remove_ground_clutter(ds)
 ds = smooth_spikes(ds)
 classification = classify_profile(ds)
-bright_band = detect_bright_band(ds)
-
-if classification.usable_for_vpr:
-    vpr_result = compute_vpr_correction(
-        ds, freezing_level_m=ds.attrs["freezing_level_m"], bb_result=bright_band
-    )
+layer = classification.lowest_layer
+bright_band = detect_bright_band(
+    ds,
+    layer_top=layer.top_height if layer else None,
+    is_precipitation=classification.usable_for_vpr,
+)
 ```
+
+After bright band detection, `process_vvp()` restores and caps the bright band
+peak, applies post-bright-band clutter corrections, finalizes the
+classification (including evaporation) and classifies the precipitation type
+before calling `compute_vpr_correction()`. These steps depend on each other's
+order and results, so use `process_vvp()` to compute corrections; its source is
+the reference sequence for stepping through the full pipeline.
 
 `read_vvp()` and `process_vvp()` raise `vprc.NoUsableProfileError`, a
 `ValueError` subclass, for valid files without a usable profile: header-only
@@ -104,15 +114,17 @@ products and profiles with no levels at or above the radar's lowest profile
 level. Catch it to fall back to climatology without treating the file as a
 processing failure. Other exceptions mean invalid input or configuration.
 
-The composite creation command exits with an error for unreadable/corrupt inputs,
-files without a usable profile, missing radar coordinates, or processing
-failures. These failures must not be interpreted as valid no-precipitation
-products.
+The composite creation script, `src/scripts/create_composite.py`, is part of the
+source tree, not the installed package or container image; run it from a
+checkout with `uv run python src/scripts/create_composite.py VVP_FILE ...`. It
+exits with an error for unreadable/corrupt inputs, files without a usable
+profile, missing radar coordinates, or processing failures. These failures must
+not be interpreted as valid no-precipitation products.
 
 ## Airflow Integration
 
 ```python
-@task.docker(image="quay.io/fmi/vprc:v0.2.0")
+@task.docker(image="quay.io/fmi/vprc:vX.Y.Z")  # pin a released tag
 def correct_vpr(vvp_file: str, radar_config: dict) -> dict:
     from vprc import process_vvp
 

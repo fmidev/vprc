@@ -126,5 +126,12 @@ Without uv: `python -m pip install -e . --group dev` (pip 25.1+).
 - Use `logging` for processing diagnostics and surface invalid inputs explicitly;
   do not hide errors behind success-shaped fallback results. Raise
   `NoUsableProfileError` only for valid files that contain no usable profile.
-- Keep changes scoped and update related tests/docs when APIs or behavior change.
+- Keep changes scoped and update related tests when APIs or behavior change.
+- Keep documentation up to date in the same change: when code changes APIs,
+  defaults, behavior, configuration, test fixtures, scripts or packaging,
+  check and update [README.md](README.md), the guides in [docs/](docs/),
+  [tests/README.md](tests/README.md), docstrings and examples that describe
+  it. Verify documented claims and examples against the code rather than
+  memory. Prefer pointing to the authoritative code or guide over duplicating
+  details that will drift.
   Maintain this file when development commands or important conventions change.

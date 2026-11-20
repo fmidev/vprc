@@ -44,6 +44,7 @@ A container image for operational use is published at
 
 ```
 src/vprc/          # Package implementation
+src/scripts/       # Composite creation and diagnostic scripts (not installed)
 tests/             # Test suite (see tests/README.md)
 docs/              # Documentation
 ```
@@ -58,7 +59,8 @@ See [tests/README.md](https://github.com/fmidev/vprc/blob/main/tests/README.md) 
 
 ## Contributing
 
-Contributions are welcome through Github.
+Contributions are welcome through GitHub. Maintainers: see the
+[release guide](https://github.com/fmidev/vprc/blob/main/docs/releasing.md).
 
 Coding agents: see [AGENTS.md](https://github.com/fmidev/vprc/blob/main/AGENTS.md) for development guidance.
 

@@ -10,7 +10,7 @@ The processing chain consists of the following main stages:
 
 ### 1. Data Ingestion
 
-The system reads IRIS VVP files (ASCII format), extracting the linear reflectivity profile (`lin_dbz`) and radar metadata. It handles various VVP formats and normalizes the height data to integer meters above the antenna.
+The system reads IRIS VVP files (ASCII format), extracting the reflectivity profile in dBZ (`lin_dbz`) and radar metadata. It handles various VVP formats and normalizes the height data to integer meters above the antenna on a 200 m grid. Levels missing from the file are treated as unknown no-echo levels; spike smoothing fills them where the neighbouring levels allow.
 
 ### 2. Pre-processing
 
@@ -45,7 +45,7 @@ If a profile is usable, the algorithm calculates correction factors:
 3. **Convolution**: The interpolated profile is convolved with the simulated beam pattern to estimate what the radar *would* see at that range.
 4. **Factor Derivation**: The correction (dB) is the difference between the estimated ground-level reflectivity and the simulated beam measurement.
 
-**Climatological Fallback**: Weighted with an internal quality metric, the system can optionally blend in a climatological profile. This fallback profile represents typical precipitation structure for the region and season, ensuring that some correction is applied even when no accurate observation based VPR correction can be calculated.
+**Climatological Fallback**: By default, the observed correction is blended with a climatological one according to an internal quality weight. The climatological profile represents typical precipitation structure relative to the freezing level, so profiles that are unusable for VPR correction still get a climatology-only correction when the freezing level is known.
 
 ### 6. Temporal Averaging
 
@@ -53,12 +53,13 @@ To prevent sudden jumps in the correction applied to operational products, insta
 
 * Newer profiles are given higher weight (linear decay).
 * This results in a stable correction field that evolves smoothly with the weather system.
+* Temporal averaging is a separate API call (`average_corrections()`); the calling workflow selects the observation window.
 
 ### 7. Multi-Radar Compositing
 
 For radar networks, individual radar corrections can be combined into a seamless composite product:
 
-* **Inverse Distance Weighting**: Corrections from multiple radars are blended using distance-based weights, giving priority to the nearest radar.
+* **Inverse Distance Weighting**: Corrections from multiple radars are blended using inverse distance weights scaled by each radar's correction quality weight, giving priority to the nearest radar with a reliable profile.
 * **Cloud Optimized GeoTIFFs**: The composite corrections are exported as georeferenced raster files (COG format) for integration with operational radar products.
 * **Quality Metadata**: The composite includes information about the number of contributing radars and weight distribution at each grid point.
 

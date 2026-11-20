@@ -9,13 +9,7 @@ tests/
 ├── README.md              # This file
 ├── __init__.py            # Test package initialization
 ├── legacy_parser.py       # Utility for parsing legacy Perl outputs
-├── test_io.py             # VVP file parsing
-├── test_clutter.py        # Ground clutter removal
-├── test_smoothing.py      # Spike smoothing
-├── test_classification.py # Profile classification
-├── test_bright_band.py    # Bright band detection
-├── test_vpr_correction.py # VPR correction calculation
-├── test_legacy_comparison.py  # Validation against Perl output
+├── test_*.py              # Test modules, see Test Organization below
 └── data/                  # Test data files
     ├── 202508241100_KAN.VVP_40.txt      # Sample VVP (Kankaanpää)
     ├── 202508241100_KAN.VVP_40.profile  # Legacy profile output
@@ -29,6 +23,8 @@ tests/
     ├── 202604250300_KAN.VVP_40.*  # Absent level inside rain above the lowest levels
     ├── 202605050600_VIM.VVP_40.*  # Bright band peaking at 302 m, steep drop above
     ├── 202512150200_KUO.VVP_40.txt  # Absent level 5 above reliable levels 2-4
+    ├── 202208171100…1245_VIM.VVP_40.*   # 15 min Vimpeli series, .corave at 12:45
+    ├── 202308281000_{KAN,KOR,VIH}.VVP_40.txt  # Simultaneous inputs for compositing
     ├── variant_KAN_level2_low_zcnt.VVP_40.*  # 2025 KAN, ZCnt 20 at 500 m ASL
     └── variant_KAN_no_lowest_level.VVP_40.*  # 2025 KAN without 300 m ASL
 ```
@@ -71,12 +67,13 @@ Each test file corresponds to a module in `src/vprc/`:
 
 | Test File | Module | Description |
 |-----------|--------|-------------|
-| `test_io.py` | `io.py` | VVP file parsing and xarray conversion |
+| `test_io.py` | `io/vvp.py` | VVP file parsing and xarray conversion |
 | `test_clutter.py` | `clutter.py` | Ground clutter removal |
 | `test_smoothing.py` | `smoothing.py` | Spike smoothing algorithms |
 | `test_classification.py` | `classification.py` | Profile layer classification |
 | `test_bright_band.py` | `bright_band.py` | Bright band detection |
 | `test_vpr_correction.py` | `vpr_correction.py` | VPR correction calculation |
+| `test_climatology.py` | `climatology.py` | Climatological profile and ground reference |
 | `test_legacy_comparison.py` | – | End-to-end validation against Perl output |
 | `test_legacy_parser.py` | `legacy_parser.py` | Reference fields, multiple layers and BB candidate sections |
 | `test_pipeline.py` | `__init__.py` | Public pipeline metadata and stage integration |
@@ -101,13 +98,20 @@ Test data files in `tests/data/`:
   (`no_lowest_level`). Their `.profile` and `.cor` references were produced by
   running the unmodified `allprof_prodx2.pl` and `pystycappi.pl` on them
   without a HIRLAM freezing level.
+- `202208171100_VIM.VVP_40.txt` … `202208171245_VIM.VVP_40.txt` – Vimpeli
+  radar, seven profiles at 15 min intervals, used for temporal averaging
+- `202308281000_{KAN,KOR,VIH}.VVP_40.txt` – simultaneous Kankaanpää, Korppoo
+  and Vihti profiles, used for compositing and the composite script; they have
+  no legacy references
 
 ### Legacy Reference Outputs
 
-Used by `test_legacy_comparison.py` to validate against the original Perl implementation:
+Used by `test_legacy_comparison.py` and `test_temporal_e2e.py` to validate
+against the original Perl implementation:
 
 - `*.profile` – Processed profile output from `allprof_prodx2.pl`
 - `*.cor` – Correction factors from `pystycappi.pl`
+- `*.corave` – Temporally averaged corrections from `pystycappi_ka.pl`
 
 ### Reference Validation
 

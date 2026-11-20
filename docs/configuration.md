@@ -7,14 +7,22 @@ The `vprc` package uses TOML-based configuration for radar station metadata. All
 ## TOML File Structure
 
 ```toml
+[network]  # Compositing settings
+crs_epsg = 3067
+default_grid_resolution_m = 1000
+
 [defaults]  # Shared defaults for values a radar section omits
 beamwidth_deg = 0.95
 horizon_angle_deg = 0.0
+max_range_km = 250
+enabled = true
 
 [KAN]  # Three-letter code (section key)
 name = "KANKAANPAA"  # Full radar name from VVP file headers
 antenna_height_m = 174
 lowest_level_offset_m = 126
+latitude = 61.81085
+longitude = 22.50204
 
 [VAN]
 name = "VANTAA"
@@ -30,6 +38,11 @@ lowest_level_offset_m = 39
 
 ### Fields
 
+**Network (`[network]`):**
+- `crs_epsg` (int): Composite grid coordinate reference system (3067,
+  ETRS-TM35FIN)
+- `default_grid_resolution_m` (int): Composite grid resolution in meters
+
 **Shared defaults:**
 - `beamwidth_deg` (float): One-way half-power beamwidth in degrees
   - Defined in `[defaults]` section
@@ -37,6 +50,10 @@ lowest_level_offset_m = 39
 - `horizon_angle_deg` (float): Lowest unblocked beam angle in degrees
   - Defined in `[defaults]` section
   - Can be overridden per-radar for terrain-blocked or below-horizontal coverage
+- `max_range_km` (int): Maximum usable range for compositing
+- `enabled` (bool): Whether the radar is active in the network;
+  `list_radar_codes()` returns only enabled radars unless called with
+  `enabled_only=False`
 
 **Required (per-radar):**
 - `name` (string): Full radar name for VVP header matching (case-insensitive)
@@ -57,23 +74,30 @@ level. Files whose levels are not on the 200 m grid through that level raise
   as an older IRIS site name. A name may belong to only one radar.
 - `beamwidth_deg` (float): Override default beamwidth for this specific radar
 - `horizon_angle_deg` (float): Override the default terrain horizon
+- `latitude`, `longitude` (float): WGS84 radar location, required for
+  compositing. `get_radar_coords()` returns `None` for a radar without them
+  (currently KER).
+- `max_range_km`, `enabled`: Override the defaults above
 
 **Optional (runtime):**
-- `freezing_level_m` (int | None): Freezing level from NWP data (meters ASL)
+- `freezing_level_m` (float | None): Freezing level from NWP data (meters ASL)
   - `None`: Unknown (not retrieved)
-  - `0` or negative: No freezing layer → normalized to 0
-  - Positive: Valid freezing level in meters above sea level
+  - At or below the antenna, including `0` or negative: no melting layer
+    above the antenna → stored as 0
+  - Above the antenna: stored in the dataset attributes in meters above the
+    antenna, like the `height` coordinate
+  - Non-finite values raise `ValueError`
 
 ## Configuration Precedence
 
-Values are resolved in this order (highest to lowest):
+`VPRC_RADAR_CONFIG` selects the TOML file if set; otherwise the package default
+`src/vprc/radar_defaults.toml` is used. Within that file, values are resolved
+in this order (highest to lowest):
 
 1. **Function parameters** - `read_vvp(radar_metadata={...})`
 2. **Radar-specific TOML section** - e.g., `[KAN]`
 3. **Shared defaults** - `[defaults]` section in TOML, for values the radar section omits
    (never `antenna_height_m` or `lowest_level_offset_m`)
-4. **Environment variable** - `VPRC_RADAR_CONFIG` points to custom TOML
-5. **Package default** - `src/vprc/radar_defaults.toml`
 
 ## Usage Examples
 
@@ -159,6 +183,9 @@ lowest_level_offset_m = 17
 **`VPRC_RADAR_CONFIG`**: Path to custom TOML configuration file
 - If not set, uses package default `radar_defaults.toml`
 - Raises `FileNotFoundError` if path doesn't exist
+- The configuration is loaded once per process and cached, so set the variable
+  before the first `vprc` call that reads configuration; changing it later in
+  the same process has no effect
 
 ```bash
 export VPRC_RADAR_CONFIG=/path/to/custom_radars.toml
@@ -180,8 +207,9 @@ would shift every profile level and produce wrong corrections.
 
 ## Radar Stations (Package Default)
 
-Based on `allprof_prodx2.pl` lines 32-50, 75-135. Korppoo VVP headers say
-`KORPPOO`; the legacy name `KOR` is kept as an alias.
+Antenna heights and level offsets come from the legacy `allprof_prodx2.pl`
+radar table. Korppoo VVP headers say `KORPPOO`; the legacy name `KOR` is kept
+as an alias. Coordinates are in `radar_defaults.toml`.
 
 | Code | Name         | Height (m) | Offset (m) |
 |------|--------------|------------|------------|
