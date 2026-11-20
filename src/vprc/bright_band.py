@@ -130,8 +130,8 @@ def _find_bb_candidates(
 
     The BB signature is identified by:
     - Valid (>MDS) data around the candidate; below-ground levels are optional
-    - Positive gradient sum above the candidate (reflectivity decreasing upward)
-    - Non-positive gradient sum below the candidate (increasing toward the peak)
+    - Raw reflectivity dropping by at least 2.5 dB over 600 m above the candidate
+    - Raw reflectivity 400 m below the candidate not exceeding the candidate's
 
     Args:
         dbz: Corrected reflectivity values
@@ -162,33 +162,35 @@ def _find_bb_candidates(
         if not valid:
             continue
 
-        # Compute gradient pattern
-        # Gradient sum at h and h+step (looking at gradient from h to h+200 and h+200 to h+400)
-        grad_sum_here = _compute_gradient_sum(gradient, h)
-        grad_sum_below = (
-            0.0 if h - 2 * step < 0 else _compute_gradient_sum(gradient, h - 2 * step)
-        )
-        grad_sum_below2 = (
-            0.0 if h - step < 0 else _compute_gradient_sum(gradient, h - step)
-        )
-
-        if np.isnan(grad_sum_here):
+        # gradient[k] is the raw drop d(k) = Z(k) - Z(k+200). Perl tests
+        # `$isotaulu[$i][$j][7] + $isotaulu[$i+400][$j][4] >= 2.5` above and
+        # `[7][$i-200] + [7][$i-400] <= 0` below, with [7][k] = d(k) + d(k+200).
+        # As Perl ran, [7] was summed before d(k+200) was set, so it held only
+        # d(k). Neither reading is used as such:
+        # - Above: the full drop Z(h) - Z(h+600) >= 2.5 dB, as written. As run,
+        #   Perl skipped d(h+200) and missed bands whose drop is in that step.
+        # - Below: Z(h-400) <= Z(h), as run. As written, the test counted
+        #   d(h-200) twice and d(h) once, so a strong drop above the peak
+        #   rejected exactly the most distinct bands.
+        drop_above = _compute_gradient_sum(gradient, h)
+        if np.isnan(drop_above):
             continue
-
-        # BB signature: grad sum at h is positive (local max forming),
-        # grad sums below are non-positive (increasing toward peak)
-        # Threshold of 2.5 from Perl: ($isotaulu[$i][$j][7] + $isotaulu[$i+400][$j][4]) >= 2.5
-        grad_at_plus_400 = (
+        # Without echo at h+600 the last step is unknown; Perl reads it as 0.
+        top_step = (
             float(gradient.sel(height=h + 2 * step).values)
             if h + 2 * step in heights
-            else 0
+            else np.nan
+        )
+        if np.isfinite(top_step):
+            drop_above += top_step
+        rise_below = sum(
+            float(gradient.sel(height=k).values)
+            for k in (h - 2 * step, h - step)
+            if k >= 0  # A surface peak does not need below-ground levels.
         )
 
-        if grad_sum_here + grad_at_plus_400 >= 2.5:
-            # Check gradients below are non-positive
-            if not np.isnan(grad_sum_below) and not np.isnan(grad_sum_below2):
-                if grad_sum_below + grad_sum_below2 <= 0:
-                    candidates.append(h)
+        if drop_above >= 2.5 and rise_below <= 0:
+            candidates.append(h)
 
     return candidates
 

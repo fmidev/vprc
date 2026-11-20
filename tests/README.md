@@ -27,6 +27,7 @@ tests/
     ├── 202512051200_KAN.VVP_40.*  # Clear air, freezing level 643 m
     ├── 202605052000_UTA.VVP_40.*  # Near-surface BB rejected by ZCnt
     ├── 202604250300_KAN.VVP_40.*  # Absent level inside rain above the lowest levels
+    ├── 202605050600_VIM.VVP_40.*  # Bright band peaking at 302 m, steep drop above
     ├── variant_KAN_level2_low_zcnt.VVP_40.*  # 2025 KAN, ZCnt 20 at 500 m ASL
     └── variant_KAN_no_lowest_level.VVP_40.*  # 2025 KAN without 300 m ASL
 ```

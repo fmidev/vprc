@@ -262,6 +262,37 @@ class TestBBCandidateFinding:
 
         assert len(candidates) == 0
 
+    @staticmethod
+    def _candidates(dbz_values: list[float], max_height: int = 1700) -> list[int]:
+        heights = list(range(100, 100 + STEP * len(dbz_values), STEP))
+        ds = make_test_dataset(dbz_values, heights)
+        gradient = compute_dbz_gradient_per_step(ds)
+        return _find_bb_candidates(
+            ds["corrected_dbz"], gradient, np.array(heights), max_height
+        )
+
+    def test_strong_drop_above_peak_does_not_reject_candidate(self):
+        """The below-peak test compares only Z(h-400) with Z(h).
+
+        The legacy test as written required Z(h-400) + Z(h-200) <= Z(h) +
+        Z(h+200), so the steep drop above a distinct band rejected it.
+        """
+        candidates = self._candidates([24, 28, 30, 20, 15, 12, 10, 8, 6])
+        assert 500 in candidates
+
+    def test_drop_in_middle_step_above_peak_counts(self):
+        """The above-peak test uses the full drop Z(h) - Z(h+600).
+
+        Perl as run skipped the step from h+200 to h+400 and missed this band.
+        """
+        candidates = self._candidates([26, 28, 30, 29, 24, 23, 22, 21, 20])
+        assert 500 in candidates
+
+    def test_unknown_top_step_counts_as_zero(self):
+        """Without echo at h+600, the drop over the two known steps decides."""
+        candidates = self._candidates([20, 25, 30, 26, 22, MDS, MDS], 900)
+        assert 500 in candidates
+
 
 class TestIntegration:
     """Integration tests using realistic profile patterns."""

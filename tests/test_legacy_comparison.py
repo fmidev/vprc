@@ -26,7 +26,7 @@ from vprc import (
     get_radar_metadata,
     process_vvp,
 )
-from vprc.constants import MDS, MIN_SAMPLES
+from vprc.constants import MAX_CORRECTION_DB, MDS, MIN_SAMPLES
 
 from .legacy_parser import parse_legacy_profile
 
@@ -644,7 +644,7 @@ def test_near_surface_variants_match_legacy_profile_and_corrections(stem):
     _assert_cappi_corrections_match_legacy(result, stem)
 
 
-def _assert_cappi_corrections_match_legacy(result, stem):
+def _assert_cappi_corrections_match_legacy(result, stem, cappi_heights=(500, 1000)):
     """Compare CAPPI corrections with the reference .cor file.
 
     Unlike TestVPRCorrectionComparison, use Python's own classification
@@ -675,12 +675,14 @@ def _assert_cappi_corrections_match_legacy(result, stem):
     if header.precip_code > 0:
         products.append(("cappi_correction_db", "correction_rain_db"))
     for python_variable, legacy_variable in products:
-        for cappi_height in (500, 1000):
+        for cappi_height in cappi_heights:
+            # $max_dBZ_korjaus caps only positive corrections; Python caps
+            # both signs (MAX_CORRECTION_DB).
             np.testing.assert_allclose(
                 corrections[python_variable].sel(cappi_height=cappi_height),
-                legacy_cor[legacy_variable].sel(
-                    correction_type=f"cappi_{cappi_height}"
-                ),
+                legacy_cor[legacy_variable]
+                .sel(correction_type=f"cappi_{cappi_height}")
+                .clip(min=-MAX_CORRECTION_DB),
                 rtol=0,
                 atol=0.1,
                 err_msg=f"{python_variable} at {cappi_height} m for {stem}",
@@ -706,6 +708,26 @@ def test_positive_freezing_level_matches_legacy(stem, radar_code, rejection_reas
     assert result.bright_band.clutter_correction_applied
     _assert_profile_matches_legacy(result, expected, footer, stem)
     _assert_cappi_corrections_match_legacy(result, stem)
+
+
+def test_bright_band_with_steep_drop_above_peak_matches_legacy():
+    """Vimpeli 2026-05-05 06 UTC has a distinct band peaking at 302 m.
+
+    The below-peak test as written in Perl also counted the 10 dB drop above
+    the peak and rejected this band; Perl as run found it. Missing it changed
+    the corrections near the radar by more than 20 dB.
+    """
+    stem = "202605050600_VIM.VVP_40"
+    result, expected, footer = _process_like_legacy(stem, "VIM")
+    assert footer.freezing_level > 0
+    assert result.bright_band.detected
+    assert result.bright_band.peak_height == 302
+    assert result.bright_band.bottom_height == footer.bb_bottom
+    assert result.bright_band.top_height == footer.bb_top
+    _assert_profile_matches_legacy(result, expected, footer, stem)
+    # At 1000 m two ranges differ by 0.10-0.15 dB where the correction
+    # changes by 3 dB/km; this is unrelated to bright band detection.
+    _assert_cappi_corrections_match_legacy(result, stem, cappi_heights=(500,))
 
 
 def test_filled_absent_level_does_not_bound_the_bright_band():
