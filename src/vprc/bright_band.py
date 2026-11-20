@@ -625,6 +625,7 @@ def apply_post_bb_clutter_correction(
 
     The correction caps lower level values to upper level + 1 dB when the lower
     level exceeds this threshold, preventing artificial enhancement from clutter.
+    Below an upper level without echo, the lower level becomes empty.
 
     Args:
         ds: Dataset with 'corrected_dbz' after initial processing
@@ -686,15 +687,13 @@ def apply_post_bb_clutter_correction(
                     if scenario == "near_surface_rejected"
                     else corrected[index]
                 )
-                corrected[below] = reference + POST_BB_CLUTTER_THRESHOLD_DB
+                corrected[below] = _cap_below(reference)
                 applied = True
                 if scenario == "high_bb_or_no_bb" and height + STEP in indices:
                     above = indices[height + STEP]
                     if corrected[above] - corrected[index] > LARGE_JUMP_THRESHOLD_DB:
                         corrected[index] = (corrected[index] + corrected[above]) / 2
-                        corrected[below] = (
-                            corrected[index] + POST_BB_CLUTTER_THRESHOLD_DB
-                        )
+                        corrected[below] = _cap_below(corrected[index])
             else:
                 corrected[below] = raw[below]
     result["corrected_dbz"].values = corrected
@@ -705,6 +704,18 @@ def apply_post_bb_clutter_correction(
         bb_result,
         clutter_correction_applied=bb_result.clutter_correction_applied or applied,
     )
+
+
+def _cap_below(reference: float) -> float:
+    """Cap for the level below a reference level in the post-BB clutter steps.
+
+    Perl caps at reference + 1 dB even when the reference has no echo, so an
+    empty level turned the levels below into -44, -43, -42 dBZ "echo". An
+    empty reference leaves the level below empty.
+    """
+    if reference <= MDS:
+        return MDS
+    return reference + POST_BB_CLUTTER_THRESHOLD_DB
 
 
 def _determine_clutter_scenario(

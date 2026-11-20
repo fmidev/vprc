@@ -1035,6 +1035,40 @@ def test_no_bb_correction_distinguishes_absent_levels(missing_levels, expected):
     assert bb.clutter_correction_applied
 
 
+@pytest.mark.parametrize(
+    ("raw", "corrected", "bb", "expected"),
+    [
+        # No band, low freezing level: an empty fourth level must not turn
+        # the levels below into a -44, -43, -42 dBZ staircase.
+        (
+            [20, 20, 20, 20, MDS, MDS],
+            [20, 20, 20, MDS, MDS, MDS],
+            BrightBandResult(detected=False, freezing_level_m=0),
+            [MDS] * 6,
+        ),
+        # Rejected near-surface band: the cap reads the raw level above.
+        (
+            [30, 30, MDS, 20, 18, 16],
+            [30, 30, MDS, 20, 18, 16],
+            BrightBandResult(
+                detected=False,
+                freezing_level_m=1500,
+                rejection_reason=BBRejectionReason.NEAR_SURFACE_ZCOUNT,
+            ),
+            [30, MDS, MDS, 20, 18, 16],
+        ),
+    ],
+)
+def test_empty_reference_level_keeps_the_level_below_empty(
+    raw, corrected, bb, expected
+):
+    """Perl caps at reference + 1 dB even when the reference has no echo."""
+    ds = make_test_dataset(raw)
+    ds["corrected_dbz"] = ("height", np.asarray(corrected, dtype=float))
+    result, _ = apply_post_bb_clutter_correction(ds, bb)
+    np.testing.assert_allclose(result.corrected_dbz, expected)
+
+
 def test_no_spurious_clutter_flag_when_post_bb_does_not_correct():
     ds = make_test_dataset([20, 21, 22, 23, 24])
     bb = BrightBandResult(detected=False, freezing_level_m=500)
