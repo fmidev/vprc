@@ -87,6 +87,11 @@ def interpolate_to_fine_grid(
     Interpolation is performed in Z-space (linear reflectivity), not dBZ,
     to preserve physical meaning of reflectivity gradients.
 
+    Profile levels keep their exact heights. pystycappi.pl stores each level
+    in the 25 m bin ``int(h / 25)``, shifting the profile down by a
+    radar-specific 1-21 m; this array-indexing artefact is not reproduced.
+    Its effect on corrections is usually below 0.2 dB.
+
     Args:
         ds: Dataset with 'corrected_dbz' indexed by 'height'
         fine_resolution_m: Target vertical resolution (default 25m)
