@@ -141,6 +141,11 @@ def compute_beam_height(
     Uses wradlib's bin_altitude with the reference ellipsoid radius at 60 degrees
     and the 4/3 Earth model for standard atmospheric refraction.
 
+    Heights are exact. pystycappi.pl truncates them to whole metres
+    (``int()`` in ``sateilykeilan_korkeus``), so its beam is up to 1 m lower.
+    This matters only where reflectivity changes steeply with height: in a
+    bright band falling 40 dB over 300 m, it shifted corrections by 0.1 dB.
+
     Args:
         range_m: Slant range from radar (meters)
         elevation_deg: Elevation angle (degrees)

@@ -725,8 +725,10 @@ def test_bright_band_with_steep_drop_above_peak_matches_legacy():
     assert result.bright_band.bottom_height == footer.bb_bottom
     assert result.bright_band.top_height == footer.bb_top
     _assert_profile_matches_legacy(result, expected, footer, stem)
-    # At 1000 m two ranges differ by 0.10-0.15 dB where the correction
-    # changes by 3 dB/km; this is unrelated to bright band detection.
+    # At 1000 m, 6 and 15 km differ by 0.06-0.12 dB (0.15 dB after Perl's
+    # output rounding): Perl truncates the beam centre from 802 m to 801 m,
+    # and reflectivity falls 40 dB between 400 and 700 m. With an 801 m
+    # centre Python reproduces Perl's values; see compute_beam_height().
     _assert_cappi_corrections_match_legacy(result, stem, cappi_heights=(500,))
 
 
