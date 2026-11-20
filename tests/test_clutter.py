@@ -6,11 +6,14 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from vprc import process_vvp
 from vprc.clutter import compute_gradient, remove_ground_clutter
+from vprc.config import get_radar_metadata
 from vprc.constants import MDS
 from vprc.io import read_vvp
 
-GAPPED_VVP_FILE = Path(__file__).parent / "data" / "202611112000_KES.VVP_40.txt"
+DATA_DIR = Path(__file__).parent / "data"
+GAPPED_VVP_FILE = DATA_DIR / "202611112000_KES.VVP_40.txt"
 
 
 def make_profile(values, *, zcount=None, count=None, freezing_level=2000):
@@ -93,23 +96,38 @@ def test_clutter_outside_protected_freezing_interval(freezing_level):
     assert float(remove_ground_clutter(ds).corrected_dbz[0]) == 21
 
 
-def test_missing_upper_gradient_removes_echo_above_lowest_level():
-    """Perl's cleanup checks levels 2-4 and never clears the lowest level.
+def test_echo_confined_below_level_four_is_removed_entirely():
+    """Perl: "if there is no echo in levels 1-4, remove the clutter entirely".
 
-    The lowest level keeps its clutter extrapolation (20 + 2 dB), as in
-    allprof_prodx2.pl, and the clutter flag is cleared.
+    As run, Perl checked levels 2-5 and kept the lowest level's clutter
+    extrapolation (20 + 2 dB) as an isolated echo.
     """
     ds = make_profile([40, 35, 20, MDS, MDS], zcount=[1000, 1000, 1000, 0, 0])
     result = remove_ground_clutter(ds)
-    np.testing.assert_equal(result.corrected_dbz.values, [22, MDS, MDS, MDS, MDS])
+    np.testing.assert_equal(result.corrected_dbz.values, [MDS] * 5)
     assert result.attrs["clutter_detected"] is False
 
 
-def test_low_zcount_second_level_keeps_lowest_level():
-    """Regression: clearing the lowest level detached the layer from the ground."""
-    ds = make_profile([30, 31, 32, 33, 34], zcount=[1000, 20, 1000, 1000, 1000])
+@pytest.mark.parametrize(
+    "zcount,expected",
+    [
+        # Single gaps between reliable levels: clear only the gap, which spike
+        # smoothing fills, rather than detach the layer from the ground.
+        ([1000, 20, 1000, 1000, 1000, 1000], [30, MDS, 32, 33, 34, 35]),
+        ([1000, 1000, 20, 1000, 1000, 1000], [30, 31, MDS, 33, 34, 35]),
+        ([1000, 1000, 1000, 20, 1000, 1000], [30, 31, 32, MDS, 34, 35]),
+        # A gap at level 5 is outside levels 1-4. Perl as run cleared the
+        # reliable levels 2-4 below it.
+        ([1000, 1000, 1000, 1000, 0, 1000], [30, 31, 32, 33, 34, 35]),
+        # Unreliable lowest level, or a gap of two levels: clear up to it.
+        ([20, 1000, 1000, 1000, 1000, 1000], [MDS, 31, 32, 33, 34, 35]),
+        ([1000, 20, 20, 1000, 1000, 1000], [MDS, MDS, MDS, 33, 34, 35]),
+    ],
+)
+def test_low_zcount_cleanup_near_the_ground(zcount, expected):
+    ds = make_profile([30, 31, 32, 33, 34, 35], zcount=zcount)
     result = remove_ground_clutter(ds)
-    np.testing.assert_equal(result.corrected_dbz.values, [30, MDS, 32, 33, 34])
+    np.testing.assert_equal(result.corrected_dbz.values, expected)
 
 
 def test_empty_profile_is_supported():
@@ -121,15 +139,34 @@ def test_level_missing_from_vvp_file_does_not_break_clutter_removal():
     """Regression: an absent 500 m ASL KES level raised ``KeyError: 326``.
 
     The 526 m level triggers the three-level correction, which also writes
-    126 and 326 m. As in allprof_prodx2.pl, the absent 326 m level has no
-    gradient, so it is removed and the clutter flag is cleared; the lowest
-    level keeps its extrapolated value.
+    126 and 326 m. The absent 326 m level is a single gap between reliable
+    levels, so only it is cleared and the clutter correction stands. Perl
+    also cleared the gap but reset the clutter flag.
     """
     ds = read_vvp(GAPPED_VVP_FILE, {"freezing_level_m": 126})
     result = remove_ground_clutter(ds)
     np.testing.assert_allclose(result.corrected_dbz[:4], [-21.6, MDS, -23.6, -24.6])
     assert result.attrs["smoothing_start_height_m"] == 726
-    assert result.attrs["clutter_detected"] is False
+    assert result.attrs["clutter_detected"] is True
+
+
+def test_absent_fifth_level_keeps_reliable_levels_below():
+    """Kuopio 2025-12-15 02 UTC lacks only 832 m above the antenna.
+
+    Perl as run cleared levels 2-4 (ZCnt 372-4984) below that gap, and its
+    snow clutter step turned the remaining lowest level into a -42 dBZ
+    one-level layer. The echo reaches from the ground to 1432 m.
+    """
+    path = DATA_DIR / "202512150200_KUO.VVP_40.txt"
+    freezing_level = get_radar_metadata("KUO")["antenna_height_m"]
+    ds = read_vvp(path, {"freezing_level_m": freezing_level})
+    assert ds.attrs["missing_levels_m"] == [832]
+    result = remove_ground_clutter(ds)
+    assert (result.corrected_dbz.sel(height=[32, 232, 432, 632]) > MDS).all()
+    layer = process_vvp(
+        path, freezing_level_m=freezing_level
+    ).classification.lowest_layer
+    assert (layer.bottom_height, layer.top_height) == (32, 1432)
 
 
 def test_non_contiguous_heights_raise_value_error():

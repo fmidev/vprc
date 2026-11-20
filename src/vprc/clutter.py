@@ -86,14 +86,28 @@ def remove_ground_clutter(ds: xr.Dataset) -> xr.Dataset:
     if third in heights and float(raw.sel(height=third)) <= MDS:
         working.loc[{"height": lowest}] = MDS
 
-    # Perl runs this cleanup after its single-pass level loop, where $i is
-    # already $alintaso + 200: it checks gradients at levels 2-4 and clears
-    # from level 2 up, never the lowest level. Follow that rather than the
-    # comment's "levels 1-4": clearing the lowest level detaches a
-    # precipitation layer from the ground when only level 2 has low ZCnt.
-    for offset in range(1, 4):
+    # Perl: "if there is no echo in levels 1-4, remove the clutter entirely".
+    # The gradient [3] is $gmds when ZCnt is too low at either of its levels;
+    # the levels up to such a pair are cleared. Two deviations:
+    # - Perl ran the check after its level loop, with $i already at
+    #   $alintaso + 200, so it checked levels 2-5 and cleared from level 2.
+    #   A gap at level 5 then erased reliable levels 2-4 and left level 1.
+    # - A single low-ZCnt level between reliable ones is a gap, not missing
+    #   echo: only the gap is cleared, and spike smoothing fills it. Clearing
+    #   the levels below it would detach precipitation from the ground.
+    def reliable(height: int) -> bool:
+        return height in heights and float(zcount.sel(height=height)) > MIN_SAMPLES
+
+    zcount = result["zcount"]
+    for offset in range(3):
         height = lowest + offset * STEP
-        if height in heights and not np.isfinite(float(gradient.sel(height=height))):
-            working.loc[{"height": slice(lowest + STEP, height)}] = MDS
-            result.attrs["clutter_detected"] = False
+        above = height + STEP
+        if height not in heights or (reliable(height) and reliable(above)):
+            continue
+        gap = height if not reliable(height) else above
+        if gap != lowest and reliable(gap - STEP) and reliable(gap + STEP):
+            working.loc[{"height": gap}] = MDS
+            continue
+        working.loc[{"height": slice(lowest, height)}] = MDS
+        result.attrs["clutter_detected"] = False
     return result
