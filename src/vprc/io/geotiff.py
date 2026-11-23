@@ -25,7 +25,8 @@ def prepare_for_export(ds: xr.Dataset) -> xr.Dataset:
     """Prepare composite Dataset for geospatial export.
 
     Adds CF-compliant CRS metadata and spatial dimension info
-    required by rioxarray for proper GeoTIFF export.
+    required by rioxarray for proper GeoTIFF export, and orders the grid
+    north-up (y descending, x ascending), the usual GeoTIFF layout.
 
     Args:
         ds: Composite Dataset from composite_corrections()
@@ -33,6 +34,9 @@ def prepare_for_export(ds: xr.Dataset) -> xr.Dataset:
     Returns:
         Dataset with CRS and spatial dimensions set
     """
+    # Composite grids have ascending y, which rioxarray would write
+    # south-up; some GeoTIFF consumers do not handle that.
+    ds = ds.sortby("x").sortby("y", ascending=False)
     # Write CRS from existing attribute
     crs_epsg = ds.attrs.get("crs_epsg", 3067)
     ds = ds.rio.write_crs(crs_epsg)

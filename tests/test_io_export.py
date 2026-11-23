@@ -111,6 +111,9 @@ class TestWriteCorrectionCog:
 
         with rasterio.open(output_path) as src:
             assert src.crs.to_epsg() == 3035
+            # North-up: the first row is the northernmost.
+            assert src.transform.e < 0
+            assert src.transform.a > 0
             data = src.read(1)
             for j, i in [(0, 0), (0, 1), (3, 7), (9, 9)]:
                 row, col = src.index(float(ds.x[i]), float(ds.y[j]))
