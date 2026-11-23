@@ -44,8 +44,9 @@ Without uv: `python -m pip install -e . --group dev` (pip 25.1+).
 - Type checking: `uv run mypy src/vprc tests`. Existing errors remain; do not
   add new ones in touched code.
 - Wheel build, for packaging changes: `uv build --wheel`.
-  [Containerfile](Containerfile) defines the reproducible production image:
-  base images are pinned by digest and dependencies come from `uv.lock`.
+  [Containerfile](Containerfile) defines the production image: dependencies
+  come from `uv.lock`, and the base image tag fixes the Python minor version
+  and Debian release.
 - Add or update dependencies with `uv add` (`uv add --dev` for development
   tools) so `uv.lock` stays in sync; commit both files. Give runtime
   dependencies a lower bound that passes the oldest-dependency CI job.

@@ -29,15 +29,12 @@ tokens are stored in GitHub.
 1. Make sure CI passes on `main`.
 2. Optionally refresh dependencies with `uv lock --upgrade`, run the tests and
    commit `uv.lock`.
-3. Refresh the container base image digest in the Containerfile to pick up
-   Debian and Python security updates:
+3. Optionally build the container image locally against the newest base
+   image, as Quay will:
 
    ```sh
-   skopeo inspect --raw docker://docker.io/library/python:3.14-slim-trixie | sha256sum
+   podman build --pull=newer -t vprc .
    ```
-
-   Update the tag (e.g. `3.14.11-slim-trixie`) and digest in `PYTHON_IMAGE`,
-   build the image locally and commit.
 4. Optionally do a dry run: start the Release workflow manually from the
    Actions tab. It publishes the current commit to TestPyPI as a dev version
    such as `0.10.0.dev3`; check the

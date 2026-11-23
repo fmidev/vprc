@@ -1,5 +1,5 @@
-# The container base image is pinned by digest in Containerfile and refreshed
-# manually before releases (see docs/releasing.md).
+# Container base images follow their tags in Containerfile and are not
+# managed here.
 version: 2
 updates:
   - package-ecosystem: uv
