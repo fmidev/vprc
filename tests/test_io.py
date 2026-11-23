@@ -21,7 +21,6 @@ from vprc.io import (
     _load_radar_defaults,
     _parse_vvp_file,
     _parse_vvp_header,
-    _radar_name_to_code,
     _vvp_dataframe_to_xarray,
     height_to_sea_level,
     read_vvp,
@@ -644,12 +643,6 @@ custom_field = 123
 
 class TestRadarNameMapping:
     """Tests for radar name to code mapping from TOML configuration."""
-
-    def test_lenient_name_lookup_returns_unknown_names_unchanged(self):
-        """_radar_name_to_code is kept for compatibility; read_vvp uses
-        resolve_radar_code, which raises on unknown names."""
-        assert _radar_name_to_code("kankaanpaa") == "KAN"
-        assert _radar_name_to_code("UNKNOWN_RADAR") == "UNKNOWN_RADAR"
 
     # Header names of the operational radars, verified against VVP files
     # in November 2026.

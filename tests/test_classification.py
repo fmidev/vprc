@@ -17,7 +17,6 @@ from vprc.classification import (
     _find_echo_layers,
     classify_precipitation_type,
     classify_profile,
-    classify_profiles,
     finalize_profile_classification,
 )
 from vprc.constants import (
@@ -327,42 +326,6 @@ class TestClassifyProfile:
             LayerType.ALTOSTRATUS,
         ]
         assert not result.usable_for_vpr
-
-
-class TestClassifyProfiles:
-    """Tests for multi-time classification."""
-
-    def test_single_time_fallback(self):
-        """Dataset without time dimension returns single-element list."""
-        ds = make_test_dataset([20, 25, 30, 25, 20], freezing_level_m=1000)
-
-        results = classify_profiles(ds)
-
-        assert len(results) == 1
-        assert isinstance(results[0], ProfileClassification)
-
-    def test_multiple_times(self):
-        """Dataset with time dimension returns classification per time."""
-        heights = [100, 300, 500, 700, 900]
-        dbz_t0 = [20, 25, 30, 25, 20]
-        dbz_t1 = [MDS, MDS, 15, 20, 15]  # Elevated layer
-
-        ds = xr.Dataset(
-            {
-                "corrected_dbz": (["time", "height"], [dbz_t0, dbz_t1]),
-                "sample_count": (["time", "height"], [[100] * 5, [100] * 5]),
-            },
-            coords={"height": heights, "time": [0, 1]},
-            attrs={"freezing_level_m": 400},
-        )
-
-        results = classify_profiles(ds)
-
-        assert len(results) == 2
-        # First time: ground layer
-        assert results[0].layers[0].touches_ground
-        # Second time: elevated layer
-        assert not results[1].layers[0].touches_ground
 
 
 class TestEvaporationCheck:

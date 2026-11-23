@@ -188,32 +188,10 @@ def _build_radar_name_to_code_map() -> dict[str, str]:
     return name_to_code
 
 
-def _radar_name_to_code(radar_name: str) -> str:
-    """Convert full radar name to three-letter code.
-
-    Args:
-        radar_name: Full radar name from VVP file header (e.g., "KANKAANPAA")
-
-    Returns:
-        Three-letter radar code (e.g., "KAN")
-        If not found in mapping, returns the radar_name unchanged.
-        Use resolve_radar_code() where an unknown name must be an error.
-
-    Example:
-        >>> _radar_name_to_code("KANKAANPAA")
-        'KAN'
-        >>> _radar_name_to_code("UNKNOWN_RADAR")
-        'UNKNOWN_RADAR'
-    """
-    name_map = _build_radar_name_to_code_map()
-    return name_map.get(radar_name.upper(), radar_name)
-
-
 def resolve_radar_code(radar_name: str) -> str:
     """Return the configured radar code for a VVP header radar name.
 
-    Unlike _radar_name_to_code(), an unknown name is an error: falling back to
-    [defaults] would apply the wrong antenna height and shift every profile
+    An unknown name is an error: falling back to [defaults] would apply the wrong antenna height and shift every profile
     level, producing plausible-looking but wrong corrections.
 
     Raises:

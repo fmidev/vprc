@@ -483,34 +483,6 @@ def finalize_profile_classification(
     return result
 
 
-def classify_profiles(
-    ds: xr.Dataset,
-    time_dim: str = "time",
-    min_samples: int = MIN_SAMPLES,
-) -> list[ProfileClassification]:
-    """Classify multiple profiles along a time dimension.
-
-    Convenience function for datasets with multiple time steps.
-
-    Args:
-        ds: Dataset with 'height' and 'time' dimensions
-        time_dim: Name of the time dimension
-        min_samples: Minimum sample count for valid data
-
-    Returns:
-        List of ProfileClassification, one per time step
-    """
-    if time_dim not in ds.dims:
-        return [classify_profile(ds, min_samples)]
-
-    results = []
-    for t in ds[time_dim].values:
-        ds_t = ds.sel({time_dim: t})
-        results.append(classify_profile(ds_t, min_samples))
-
-    return results
-
-
 def classify_precipitation_type(
     bb_result: BrightBandResult,
     freezing_level_m: float | None,

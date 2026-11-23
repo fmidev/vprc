@@ -18,7 +18,6 @@ from ..config import (
     _build_radar_name_to_code_map,
     _get_radar_metadata,
     _load_radar_defaults,
-    _radar_name_to_code,
 )
 from ..exceptions import NoUsableProfileError
 from .geotiff import (

@@ -59,14 +59,6 @@ class TestCompositeGrid:
 
         assert grid.crs.to_epsg() == 3067
 
-    def test_for_finland_covers_radar_network(self):
-        """Finland grid covers expected area."""
-        grid = CompositeGrid.for_finland(resolution_m=10000)
-
-        # Should be roughly 700km x 1200km
-        assert grid.x[-1] - grid.x[0] >= 600_000
-        assert grid.y[-1] - grid.y[0] >= 1_000_000
-
     def test_for_radars_all_configured(self):
         """Grid from all configured radars covers expected area."""
         grid = CompositeGrid.for_radars(resolution_m=10000)

@@ -92,32 +92,6 @@ class CompositeGrid:
         return cls(x=x, y=y, crs=crs)
 
     @classmethod
-    def for_finland(
-        cls, resolution_m: float = 1000.0, crs: CRS | int = 3067
-    ) -> CompositeGrid:
-        """Create grid covering Finland's radar coverage area.
-
-        Uses approximate bounds that cover the FMI radar network.
-
-        Args:
-            resolution_m: Grid cell size in meters
-            crs: Target CRS (default EPSG:3067)
-
-        Returns:
-            CompositeGrid covering Finland
-        """
-        # Approximate ETRS-TM35FIN bounds for Finland radar coverage
-        # Extends slightly beyond borders to cover max radar range
-        return cls.from_bounds(
-            xmin=50_000,
-            xmax=750_000,
-            ymin=6_600_000,
-            ymax=7_800_000,
-            resolution_m=resolution_m,
-            crs=crs,
-        )
-
-    @classmethod
     def for_radars(
         cls,
         radar_codes: list[str] | None = None,
