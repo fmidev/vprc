@@ -22,6 +22,8 @@ jobs:
         run: uv run ruff check --output-format=github
       - name: Format
         run: uv run ruff format --check
+      - name: Type check
+        run: uv run mypy
       - name: Test
         run: uv run pytest tests/
       - name: Build wheel

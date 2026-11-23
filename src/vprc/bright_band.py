@@ -661,11 +661,12 @@ def apply_post_bb_clutter_correction(
     absent = set(result.attrs.get("missing_levels_m", ()))
     applied = False
     for scenario in scenarios:
-        top = (
-            bb_result.bottom_height
-            if scenario == "low_bb_bottom"
-            else lowest + POST_BB_CLUTTER_HEIGHT_M
-        )
+        if scenario == "low_bb_bottom":
+            # _determine_clutter_scenario selects this only with a BB bottom.
+            assert bb_result.bottom_height is not None
+            top = bb_result.bottom_height
+        else:
+            top = lowest + POST_BB_CLUTTER_HEIGHT_M
         for height in range(int(top), lowest, -STEP):
             if height not in indices or height - STEP not in indices:
                 continue

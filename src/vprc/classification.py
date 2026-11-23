@@ -152,70 +152,33 @@ def _find_echo_layers(
     Returns:
         List of EchoLayer objects, ordered from lowest to highest
     """
-    # Determine valid echo at each height
-    valid = np.isfinite(dbz.values) & (dbz.values > MDS)
+    values = dbz.values
+    valid = np.isfinite(values) & (values > MDS)
+    lowest_height = int(heights[0]) if len(heights) > 0 else None
+
+    # Contiguous runs of valid echo: [start, stop) index pairs
+    edges = np.diff(valid.astype(np.int8), prepend=0, append=0)
+    starts = np.flatnonzero(edges == 1)
+    stops = np.flatnonzero(edges == -1)
 
     layers = []
-    in_layer = False
-    current_bottom = None
-    current_max_dbz = MDS
-    current_max_height = None
-    current_max_idx = None
-    layer_start_idx = None
-    lowest_height = heights[0] if len(heights) > 0 else None
-
-    for i, h in enumerate(heights):
-        if valid[i]:
-            if not in_layer:
-                # Start new layer
-                in_layer = True
-                current_bottom = int(h)
-                layer_start_idx = i
-                current_max_dbz = float(dbz.values[i])
-                current_max_height = int(h)
-                current_max_idx = i
-            else:
-                # Continue layer, update max
-                if dbz.values[i] > current_max_dbz:
-                    current_max_dbz = float(dbz.values[i])
-                    current_max_height = int(h)
-                    current_max_idx = i
-        else:
-            if in_layer:
-                # End current layer at previous height
-                top_height = int(heights[i - 1])
-                layer = _create_layer_with_min_dbz(
-                    dbz=dbz,
-                    heights=heights,
-                    valid=valid,
-                    bottom_height=current_bottom,
-                    top_height=top_height,
-                    max_dbz=current_max_dbz,
-                    max_dbz_height=current_max_height,
-                    max_idx=current_max_idx,
-                    layer_start_idx=layer_start_idx,
-                    lowest_height=lowest_height,
-                )
-                layers.append(layer)
-                in_layer = False
-
-    # Close final layer if profile ends in echo
-    if in_layer:
-        top_height = int(heights[-1])
-        layer = _create_layer_with_min_dbz(
-            dbz=dbz,
-            heights=heights,
-            valid=valid,
-            bottom_height=current_bottom,
-            top_height=top_height,
-            max_dbz=current_max_dbz,
-            max_dbz_height=current_max_height,
-            max_idx=current_max_idx,
-            layer_start_idx=layer_start_idx,
-            lowest_height=lowest_height,
+    for start, stop in zip(starts, stops, strict=True):
+        # argmax returns the lowest of equal maxima
+        max_idx = int(start + np.argmax(values[start:stop]))
+        layers.append(
+            _create_layer_with_min_dbz(
+                dbz=dbz,
+                heights=heights,
+                valid=valid,
+                bottom_height=int(heights[start]),
+                top_height=int(heights[stop - 1]),
+                max_dbz=float(values[max_idx]),
+                max_dbz_height=int(heights[max_idx]),
+                max_idx=max_idx,
+                layer_start_idx=int(start),
+                lowest_height=lowest_height,
+            )
         )
-        layers.append(layer)
-
     return layers
 
 

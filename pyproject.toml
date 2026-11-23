@@ -87,6 +87,14 @@ ignore = ["SIM102", "E731"]
 # Private names re-exported for backward compatibility.
 "src/vprc/io/__init__.py" = ["F401"]
 
+[tool.mypy]
+files = ["src/vprc", "tests"]
+
+[[tool.mypy.overrides]]
+# Neither ships type information.
+module = ["wradlib.*", "rasterio.*"]
+ignore_missing_imports = true
+
 [tool.coverage.run]
 source_pkgs = ["vprc", "tests"]
 branch = true

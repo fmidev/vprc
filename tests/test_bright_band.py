@@ -1,5 +1,7 @@
 """Tests for the bright_band module."""
 
+from collections.abc import Sequence
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -43,7 +45,7 @@ def make_test_dataset(
     if heights is None:
         heights = list(range(100, 100 + STEP * len(dbz_values), STEP))
 
-    data_vars = {
+    data_vars: dict[str, tuple[str, Sequence[float]]] = {
         "corrected_dbz": ("height", dbz_values),
         "lin_dbz": ("height", dbz_values),
     }

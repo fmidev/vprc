@@ -1,6 +1,7 @@
 """Parser for IRIS VVP (Velocity Volume Processing) prodx files."""
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from numbers import Real
@@ -364,7 +365,11 @@ def _vvp_dataframe_to_xarray(
     if "freezing_level_m" in metadata_copy:
         fl = metadata_copy["freezing_level_m"]
         if fl is not None:
-            if not isinstance(fl, Real) or isinstance(fl, bool) or not np.isfinite(fl):
+            if (
+                not isinstance(fl, Real)
+                or isinstance(fl, bool)
+                or not math.isfinite(fl)
+            ):
                 raise ValueError("freezing_level_m must be finite meters ASL or None")
             if fl <= 0:
                 # Explicitly no freezing layer (or below surface)

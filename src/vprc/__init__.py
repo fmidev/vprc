@@ -20,6 +20,7 @@ Individual processing steps:
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 import xarray as xr
 
@@ -142,7 +143,7 @@ def process_vvp(
         from a @task.docker decorator with radar_config passed as kwargs.
     """
     # Build metadata dict from explicit args
-    radar_metadata = {}
+    radar_metadata: dict[str, Any] = {}
     if antenna_height_m is not None:
         radar_metadata["antenna_height_m"] = antenna_height_m
     if lowest_level_offset_m is not None:

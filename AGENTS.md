@@ -38,11 +38,12 @@ Without uv: `python -m pip install -e . --group dev` (pip 25.1+).
 - Lint and format touched Python files with Ruff (configured in
   [pyproject.toml](pyproject.toml)): `uv run ruff check --fix <files>` and
   `uv run ruff format <files>`. [CI](.github/workflows/ci.yml) runs Ruff,
-  the full test suite and a wheel build on the whole tree, and repeats the
-  tests with the oldest runtime dependency versions allowed by
+  mypy, the full test suite and a wheel build on the whole tree, and repeats
+  the tests with the oldest runtime dependency versions allowed by
   `pyproject.toml`.
-- Type checking: `uv run mypy src/vprc tests`. Existing errors remain; do not
-  add new ones in touched code.
+- Type checking: `uv run mypy` (checks `src/vprc` and `tests` as configured
+  in [pyproject.toml](pyproject.toml)) must pass. Fix type errors rather than
+  silencing them; reserve `# type: ignore[code]` for third-party stub gaps.
 - Wheel build, for packaging changes: `uv build --wheel`.
   [Containerfile](Containerfile) defines the production image: dependencies
   come from `uv.lock`, and the base image tag fixes the Python minor version

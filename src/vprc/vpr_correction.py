@@ -17,7 +17,7 @@ Algorithm overview:
 from dataclasses import dataclass
 
 # Import for type annotation only
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 import numpy as np
 import xarray as xr
@@ -201,10 +201,18 @@ def solve_elevation_for_height(
     return max(elevation, min_elevation_deg)
 
 
+@overload
 def compute_beam_weight(
-    angular_distance_deg: float,
+    angular_distance_deg: float, beamwidth_deg: float = ...
+) -> float: ...
+@overload
+def compute_beam_weight(
+    angular_distance_deg: np.ndarray, beamwidth_deg: float = ...
+) -> np.ndarray: ...
+def compute_beam_weight(
+    angular_distance_deg: float | np.ndarray,
     beamwidth_deg: float = DEFAULT_BEAMWIDTH_DEG,
-) -> float:
+) -> float | np.ndarray:
     """Compute two-way Gaussian beam power weight.
 
     Based on Battan Eq. 9.4: W = 10^(-0.6 * (θ/θ_hp)^2)
@@ -212,7 +220,7 @@ def compute_beam_weight(
     the one-way half-power beamwidth.
 
     Args:
-        angular_distance_deg: Angular distance from beam center (degrees)
+        angular_distance_deg: Angular distance(s) from beam center (degrees)
         beamwidth_deg: One-way half-power beamwidth (degrees)
 
     Returns:
@@ -852,7 +860,7 @@ def compute_vpr_correction(
                 fine_heights,
                 fine_z,
                 z_ground,
-                range_km,
+                float(range_km),
                 elevation,
                 antenna_height_m,
                 beamwidth_deg,
@@ -909,7 +917,7 @@ def compute_vpr_correction(
                     clim_fine_heights,
                     clim_fine_z,
                     z_ground_clim,
-                    range_km,
+                    float(range_km),
                     elevation,
                     antenna_height_m,
                     beamwidth_deg,
@@ -965,7 +973,7 @@ def compute_vpr_correction(
                     fine_heights,
                     fine_z,
                     z_ground,
-                    range_km,
+                    float(range_km),
                     elev_deg,
                     antenna_height_m,
                     beamwidth_deg,
@@ -982,7 +990,7 @@ def compute_vpr_correction(
         coords["elevation"] = list(elevation_angles_deg)
 
         # Add climatological elevation corrections if computed
-        if include_clim and freezing_level_m is not None:
+        if z_ground_clim is not None:
             elev_clim_corrections = np.zeros((n_ranges, n_elevs))
 
             for j, elev_deg in enumerate(elevation_angles_deg):
@@ -991,7 +999,7 @@ def compute_vpr_correction(
                         clim_fine_heights,
                         clim_fine_z,
                         z_ground_clim,
-                        range_km,
+                        float(range_km),
                         elev_deg,
                         antenna_height_m,
                         beamwidth_deg,
@@ -1172,7 +1180,7 @@ def _create_climatology_only_result(
                 clim_fine_heights,
                 clim_fine_z,
                 z_ground_clim,
-                range_km,
+                float(range_km),
                 elevation,
                 antenna_height_m,
                 beamwidth_deg,
@@ -1207,7 +1215,7 @@ def _create_climatology_only_result(
                     clim_fine_heights,
                     clim_fine_z,
                     z_ground_clim,
-                    range_km,
+                    float(range_km),
                     elev_deg,
                     antenna_height_m,
                     beamwidth_deg,

@@ -48,7 +48,7 @@ def make_test_correction(
             np.full((n_range, n_heights), 500.0),
         ),
     }
-    coords = {
+    coords: dict[str, list[int] | list[float]] = {
         "range_km": range_km,
         "cappi_height": cappi_heights,
     }
