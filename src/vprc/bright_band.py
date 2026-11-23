@@ -147,6 +147,11 @@ def _find_bb_candidates(
 
     for h in heights:
         h = int(h)
+        # Perl loops up to the layer top but requires echo at h+400; with
+        # the top taken from the same profile, that means h+400 <= top.
+        # Only below the 10 km profile top does Perl read the undefined levels
+        # above as 0 dBZ and find extra candidates (2 of 2,136 hourly archive
+        # profiles, at 9.4-9.6 km): never within 500 m of a freezing level.
         if h + 2 * step > max_height:
             continue
 
