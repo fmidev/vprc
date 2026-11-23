@@ -1,5 +1,7 @@
 """Tests for the classification module."""
 
+from collections.abc import Sequence
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -25,7 +27,7 @@ from vprc.constants import (
 
 
 def make_test_dataset(
-    dbz_values: list[float],
+    dbz_values: Sequence[float],
     heights: list[int] | None = None,
     counts: list[int] | None = None,
     freezing_level_m: float | None = None,
@@ -254,7 +256,7 @@ class TestClassifyProfile:
         assert result.num_layers == 1
         assert result.profile_type == LayerType.PRECIPITATION
         assert result.usable_for_vpr
-        assert result.lowest_layer.touches_ground
+        assert result.layers[0].touches_ground
 
     def test_clear_air_echo_profile(self):
         """Low, thin layer is classified as clear air."""
@@ -300,7 +302,7 @@ class TestClassifyProfile:
 
         assert result.num_layers == 2
         # First layer is thick enough for precipitation
-        assert result.lowest_layer.thickness == 600
+        assert result.layers[0].thickness == 600
 
 
 class TestClassifyProfiles:
@@ -334,9 +336,9 @@ class TestClassifyProfiles:
 
         assert len(results) == 2
         # First time: ground layer
-        assert results[0].lowest_layer.touches_ground
+        assert results[0].layers[0].touches_ground
         # Second time: elevated layer
-        assert not results[1].lowest_layer.touches_ground
+        assert not results[1].layers[0].touches_ground
 
 
 class TestEvaporationCheck:
@@ -410,7 +412,7 @@ class TestEvaporationCheck:
 
         # Should be classified as altostratus due to evaporation
         assert result.num_layers == 1
-        assert result.lowest_layer.evaporation_detected is True
+        assert result.layers[0].evaporation_detected is True
         assert result.profile_type == LayerType.ALTOSTRATUS
         assert result.usable_for_vpr is False
 
@@ -425,10 +427,10 @@ class TestEvaporationCheck:
         result = classify_profile(ds)
 
         assert result.num_layers == 1
-        assert result.lowest_layer.evaporation_detected is False
+        assert result.layers[0].evaporation_detected is False
         assert result.profile_type == LayerType.CLEAR_AIR_ECHO
         assert result.usable_for_vpr is False
-        assert result.lowest_layer.touches_ground
+        assert result.layers[0].touches_ground
 
     def test_find_echo_layers_computes_min_below_max(self):
         """_find_echo_layers correctly identifies min dBZ below max."""
@@ -600,7 +602,7 @@ def test_gap_filling_keeps_continuous_precipitation():
     assert float(corrected.corrected_dbz.sel(height=900)) == 20
     result = classify_profile(corrected)
     assert result.num_layers == 1
-    assert result.lowest_layer.top_height == 2900
+    assert result.layers[0].top_height == 2900
     assert result.usable_for_vpr
 
 
@@ -619,9 +621,9 @@ def test_evaporation_excludes_broad_bright_band():
     )
     assert result.profile_type == LayerType.PRECIPITATION
     assert result.usable_for_vpr
-    assert result.lowest_layer.evaporation_amount == 8
-    assert result.lowest_layer.max_dbz == 18
-    assert classification.lowest_layer.max_dbz == 35
+    assert result.layers[0].evaporation_amount == 8
+    assert result.layers[0].max_dbz == 18
+    assert classification.layers[0].max_dbz == 35
 
 
 def test_finalize_refreshes_extrema_without_resegmenting():
@@ -632,10 +634,10 @@ def test_finalize_refreshes_extrema_without_resegmenting():
     result = finalize_profile_classification(
         classification, corrected, BrightBandResult()
     )
-    assert result.lowest_layer.max_dbz == 13
-    assert result.lowest_layer.max_dbz_height == 100
-    assert result.lowest_layer.top_height == classification.lowest_layer.top_height
-    assert classification.lowest_layer.max_dbz == 40
+    assert result.layers[0].max_dbz == 13
+    assert result.layers[0].max_dbz_height == 100
+    assert result.layers[0].top_height == classification.layers[0].top_height
+    assert classification.layers[0].max_dbz == 40
 
 
 def test_nonprecipitation_is_not_reclassified_by_evaporation():
@@ -644,7 +646,7 @@ def test_nonprecipitation_is_not_reclassified_by_evaporation():
         classify_profile(ds), ds, BrightBandResult()
     )
     assert result.profile_type == LayerType.CLEAR_AIR_ECHO
-    assert result.lowest_layer.evaporation_detected is False
+    assert result.layers[0].evaporation_detected is False
 
 
 def test_finalize_empty_profile():

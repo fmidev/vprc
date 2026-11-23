@@ -89,6 +89,12 @@ ignore = ["SIM102", "E731"]
 
 [tool.mypy]
 files = ["src/vprc", "tests"]
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# The package ships py.typed, so its public annotations must be complete.
+module = ["vprc.*"]
+disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # Neither ships type information.

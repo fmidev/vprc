@@ -100,7 +100,7 @@ def process_vvp(
     compute_vpr: bool = True,
     cappi_heights_m: tuple[int, ...] | None = None,
     clim_weight: float = CLIMATOLOGICAL_WEIGHT,
-    **kwargs,
+    **kwargs: Any,
 ) -> ProcessedProfile:
     """Process a VVP profile through the full correction pipeline.
 

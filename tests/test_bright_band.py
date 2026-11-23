@@ -29,7 +29,7 @@ from vprc.constants import (
 
 
 def make_test_dataset(
-    dbz_values: list[float],
+    dbz_values: Sequence[float],
     heights: list[int] | None = None,
     freezing_level_m: float | None = None,
     zcount_values: list[int] | None = None,

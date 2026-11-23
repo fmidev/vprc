@@ -158,7 +158,9 @@ def test_absent_fifth_level_keeps_reliable_levels_below():
     one-level layer. The echo reaches from the ground to 1432 m.
     """
     path = DATA_DIR / "202512150200_KUO.VVP_40.txt"
-    freezing_level = get_radar_metadata("KUO")["antenna_height_m"]
+    metadata = get_radar_metadata("KUO")
+    assert metadata is not None
+    freezing_level = metadata["antenna_height_m"]
     ds = read_vvp(path, {"freezing_level_m": freezing_level})
     assert ds.attrs["missing_levels_m"] == [832]
     result = remove_ground_clutter(ds)
@@ -166,6 +168,7 @@ def test_absent_fifth_level_keeps_reliable_levels_below():
     layer = process_vvp(
         path, freezing_level_m=freezing_level
     ).classification.lowest_layer
+    assert layer is not None
     assert (layer.bottom_height, layer.top_height) == (32, 1432)
 
 

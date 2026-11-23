@@ -1,5 +1,8 @@
 """Tests for the VPR correction module."""
 
+from collections.abc import Sequence
+from typing import Any
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -19,7 +22,7 @@ from vprc.vpr_correction import (
 
 
 def make_test_dataset(
-    dbz_values: list[float],
+    dbz_values: Sequence[float],
     heights: list[int] | None = None,
     antenna_height_m: float = 100.0,
     zcounts: list[int] | None = None,
@@ -423,7 +426,7 @@ class TestComputeVprCorrection:
     def test_geometry_metadata_and_explicit_overrides(self, no_echo):
         ds = make_test_dataset([MDS if no_echo else 30.0] * 50)
         ds.attrs.update(beamwidth_deg=1.1, horizon_angle_deg=0.8)
-        kwargs = dict(
+        kwargs: dict[str, Any] = dict(
             elevation_angles_deg=(0.5,),
             max_range_km=100,
             range_step_km=100,

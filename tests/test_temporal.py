@@ -398,7 +398,10 @@ class TestAverageCorrections:
 
     def test_invalid_weighting_raises(self):
         with pytest.raises(ValueError, match="weighting must"):
-            average_corrections([make_test_correction()], weighting="unknown")
+            average_corrections(
+                [make_test_correction()],
+                weighting="unknown",  # type: ignore[arg-type]
+            )
 
     @pytest.mark.parametrize("quality", [-0.1, np.nan, np.inf])
     def test_invalid_quality_raises(self, quality):

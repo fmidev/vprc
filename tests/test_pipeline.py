@@ -28,7 +28,7 @@ def test_correction_uses_above_antenna_freezing_level(freezing_asl):
         freezing_level_m=freezing_above_antenna,
         bb_result=result.bright_band,
         is_precipitation=result.usable_for_vpr,
-        layer_top_height_m=result.classification.lowest_layer.top_height,
+        layer_top_height_m=result.classification.layers[0].top_height,
         min_elevation_deg=result.dataset.attrs["elevation_angles"][0],
     )
     xr.testing.assert_allclose(correction.corrections, expected.corrections)
@@ -121,8 +121,9 @@ def test_bb_enhancement_is_not_evaporation(tmp_path):
 
     assert result.bright_band.detected
     assert result.classification.profile_type == LayerType.PRECIPITATION
-    assert result.classification.lowest_layer.evaporation_amount == 8
-    assert not result.classification.lowest_layer.evaporation_detected
+    assert result.classification.layers[0].evaporation_amount == 8
+    assert not result.classification.layers[0].evaporation_detected
+    assert result.vpr_correction is not None
     assert result.vpr_correction.quality_weight > 0
 
 
@@ -136,6 +137,7 @@ def test_wind_count_does_not_mask_reflectivity(tmp_path):
 
     assert result.bright_band.detected
     assert result.usable_for_vpr
+    assert result.vpr_correction is not None
     assert result.vpr_correction.quality_weight > 0
 
 
@@ -147,12 +149,13 @@ def test_evaporation_rejects_observed_correction_after_bb_processing(tmp_path):
         path, antenna_height_m=0, lowest_level_offset_m=100, freezing_level_m=1900
     )
 
-    assert result.classification.lowest_layer.evaporation_detected
-    assert result.classification.lowest_layer.evaporation_amount == 38
+    assert result.classification.layers[0].evaporation_detected
+    assert result.classification.layers[0].evaporation_amount == 38
     assert result.classification.profile_type == LayerType.ALTOSTRATUS
     assert not result.bright_band.detected
     assert result.bright_band.rejection_reason == BBRejectionReason.EVAPORATION
     assert result.classification.precipitation_type == PrecipitationType.UNKNOWN
+    assert result.vpr_correction is not None
     assert result.vpr_correction.corrections.attrs["climatology_only"]
 
 

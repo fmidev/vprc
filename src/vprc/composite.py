@@ -197,7 +197,7 @@ class CompositeGrid:
 
 def inverse_distance_weight(
     distances_m: np.ndarray,
-    quality_weights: np.ndarray,
+    quality_weights: float | np.ndarray,
     power: float = 2.0,
     min_distance_m: float = 1000.0,
     max_distance_m: float = 250_000.0,
@@ -208,7 +208,8 @@ def inverse_distance_weight(
 
     Args:
         distances_m: Array of distances from radar to grid points (m)
-        quality_weights: Array of quality weights (one per radar)
+        quality_weights: Quality weight of the radar, or weights broadcastable
+            to ``distances_m``
         power: IDW exponent (default 2.0)
         min_distance_m: Minimum distance to avoid division issues (m)
 

@@ -47,7 +47,9 @@ def expected_profile():
 def processed_result(expected_profile):
     """Run with the reference freezing height, converted to the API's ASL."""
     _, _, footer = expected_profile
-    antenna_height = get_radar_metadata("KAN")["antenna_height_m"]
+    metadata = get_radar_metadata("KAN")
+    assert metadata is not None
+    antenna_height = metadata["antenna_height_m"]
     return process_vvp(
         INPUT_FILE,
         freezing_level_m=footer.freezing_level + antenna_height,

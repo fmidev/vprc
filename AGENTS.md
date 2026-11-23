@@ -41,9 +41,11 @@ Without uv: `python -m pip install -e . --group dev` (pip 25.1+).
   mypy, the full test suite and a wheel build on the whole tree, and repeats
   the tests with the oldest runtime dependency versions allowed by
   `pyproject.toml`.
-- Type checking: `uv run mypy` (checks `src/vprc` and `tests` as configured
-  in [pyproject.toml](pyproject.toml)) must pass. Fix type errors rather than
-  silencing them; reserve `# type: ignore[code]` for third-party stub gaps.
+- Type checking: `uv run mypy` must pass. As configured in
+  [pyproject.toml](pyproject.toml), it requires complete annotations in
+  `src/vprc` and checks test bodies even where tests are unannotated. Fix type
+  errors rather than silencing them; reserve `# type: ignore[code]` for
+  third-party stub gaps and tests that pass invalid arguments on purpose.
 - Wheel build, for packaging changes: `uv build --wheel`.
   [Containerfile](Containerfile) defines the production image: dependencies
   come from `uv.lock`, and the base image tag fixes the Python minor version

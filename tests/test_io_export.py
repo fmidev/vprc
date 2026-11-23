@@ -150,8 +150,9 @@ class TestWriteCorrectionCog:
 
         with rasterio.open(output_path) as src:
             src.read(1)
-            # Check that nodata value is set
-            assert src.nodata is not None or np.isnan(src.nodata)
+            # Float output marks missing values with NaN nodata
+            assert src.nodata is not None
+            assert np.isnan(src.nodata)
 
     def test_raises_on_missing_variable(self, tmp_path):
         """KeyError raised for missing variable."""
