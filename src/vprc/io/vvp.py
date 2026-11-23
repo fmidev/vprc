@@ -470,6 +470,9 @@ def height_to_sea_level(ds: xr.Dataset) -> xr.DataArray:
     Returns:
         DataArray with heights in meters above sea level
 
+    Raises:
+        KeyError: If ``antenna_height_m`` is not in ``ds.attrs``.
+
     Example:
         >>> ds = read_vvp('profile.txt')
         >>> ds.height.values[:3]  # Heights above antenna
@@ -477,5 +480,5 @@ def height_to_sea_level(ds: xr.Dataset) -> xr.DataArray:
         >>> height_to_sea_level(ds).values[:3]  # Sea level
         array([300, 500, 700])
     """
-    antenna_height_m = ds.attrs.get("antenna_height_m", 0)
-    return ds.height + antenna_height_m
+    # No default: assuming 0 would silently shift heights by the antenna height.
+    return ds.height + ds.attrs["antenna_height_m"]

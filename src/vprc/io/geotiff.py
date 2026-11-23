@@ -83,11 +83,11 @@ def write_correction_cog(
         "blocksize": blocksize,
     }
 
+    # Always pass compress: the COG driver otherwise applies its own default.
+    driver_options["compress"] = compress
     if compress != "NONE":
-        driver_options["compress"] = compress
-        # Use floating-point predictor for better compression of dB values
-        if compress in ("DEFLATE", "LZW", "ZSTD"):
-            driver_options["predictor"] = "YES"
+        # Use a predictor for better compression of smooth dB fields
+        driver_options["predictor"] = "YES"
 
     da.rio.to_raster(path, **driver_options)
 
