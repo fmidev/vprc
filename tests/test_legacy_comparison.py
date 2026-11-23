@@ -3,9 +3,10 @@
 These tests validate that the Python reimplementation produces results
 matching the reference Perl implementation (allprof_prodx2.pl).
 
-Test data: tests/data/202508241100_KAN.VVP_40.* files
+Test data: tests/data/*.VVP_40.* files (see tests/README.md)
 - .txt: Input VVP profile
 - .profile: Expected corrected profile output
+- .cor: Expected correction output
 
 Height coordinate system:
 Both Python and legacy use heights above antenna (meters). The legacy code
@@ -36,14 +37,14 @@ INPUT_FILE = DATA_DIR / "202508241100_KAN.VVP_40.txt"
 EXPECTED_PROFILE = DATA_DIR / "202508241100_KAN.VVP_40.profile"
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def expected_profile():
     """Load the expected legacy profile output."""
     ds, header, footer = parse_legacy_profile(EXPECTED_PROFILE)
     return ds, header, footer
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def processed_result(expected_profile):
     """Run with the reference freezing height, converted to the API's ASL."""
     _, _, footer = expected_profile
@@ -56,225 +57,34 @@ def processed_result(expected_profile):
     )
 
 
-class TestLegacyProfileComparison:
-    """Compare Python output against legacy .profile file.
+@pytest.fixture(scope="module")
+def legacy_cor():
+    """Load the legacy .cor file."""
+    from .legacy_parser import parse_legacy_cor
 
-    Both implementations now use heights above antenna, so direct
-    comparison is possible.
-    """
-
-    def test_input_file_exists(self):
-        """Verify test data files exist."""
-        assert INPUT_FILE.exists(), f"Input file not found: {INPUT_FILE}"
-        assert EXPECTED_PROFILE.exists(), (
-            f"Expected output not found: {EXPECTED_PROFILE}"
-        )
-
-    def test_height_coordinates_match(self, processed_result, expected_profile):
-        """Verify height coordinates are identical."""
-        expected_ds, _, _ = expected_profile
-        result_ds = processed_result.dataset
-
-        np.testing.assert_array_equal(
-            result_ds.height.values,
-            expected_ds.height.values[: len(result_ds.height)],
-            err_msg="Height coordinates do not match",
-        )
-
-    def test_height_step_consistent(self, processed_result, expected_profile):
-        """Verify height step is consistent at 200m in both outputs."""
-        expected_ds, _, _ = expected_profile
-        result_ds = processed_result.dataset
-
-        python_step = np.diff(result_ds.height.values)
-        legacy_step = np.diff(expected_ds.height.values)
-
-        assert np.all(python_step == 200), f"Python step not 200m: {python_step[:5]}"
-        assert np.all(legacy_step == 200), f"Legacy step not 200m: {legacy_step[:5]}"
-
-    def test_lin_dbz_values_match(self, processed_result, expected_profile):
-        """Verify lin_dbz (input reflectivity) values match.
-
-        These should be identical since they come from the same input file.
-        """
-        expected_ds, _, _ = expected_profile
-        result_ds = processed_result.dataset
-
-        # Perl prints a fixed 10 km grid; the reader stops at the input top.
-        actual = result_ds["lin_dbz"].reindex(height=expected_ds.height, fill_value=MDS)
-        np.testing.assert_allclose(
-            actual.values,
-            expected_ds["lin_dbz"].values,
-            rtol=0.01,
-            err_msg="lin_dbz values do not match",
-        )
-
-    def test_corrected_dbz_values_match(self, processed_result, expected_profile):
-        """Verify corrected_dbz values match after full pipeline."""
-        expected_ds, _, _ = expected_profile
-        result_ds = processed_result.dataset
-
-        actual = result_ds["corrected_dbz"].reindex(
-            height=expected_ds.height, fill_value=MDS
-        )
-        np.testing.assert_allclose(
-            actual.values,
-            expected_ds["corrected_dbz"].values,
-            rtol=0.01,
-            atol=0.1,
-            err_msg="corrected_dbz values do not match legacy output",
-        )
-
-    def test_max_dbz_matches(self, processed_result, expected_profile):
-        """Verify maximum dBZ value matches legacy."""
-        expected_ds, _, footer = expected_profile
-        result_ds = processed_result.dataset
-
-        # Get max from valid values (exclude MDS)
-        from vprc.constants import MDS
-
-        valid_mask = result_ds["corrected_dbz"] > MDS
-        result_max = float(result_ds["corrected_dbz"].where(valid_mask).max())
-
-        assert abs(result_max - footer.max_dbz) < 0.5, (
-            f"Max dBZ mismatch: got {result_max}, expected {footer.max_dbz}"
-        )
-
-    def test_layer_boundaries_match(self, processed_result, expected_profile):
-        """Verify layer boundaries match legacy classification.
-
-        Height mapping:
-        """
-        _, _, footer = expected_profile
-        classification = processed_result.classification
-
-        layer = classification.lowest_layer
-        assert layer is not None
-        assert layer.bottom_height == footer.bottom_height, (
-            f"Bottom height mismatch: got {layer.bottom_height}, "
-            f"expected {footer.bottom_height}"
-        )
-        assert layer.top_height == footer.top_height, (
-            f"Top height mismatch: got {layer.top_height}, expected {footer.top_height}"
-        )
-
-    def test_evaporation_matches(self, processed_result, expected_profile):
-        """Compare the actual evaporation column, not a BB amplitude."""
-        _, _, footer = expected_profile
-        layer = processed_result.classification.lowest_layer
-        assert layer is not None
-        assert layer.evaporation_amount == pytest.approx(footer.evaporation, abs=0.1)
-
-    def test_reflectivity_sample_counts_match(self, processed_result, expected_profile):
-        """The legacy oracle contains raw ZCnt, not the IRIS Count column."""
-        expected_ds, _, _ = expected_profile
-        actual = processed_result.dataset["zcount"].reindex(
-            height=expected_ds.height, fill_value=0
-        )
-        np.testing.assert_array_equal(actual, expected_ds["zcount"])
-
-    def test_ground_clutter_classification_matches(
-        self, processed_result, expected_profile
-    ):
-        _, _, footer = expected_profile
-        layer = processed_result.classification.lowest_layer
-        assert layer is not None
-        assert layer.has_clutter == bool(footer.ground_clutter)
-
-    def test_precipitation_classification_matches(
-        self, processed_result, expected_profile
-    ):
-        """Verify precipitation type classification matches legacy.
-
-        Legacy values: 0=none, 1=untyped, 2=snow, 3=sleet, 4=rain.
-        """
-        _, _, footer = expected_profile
-        classification = processed_result.classification
-
-        # The footer.precipitation field indicates precipitation type
-        # Our classification should agree on precipitation presence
-        legacy_has_precip = footer.precipitation > 0
-        python_has_precip = classification.usable_for_vpr
-
-        assert legacy_has_precip == python_has_precip, (
-            f"Precipitation classification mismatch: "
-            f"legacy={footer.precipitation}, python_usable={python_has_precip}"
-        )
-        expected_phase = {
-            0: PrecipitationType.UNKNOWN,
-            1: PrecipitationType.UNKNOWN,
-            2: PrecipitationType.SNOW,
-            3: PrecipitationType.SLEET,
-            4: PrecipitationType.RAIN,
-        }[footer.precipitation]
-        assert classification.precipitation_type == expected_phase
-
-    def test_quality_weight_matches(self, processed_result, expected_profile):
-        """Compare quality at the reference's two-decimal output precision."""
-        _, _, footer = expected_profile
-        assert processed_result.vpr_correction is not None
-        assert processed_result.vpr_correction.quality_weight == pytest.approx(
-            footer.quality_weight, abs=0.005
-        )
+    cor_path = DATA_DIR / "202508241100_KAN.VVP_40.cor"
+    return parse_legacy_cor(cor_path)
 
 
-class TestBrightBandComparison:
-    """Compare bright band detection using the same freezing coordinate."""
+@pytest.fixture(scope="module")
+def python_profile(processed_result, legacy_cor, expected_profile):
+    """Use the reference's range and minimum elevation, not API defaults."""
+    from vprc.vpr_correction import compute_vpr_correction
 
-    def test_bright_band_detection_agrees(self, processed_result, expected_profile):
-        """Verify bright band detection matches legacy.
-
-        Legacy BB flag: 0=not detected, 1=detected
-
-        """
-        _, _, footer = expected_profile
-        bb_result = processed_result.bright_band
-
-        legacy_bb_detected = footer.bright_band == 1
-
-        assert bb_result.detected == legacy_bb_detected, (
-            f"Bright band detection mismatch: "
-            f"legacy={legacy_bb_detected}, python={bb_result.detected}"
-        )
-
-    def test_bright_band_height_matches(self, processed_result, expected_profile):
-        """Verify bright band height matches legacy (if detected)."""
-        _, _, footer = expected_profile
-        bb_result = processed_result.bright_band
-
-        assert bb_result.detected == bool(footer.bright_band)
-        if footer.bright_band == 1:
-            # The footer prints weighted bbhuippu, not the discrete bbalku.
-            assert bb_result.refined_peak_height is not None
-            assert abs(bb_result.refined_peak_height - footer.bb_height) <= 200, (
-                f"BB height mismatch: got {bb_result.refined_peak_height}, "
-                f"expected {footer.bb_height}"
-            )
-
-
-class TestProcessingPipeline:
-    """Integration tests for the full processing pipeline."""
-
-    def test_pipeline_completes_without_error(self, processed_result):
-        """Verify the full pipeline runs successfully."""
-        assert processed_result is not None
-        assert processed_result.dataset is not None
-        assert processed_result.classification is not None
-        assert processed_result.bright_band is not None
-
-    def test_dataset_has_required_variables(self, processed_result):
-        """Verify output dataset contains expected variables."""
-        ds = processed_result.dataset
-        required_vars = ["lin_dbz", "corrected_dbz"]
-        for var in required_vars:
-            assert var in ds, f"Missing variable: {var}"
-
-    def test_vpr_correction_computed_when_usable(self, processed_result):
-        """Verify VPR correction is computed for usable profiles."""
-        assert processed_result.classification.usable_for_vpr
-        assert processed_result.vpr_correction is not None, (
-            "VPR correction should be computed for usable profiles"
-        )
+    legacy_ds, header = legacy_cor
+    _, _, footer = expected_profile
+    correction = compute_vpr_correction(
+        processed_result.dataset,
+        freezing_level_m=header.freezing_level_m,
+        max_range_km=int(legacy_ds.range_km.max()),
+        min_elevation_deg=header.elevation_angles[0],
+        elevation_angles_deg=tuple(header.elevation_angles),
+        is_precipitation=header.precip_code > 0,
+        layer_top_height_m=footer.top_height,
+        horizon_angle_deg=0,
+        bb_result=processed_result.bright_band,
+    )
+    return replace(processed_result, vpr_correction=correction)
 
 
 class TestVPRCorrectionComparison:
@@ -284,60 +94,9 @@ class TestVPRCorrectionComparison:
     - 2 CAPPI heights (500m, 1000m)
     - 4 elevation angles (0.7°, 1.5°, 3.0°, 3.3° for Kankaanpää)
 
-    The Python implementation currently supports CAPPI heights.
+    Uses the reference's classification and freezing level, so differences
+    come from the correction calculation alone.
     """
-
-    @pytest.fixture
-    def legacy_cor(self):
-        """Load the legacy .cor file."""
-        from .legacy_parser import parse_legacy_cor
-
-        cor_path = DATA_DIR / "202508241100_KAN.VVP_40.cor"
-        return parse_legacy_cor(cor_path)
-
-    @pytest.fixture
-    def python_profile(self, processed_result, legacy_cor, expected_profile):
-        """Use the reference's range and minimum elevation, not API defaults."""
-        from vprc.vpr_correction import compute_vpr_correction
-
-        legacy_ds, header = legacy_cor
-        _, _, footer = expected_profile
-        correction = compute_vpr_correction(
-            processed_result.dataset,
-            freezing_level_m=header.freezing_level_m,
-            max_range_km=int(legacy_ds.range_km.max()),
-            min_elevation_deg=header.elevation_angles[0],
-            elevation_angles_deg=tuple(header.elevation_angles),
-            is_precipitation=header.precip_code > 0,
-            layer_top_height_m=footer.top_height,
-            horizon_angle_deg=0,
-            bb_result=processed_result.bright_band,
-        )
-        return replace(processed_result, vpr_correction=correction)
-
-    def test_cor_file_exists(self):
-        """Verify .cor test data file exists."""
-        cor_path = DATA_DIR / "202508241100_KAN.VVP_40.cor"
-        assert cor_path.exists(), f".cor file not found: {cor_path}"
-
-    def test_cor_parser_loads_data(self, legacy_cor):
-        """Verify .cor parser returns valid data structure."""
-        ds, header = legacy_cor
-        assert "correction_klim_db" in ds
-        assert "correction_rain_db" in ds
-        assert "beam_height_m" in ds
-        # 2 CAPPI heights + 4 elevation angles = 6 correction types
-        assert len(ds.correction_type) == 6
-        assert len(header.elevation_angles) == 4
-
-    def test_cor_header_values(self, legacy_cor):
-        """Verify parsed header contains expected metadata."""
-        _, header = legacy_cor
-        assert header.radar_name == "KANKAANPAA"
-        assert header.step == 200
-        assert header.mds == -45
-        assert header.precip_code == 2  # snow
-        assert header.elevation_angles == [0.7, 1.5, 3.0, 3.3]
 
     @pytest.mark.parametrize("cappi_height", [500, 1000])
     def test_cappi_beam_height_calculation(
@@ -352,94 +111,8 @@ class TestVPRCorrectionComparison:
         expected = legacy_ds["beam_height_m"].sel(
             correction_type=f"cappi_{cappi_height}"
         )
-        # Same Rinehart/wradlib geometry allowance as fixed elevations below.
-        tolerance = np.maximum(10, np.floor(actual.values * 0.02))
-        assert np.all(np.abs(actual.values - expected.values) <= tolerance)
-
-    def test_elevation_beam_height_calculation(self, legacy_cor):
-        """Verify fixed elevation beam height calculation matches legacy.
-
-        For fixed elevation angles, the beam height at each range should
-        follow the standard 4/3 Earth refraction model.
-        """
-        from vprc.vpr_correction import compute_beam_height
-
-        ds, header = legacy_cor
-        # Kankaanpää: antenna 174m ASL
-        antenna_height_m = 174
-
-        # Test first elevation angle (0.7°)
-        elev = header.elevation_angles[0]
-        test_ranges = [50, 100, 150, 200]
-
-        for range_km in test_ranges:
-            legacy_height = int(
-                ds["beam_height_m"]
-                .sel(range_km=range_km, correction_type="elev_1")
-                .values
-            )
-
-            python_height_asl = compute_beam_height(
-                range_km * 1000, elev, antenna_height_m
-            )
-            # Convert to height above antenna
-            python_height = python_height_asl - antenna_height_m
-
-            # Allow tolerance for different implementations of the formula
-            # Legacy uses Rinehart formula, Python uses wradlib
-            tolerance = max(10, int(python_height * 0.02))  # 2% or 10m
-            assert abs(python_height - legacy_height) <= tolerance, (
-                f"Beam height mismatch at {range_km}km, {elev}°: "
-                f"Python={python_height:.0f}m, legacy={legacy_height}m"
-            )
-
-    def test_correction_sign_convention(self, legacy_cor):
-        """Verify correction sign convention matches legacy.
-
-        Positive correction = beam is above ground, seeing weaker echo
-        Negative correction = beam sees stronger echo (e.g. bright band)
-        """
-        ds, _ = legacy_cor
-
-        # At close range, CAPPI corrections should be small
-        corr_close = (
-            ds["correction_klim_db"]
-            .sel(range_km=10, correction_type="cappi_500")
-            .values
-        )
-        assert abs(corr_close) < 5, f"Close range correction too large: {corr_close}"
-
-    def test_max_dbz_matches_profile(self, legacy_cor, expected_profile):
-        """Verify .cor max_dBZ matches .profile footer."""
-        _, cor_header = legacy_cor
-        _, _, profile_footer = expected_profile
-
-        assert abs(cor_header.max_dbz - profile_footer.max_dbz) < 0.1, (
-            f"max_dBZ mismatch: .cor={cor_header.max_dbz}, "
-            f".profile={profile_footer.max_dbz}"
-        )
-
-    def test_quality_weight_consistent(self, legacy_cor, expected_profile):
-        """Verify quality weight is consistent between .cor and .profile."""
-        _, cor_header = legacy_cor
-        _, _, profile_footer = expected_profile
-
-        assert abs(cor_header.quality_weight - profile_footer.quality_weight) < 0.01, (
-            f"Quality weight mismatch: .cor={cor_header.quality_weight}, "
-            f".profile={profile_footer.quality_weight}"
-        )
-
-    def test_python_cappi_corrections_computed(self, python_profile):
-        """Verify Python computes VPR corrections for CAPPI heights."""
-        vpr = python_profile.vpr_correction
-        assert vpr is not None, "VPR correction should be computed"
-        assert vpr.usable, "VPR correction should be usable for this profile"
-
-        # Check correction dataset structure
-        ds = vpr.corrections
-        assert "cappi_correction_db" in ds
-        assert "range_km" in ds.dims
-        assert "cappi_height" in ds.dims
+        # Perl prints int() of the height.
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=1)
 
     @pytest.mark.parametrize("cappi_height", [500, 1000])
     @pytest.mark.parametrize(
@@ -488,40 +161,21 @@ class TestVPRCorrectionComparison:
     def test_python_elevation_beam_heights_match_legacy(
         self, legacy_cor, python_profile
     ):
-        """Compare Python elevation beam heights to legacy output.
-
-        For fixed elevation angles, beam heights should match closely
-        between Python and legacy implementations.
-        """
+        """Fixed-elevation beam heights over the full range."""
         legacy_ds, header = legacy_cor
         python_vpr = python_profile.vpr_correction
-
         assert python_vpr is not None and python_vpr.usable
         python_ds = python_vpr.corrections
-        assert "elev_beam_height_m" in python_ds
 
-        # The comparison fixture requests all four reference elevations.
-        test_ranges = [50, 100, 150, 200]
         for elev_idx, elev in enumerate(header.elevation_angles):
-            for range_km in test_ranges:
-                legacy_height = int(
-                    legacy_ds["beam_height_m"]
-                    .sel(range_km=range_km, correction_type=f"elev_{elev_idx + 1}")
-                    .values
-                )
-
-                python_height = float(
-                    python_ds["elev_beam_height_m"]
-                    .sel(range_km=range_km, elevation=elev)
-                    .values
-                )
-
-                # Allow 2% tolerance for implementation differences
-                tolerance = max(10, int(python_height * 0.02))
-                assert abs(python_height - legacy_height) <= tolerance, (
-                    f"Beam height mismatch at {range_km}km, {elev}°: "
-                    f"Python={python_height:.0f}m, legacy={legacy_height}m"
-                )
+            # Perl prints int() of the height.
+            np.testing.assert_allclose(
+                python_ds["elev_beam_height_m"].sel(elevation=elev),
+                legacy_ds["beam_height_m"].sel(correction_type=f"elev_{elev_idx + 1}"),
+                rtol=0,
+                atol=1,
+                err_msg=f"elevation {elev}",
+            )
 
     @pytest.mark.parametrize(
         ("python_variable", "legacy_variable"),
@@ -573,22 +227,60 @@ def _assert_profile_matches_legacy(result, expected, footer, stem):
     # allprof_prodx2.pl prints the raw value as $mds when ZCnt <= $kynnys.
     dataset["lin_dbz"] = dataset.lin_dbz.where(dataset.zcount > MIN_SAMPLES, MDS)
     heights = expected.height.where(expected.height <= dataset.height.max(), drop=True)
-    for variable in ("lin_dbz", "corrected_dbz", "zcount"):
-        np.testing.assert_allclose(
+    for variable in ("lin_dbz", "zcount"):
+        np.testing.assert_array_equal(
             dataset[variable].sel(height=heights).values,
             expected[variable].sel(height=heights).values,
-            rtol=0.01,
-            atol=0.1,
             err_msg=f"{variable} does not match legacy output for {stem}",
         )
-    layer = result.classification.lowest_layer
+    # The reference prints corrected dBZ with one decimal.
+    np.testing.assert_allclose(
+        dataset.corrected_dbz.sel(height=heights).values,
+        expected.corrected_dbz.sel(height=heights).values,
+        rtol=0,
+        atol=0.051,
+        err_msg=f"corrected_dbz does not match legacy output for {stem}",
+    )
+    classification = result.classification
+    layer = classification.lowest_layer
     assert layer is not None
     assert (layer.bottom_height, layer.top_height, layer.has_clutter) == (
         footer.bottom_height,
         footer.top_height,
         bool(footer.ground_clutter),
     )
-    assert result.classification.usable_for_vpr == (footer.precipitation > 0)
+    assert layer.max_dbz == pytest.approx(footer.max_dbz, abs=0.051)
+    assert classification.usable_for_vpr == (footer.precipitation > 0)
+    assert (
+        classification.precipitation_type == LEGACY_PRECIPITATION[footer.precipitation]
+    )
+    if footer.precipitation > 0:
+        # Perl prints 0 evaporation for profiles without precipitation.
+        assert layer.evaporation_amount == pytest.approx(footer.evaporation, abs=0.051)
+    assert result.bright_band.detected == bool(footer.bright_band)
+    assert result.vpr_correction is not None
+    # The observed-profile quality, printed with two decimals. The result's
+    # quality_weight falls back to the climatology weight for compositing.
+    assert result.vpr_correction.corrections.attrs["quality_weight"] == pytest.approx(
+        footer.quality_weight, abs=0.005
+    )
+
+
+# Legacy sade code: 0=none, 1=untyped, 2=snow, 3=sleet, 4=rain.
+LEGACY_PRECIPITATION = {
+    0: PrecipitationType.UNKNOWN,
+    1: PrecipitationType.UNKNOWN,
+    2: PrecipitationType.SNOW,
+    3: PrecipitationType.SLEET,
+    4: PrecipitationType.RAIN,
+}
+
+
+def test_kan_profile_matches_legacy():
+    """Kankaanpää 2025-08-24 11 UTC: snow with ground clutter, no bright band."""
+    stem = "202508241100_KAN.VVP_40"
+    result, expected, footer = _process_like_legacy(stem, "KAN")
+    _assert_profile_matches_legacy(result, expected, footer, stem)
 
 
 @pytest.mark.parametrize(
@@ -724,6 +416,9 @@ def test_bright_band_with_steep_drop_above_peak_matches_legacy():
     assert footer.freezing_level > 0
     assert result.bright_band.detected
     assert result.bright_band.peak_height == 302
+    assert result.bright_band.refined_peak_height == pytest.approx(
+        footer.bb_height, abs=1
+    )
     assert result.bright_band.bottom_height == footer.bb_bottom
     assert result.bright_band.top_height == footer.bb_top
     _assert_profile_matches_legacy(result, expected, footer, stem)
@@ -747,6 +442,9 @@ def test_filled_absent_level_does_not_bound_the_bright_band():
     absent = result.dataset.attrs["missing_levels_m"]
     assert 726 in absent
     assert result.bright_band.detected
+    assert result.bright_band.refined_peak_height == pytest.approx(
+        footer.bb_height, abs=1
+    )
     assert result.bright_band.bottom_height == footer.bb_bottom
     assert result.bright_band.top_height == footer.bb_top
     heights = [h for h in expected.height.values if h not in absent and h <= 1926]

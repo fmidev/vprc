@@ -78,9 +78,9 @@ Each test file corresponds to a module in `src/vprc/`:
 | `test_legacy_parser.py` | `legacy_parser.py` | Reference fields, multiple layers and BB candidate sections |
 | `test_pipeline.py` | `__init__.py` | Public pipeline metadata and stage integration |
 | `test_temporal.py` | `temporal.py` | Weighting, product preservation and input compatibility |
-| `test_temporal_e2e.py` | `temporal.py` | Numerical temporal comparison against `.corave` |
-| `test_composite.py` | `composite.py` | Spatial weights and temporal-to-composite integration |
-| `test_io_export.py` | `io/geotiff.py` | COG output |
+| `test_temporal_e2e.py` | `temporal.py` | Numerical comparison against `.corave`; timestamp weighting of pipeline results |
+| `test_composite.py` | `composite.py` | Distances, range interpolation, spatial weights and temporal-to-composite integration |
+| `test_io_export.py` | `io/geotiff.py` | COG layout, compression, CRS and value placement |
 | `test_create_composite.py` | `scripts/create_composite.py` | Processing errors versus valid climatology fallback |
 
 ## Test Data

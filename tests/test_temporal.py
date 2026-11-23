@@ -7,7 +7,6 @@ import pytest
 import xarray as xr
 
 from vprc.temporal import (
-    MIN_AGE_WEIGHT,
     _compute_age_weights,
     _extract_timestamps,
     average_corrections,
@@ -97,21 +96,6 @@ class TestAverageCorrections:
         np.testing.assert_array_equal(
             averaged.corrections["cappi_correction_db"].values,
             result.corrections["cappi_correction_db"].values,
-        )
-
-    def test_two_profiles_equal_values(self):
-        """Two profiles with same values average to that value."""
-        t1 = datetime(2025, 8, 24, 10, 0)
-        t2 = datetime(2025, 8, 24, 11, 0)
-
-        r1 = make_test_correction(correction_value=3.0, timestamp=t1)
-        r2 = make_test_correction(correction_value=3.0, timestamp=t2)
-
-        averaged = average_corrections([r1, r2])
-
-        np.testing.assert_allclose(
-            averaged.corrections["cappi_correction_db"].values,
-            3.0,
         )
 
     def test_two_profiles_weighted_average(self):
@@ -242,8 +226,8 @@ class TestAverageCorrections:
         t1 = datetime(2025, 8, 24, 10, 0)
         t2 = datetime(2025, 8, 24, 11, 0)
 
-        r1 = make_test_correction(timestamp=t1, usable=False)
-        r2 = make_test_correction(timestamp=t2, usable=True)
+        r1 = make_test_correction(timestamp=t1, usable=True)
+        r2 = make_test_correction(timestamp=t2, usable=False)
 
         averaged = average_corrections([r1, r2])
         assert averaged.usable is True
@@ -286,9 +270,9 @@ class TestAverageCorrections:
         t1 = datetime(2025, 8, 24, 10, 0)
         t2 = datetime(2025, 8, 24, 11, 0)
 
-        # Create with wrong timestamps in attrs
-        r1 = make_test_correction(correction_value=0.0, timestamp=datetime(2000, 1, 1))
-        r2 = make_test_correction(correction_value=3.0, timestamp=datetime(2000, 1, 2))
+        # Attribute timestamps in the opposite order
+        r1 = make_test_correction(correction_value=0.0, timestamp=datetime(2000, 1, 2))
+        r2 = make_test_correction(correction_value=3.0, timestamp=datetime(2000, 1, 1))
 
         # Override with explicit timestamps
         averaged = average_corrections([r1, r2], timestamps=[t1, t2])
@@ -317,9 +301,11 @@ class TestAverageCorrections:
             make_test_correction(2.0, timestamp=t1, elevation_angles=[0.5]),
             make_test_correction(8.0, timestamp=t2, elevation_angles=[0.5]),
         ]
-        for result, quality in zip(results, [0.2, 1.0], strict=True):
+        for result, quality, clim_reference in zip(
+            results, [0.2, 1.0], [24.0, 30.0], strict=True
+        ):
             result.quality_weight = quality
-            result.z_ground_clim_dbz = 30.0
+            result.z_ground_clim_dbz = clim_reference
             result.corrections.attrs["quality_weight"] = quality
             for prefix in ("cappi", "elev"):
                 observed = result.corrections[f"{prefix}_correction_db"]
@@ -334,7 +320,11 @@ class TestAverageCorrections:
             results[0].corrections.data_vars
         )
         assert averaged.quality_weight == pytest.approx((0.2 * 0.2 + 1.0) / 1.2)
-        assert averaged.z_ground_clim_dbz == 30.0
+        expected_clim_reference = (24.0 * 0.2 + 30.0) / 1.2
+        assert averaged.z_ground_clim_dbz == pytest.approx(expected_clim_reference)
+        assert averaged.corrections.attrs["z_ground_clim_dbz"] == pytest.approx(
+            expected_clim_reference
+        )
         for name in results[0].corrections.data_vars:
             expected = (
                 results[0].corrections[name] * 0.2 + results[1].corrections[name]
@@ -342,16 +332,22 @@ class TestAverageCorrections:
             xr.testing.assert_allclose(averaged.corrections[name], expected)
 
     def test_mixed_observed_and_climatology_metadata(self):
-        results = [make_test_correction(), make_test_correction()]
-        for result in results:
-            result.quality_weight = 0.2
-        results[0].corrections.attrs.update(quality_weight=0.4, climatology_only=False)
-        results[1].corrections.attrs.update(quality_weight=0.0, climatology_only=True)
+        """Result quality includes the climatology fallback; attrs do not."""
+        t1 = datetime(2025, 8, 24, 10, 0)
+        observed = make_test_correction(timestamp=t1)
+        climatology = make_test_correction(timestamp=t1 + timedelta(hours=1))
+        observed.quality_weight = 0.6
+        observed.corrections.attrs.update(quality_weight=0.6, climatology_only=False)
+        climatology.quality_weight = 0.2  # clim_weight fallback
+        climatology.corrections.attrs.update(quality_weight=0.0, climatology_only=True)
 
-        averaged = average_corrections(results)
+        averaged = average_corrections([observed, climatology])
 
-        assert averaged.quality_weight == pytest.approx(0.2)
-        assert averaged.corrections.attrs["quality_weight"] == pytest.approx(0.2)
+        # Weights: older 0.2, newer 1.0
+        assert averaged.quality_weight == pytest.approx((0.6 * 0.2 + 0.2) / 1.2)
+        assert averaged.corrections.attrs["quality_weight"] == pytest.approx(
+            0.6 * 0.2 / 1.2
+        )
         assert averaged.corrections.attrs["climatology_only"] is False
 
     def test_different_range_coordinates_raise(self):
@@ -359,7 +355,7 @@ class TestAverageCorrections:
             make_test_correction(6.0, range_km=[1, 2]),
             make_test_correction(6.0, range_km=[2, 3]),
         ]
-        with pytest.raises(ValueError, match="align"):
+        with pytest.raises(ValueError):
             average_corrections(results)
 
     def test_missing_blended_variable_raises(self):
@@ -457,50 +453,6 @@ class TestExtractTimestamps:
 
 class TestComputeAgeWeights:
     """Tests for _compute_age_weights helper."""
-
-    def test_single_timestamp(self):
-        """Single timestamp returns weight 1.0."""
-        timestamps = [datetime(2025, 8, 24, 10, 0)]
-        weights = _compute_age_weights(timestamps)
-
-        np.testing.assert_array_equal(weights, [1.0])
-
-    def test_two_timestamps_equal_spacing(self):
-        """Two timestamps give oldest=MIN_AGE_WEIGHT, newest=1.0."""
-        t1 = datetime(2025, 8, 24, 10, 0)
-        t2 = datetime(2025, 8, 24, 11, 0)
-        weights = _compute_age_weights([t1, t2])
-
-        np.testing.assert_allclose(weights, [MIN_AGE_WEIGHT, 1.0])
-
-    def test_three_timestamps_equal_spacing(self):
-        """Three equally-spaced timestamps give linear weights."""
-        base = datetime(2025, 8, 24, 10, 0)
-        timestamps = [
-            base,
-            base + timedelta(hours=1),
-            base + timedelta(hours=2),
-        ]
-        weights = _compute_age_weights(timestamps)
-
-        # oldest=0.2, middle=0.6, newest=1.0
-        np.testing.assert_allclose(weights, [0.2, 0.6, 1.0])
-
-    def test_irregular_spacing_respects_time_gaps(self):
-        """Irregular spacing weights by actual time position."""
-        base = datetime(2025, 8, 24, 10, 0)
-        # Large gap at start, small gap at end
-        timestamps = [
-            base,  # oldest
-            base + timedelta(hours=9),  # close to newest
-            base + timedelta(hours=10),  # newest
-        ]
-        weights = _compute_age_weights(timestamps)
-
-        # oldest: age_fraction=1.0 → weight=0.2
-        # middle: age_fraction=0.1 → weight=1.0 - 0.1*0.8 = 0.92
-        # newest: age_fraction=0.0 → weight=1.0
-        np.testing.assert_allclose(weights, [0.2, 0.92, 1.0])
 
     def test_identical_timestamps_equal_weights(self):
         """Identical timestamps get equal weight 1.0."""

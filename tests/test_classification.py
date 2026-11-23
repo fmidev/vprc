@@ -22,7 +22,6 @@ from vprc.classification import (
 )
 from vprc.constants import (
     MDS,
-    SNOW_FREEZING_LEVEL_THRESHOLD_M,
 )
 
 
@@ -185,12 +184,15 @@ class TestClassifyLayer:
     """Tests for individual layer classification."""
 
     def test_thin_ground_layer_is_clear_air(self):
-        """Very thin ground layer (200m) classified as clear air."""
+        """Very thin ground layer (200m) classified as clear air.
+
+        Without a freezing level, so the freezing-level gate cannot decide.
+        """
         layer = EchoLayer(
             bottom_height=100, top_height=300, max_dbz=10, touches_ground=True
         )
         result = _classify_layer(
-            layer, 0, freezing_level_m=2000, lowest_profile_height=100
+            layer, 0, freezing_level_m=None, lowest_profile_height=100
         )
         assert result == LayerType.CLEAR_AIR_ECHO
 
@@ -224,6 +226,24 @@ class TestClassifyLayer:
             layer, 0, freezing_level_m=None, lowest_profile_height=100
         )
         assert result == LayerType.CLEAR_AIR_ECHO
+
+    @pytest.mark.parametrize(
+        ("has_clutter", "expected"),
+        [(True, LayerType.CLEAR_AIR_ECHO), (False, LayerType.ALTOSTRATUS)],
+    )
+    def test_weak_echo_gate_moves_to_second_layer_with_clutter(
+        self, has_clutter, expected
+    ):
+        """With clutter the weak-echo test applies to the second layer."""
+        layer = EchoLayer(bottom_height=1100, top_height=1500, max_dbz=3)
+        result = _classify_layer(
+            layer,
+            1,
+            freezing_level_m=1000,
+            lowest_profile_height=100,
+            has_clutter_flag=has_clutter,
+        )
+        assert result == expected
 
     def test_precipitation_can_coexist_with_corrected_clutter(self):
         """Clutter is an independent flag, not a precipitation veto."""
@@ -259,9 +279,9 @@ class TestClassifyProfile:
         assert result.layers[0].touches_ground
 
     def test_clear_air_echo_profile(self):
-        """Low, thin layer is classified as clear air."""
+        """Low, thin layer is classified as clear air without a freezing level."""
         dbz_values = [5, 3, MDS, MDS, MDS]
-        ds = make_test_dataset(dbz_values, freezing_level_m=2000)
+        ds = make_test_dataset(dbz_values, freezing_level_m=None)
 
         result = classify_profile(ds)
 
@@ -300,9 +320,13 @@ class TestClassifyProfile:
 
         result = classify_profile(ds)
 
-        assert result.num_layers == 2
-        # First layer is thick enough for precipitation
-        assert result.layers[0].thickness == 600
+        # Without a freezing level, a 600 m ground layer is too thin for
+        # precipitation; the detached layer is altostratus.
+        assert [layer.layer_type for layer in result.layers] == [
+            LayerType.CLEAR_AIR_ECHO,
+            LayerType.ALTOSTRATUS,
+        ]
+        assert not result.usable_for_vpr
 
 
 class TestClassifyProfiles:
@@ -355,8 +379,8 @@ class TestEvaporationCheck:
             top_height=1000,
             max_dbz=40.0,
             max_dbz_height=100,  # Max at bottom
-            min_dbz_below_max=None,
-            min_dbz_height=None,
+            min_dbz_below_max=10.0,
+            min_dbz_height=300,
         )
         assert _check_evaporation(layer) is False
 
@@ -415,22 +439,6 @@ class TestEvaporationCheck:
         assert result.layers[0].evaporation_detected is True
         assert result.profile_type == LayerType.ALTOSTRATUS
         assert result.usable_for_vpr is False
-
-    def test_shallow_profile_without_evaporation_is_still_clear_air(self):
-        """A normal gradient does not bypass the freezing-level/top gate."""
-        # Create profile with max near bottom (no evaporation)
-        # Values decrease upward as expected
-        dbz_values = [30, 28, 25, 22, 18, 15, 12, 10]
-        heights = [100, 300, 500, 700, 900, 1100, 1300, 1500]
-        ds = make_test_dataset(dbz_values, heights, freezing_level_m=800)
-
-        result = classify_profile(ds)
-
-        assert result.num_layers == 1
-        assert result.layers[0].evaporation_detected is False
-        assert result.profile_type == LayerType.CLEAR_AIR_ECHO
-        assert result.usable_for_vpr is False
-        assert result.layers[0].touches_ground
 
     def test_find_echo_layers_computes_min_below_max(self):
         """_find_echo_layers correctly identifies min dBZ below max."""
@@ -567,10 +575,6 @@ class TestClassifyPrecipitationType:
         # Without bottom height, cannot determine sleet, defaults to rain
         assert result == PrecipitationType.RAIN
 
-    def test_threshold_matches_constant(self):
-        """Verify threshold matches the constant value."""
-        assert SNOW_FREEZING_LEVEL_THRESHOLD_M == 500
-
 
 @pytest.mark.parametrize(
     "values,freezing_level,expected",
@@ -655,4 +659,16 @@ def test_finalize_empty_profile():
         classify_profile(ds), ds, BrightBandResult()
     )
     assert not result.layers
+    assert not result.usable_for_vpr
+
+
+def test_layer_emptied_by_later_corrections_is_not_usable():
+    ds = make_test_dataset([20] * 8, freezing_level_m=300)
+    classification = classify_profile(ds)
+    assert classification.usable_for_vpr
+    corrected = ds.copy(deep=True)
+    corrected["corrected_dbz"][:] = MDS
+    result = finalize_profile_classification(
+        classification, corrected, BrightBandResult()
+    )
     assert not result.usable_for_vpr

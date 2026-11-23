@@ -21,11 +21,12 @@ from vprc.bright_band import (
     restore_bb_spike,
 )
 from vprc.constants import (
-    BB_SPIKE_RESTORATION_OFFSETS,
     MDS,
-    POST_BB_CLUTTER_THRESHOLD_DB,
     STEP,
 )
+
+# Bright band peaking at 1500 m (candidates at 1300 and 1500 m)
+BB_VALUES = [10, 12, 15, 18, 22, 26, 30, 35, 28, 22, 18, 15]
 
 
 def make_test_dataset(
@@ -76,11 +77,6 @@ class TestBrightBandResult:
     def test_thickness_none_when_missing_bounds(self):
         result = BrightBandResult(detected=False)
         assert result.thickness is None
-
-    def test_default_not_detected(self):
-        result = BrightBandResult()
-        assert result.detected is False
-        assert result.peak_height is None
 
 
 class TestComputeGradientPerStep:
@@ -150,37 +146,6 @@ class TestGradientSum:
 class TestDetectBrightBand:
     """Tests for bright band detection."""
 
-    def test_no_bb_when_freezing_level_zero_or_negative(self):
-        """BB detection skipped if freezing level <= 0."""
-        dbz_values = [20, 25, 30, 35, 30, 25, 20, 15, 10]
-        ds = make_test_dataset(dbz_values, freezing_level_m=0)
-
-        result = detect_bright_band(ds)
-
-        assert result.detected is False
-        assert result.freezing_level_m == 0
-
-    def test_no_bb_when_layer_too_low(self):
-        """BB detection skipped if layer top < 1300m."""
-        dbz_values = [20, 25, 30, 25, 20]
-        heights = [100, 300, 500, 700, 900]  # Max height 900m
-        ds = make_test_dataset(dbz_values, heights, freezing_level_m=500)
-
-        result = detect_bright_band(ds, layer_top=900)
-
-        assert result.detected is False
-
-    def test_no_bb_in_monotonic_profile(self):
-        """No BB detected in monotonically decreasing profile."""
-        # Smoothly decreasing from bottom to top - no BB signature
-        dbz_values = [35, 32, 29, 26, 23, 20, 17, 14, 11, 8]
-        heights = list(range(100, 2100, 200))
-        ds = make_test_dataset(dbz_values, heights, freezing_level_m=1000)
-
-        result = detect_bright_band(ds, layer_top=1900)
-
-        assert result.detected is False
-
     def test_bb_detection_with_peak(self):
         """BB detected in profile with characteristic peak."""
         # Profile with BB signature: increase toward peak, then decrease
@@ -212,24 +177,18 @@ class TestDetectBrightBand:
         assert result.bottom_height == 700
         assert result.top_height == 1900
         assert result.freezing_level_m == 1500
+        assert result.rejection_reason == BBRejectionReason.NOT_REJECTED
 
-    def test_bb_result_has_freezing_level(self):
-        """Result always includes freezing level used."""
-        dbz_values = [20, 25, 30, 25, 20]
-        ds = make_test_dataset(dbz_values, freezing_level_m=2500)
+    def test_all_mds_profile_has_no_candidates(self):
+        ds = make_test_dataset([MDS] * 12, freezing_level_m=1500)
+        result = detect_bright_band(ds)
+        assert result.rejection_reason == BBRejectionReason.NO_CANDIDATES
 
-        result = detect_bright_band(ds, layer_top=900)
-
-        assert result.freezing_level_m == 2500
-
-    def test_empty_profile_no_bb(self):
-        """No BB in profile with all MDS values."""
-        dbz_values = [MDS, MDS, MDS, MDS, MDS]
-        ds = make_test_dataset(dbz_values, freezing_level_m=1500)
-
-        result = detect_bright_band(ds, layer_top=900)
-
-        assert result.detected is False
+    def test_without_freezing_level_highest_candidate_is_chosen(self):
+        """Candidates at 1300 and 1500 m; without NWP the highest wins."""
+        result = detect_bright_band(make_test_dataset(BB_VALUES))
+        assert result.detected
+        assert result.peak_height == 1500
 
 
 class TestBBCandidateFinding:
@@ -296,31 +255,6 @@ class TestBBCandidateFinding:
         assert 500 in candidates
 
 
-class TestIntegration:
-    """Integration tests using realistic profile patterns."""
-
-    def test_detect_bb_returns_dataclass(self):
-        """Ensure return type is always BrightBandResult."""
-        dbz_values = [20, 25, 30, 25, 20]
-        ds = make_test_dataset(dbz_values, freezing_level_m=500)
-
-        result = detect_bright_band(ds)
-
-        assert isinstance(result, BrightBandResult)
-
-    def test_no_freezing_level_still_works(self):
-        """Detection works without freezing level (uses alternative logic)."""
-        dbz_values = [20, 25, 30, 25, 20, 15, 10]
-        heights = list(range(100, 1500, 200))
-        ds = make_test_dataset(dbz_values, heights, freezing_level_m=None)
-
-        result = detect_bright_band(ds, layer_top=1300)
-
-        # Should not crash, returns a result
-        assert isinstance(result, BrightBandResult)
-        assert result.freezing_level_m is None
-
-
 class TestRealData:
     """Tests using real VVP data files."""
 
@@ -372,8 +306,8 @@ class TestRealData:
 class TestNearSurfaceBBValidation:
     """Tests for near-surface bright band validation.
 
-    When BB bottom is at the lowest 1-2 levels, the Perl code performs
-    additional validation on sample counts (Zcount) to prevent false
+    When the BB peak ($bbalku) is at the lowest 1-2 levels, the Perl code
+    performs additional validation on sample counts (Zcount) to prevent false
     detection from ground clutter.
 
     Perl logic (lines 1051-1075 allprof_prodx2.pl):
@@ -393,7 +327,7 @@ class TestNearSurfaceBBValidation:
 
         ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
 
-        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+        result = _validate_near_surface_bb(ds, peak_height=100, top_height=500)
 
         assert result is True
 
@@ -406,7 +340,7 @@ class TestNearSurfaceBBValidation:
 
         ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
 
-        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+        result = _validate_near_surface_bb(ds, peak_height=100, top_height=500)
 
         assert result is False
 
@@ -414,12 +348,12 @@ class TestNearSurfaceBBValidation:
         """BB rejected if sample count at top < 500."""
         heights = [100, 300, 500, 700]
         dbz_values = [25.0, 30.0, 25.0, 20.0]
-        # Top zcount too low
-        zcount_values = [600, 700, 400, 550]
+        # Top zcount too low; ratio 499 / 600 = 0.83 alone would pass
+        zcount_values = [600, 700, 499, 550]
 
         ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
 
-        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+        result = _validate_near_surface_bb(ds, peak_height=100, top_height=500)
 
         assert result is False
 
@@ -432,7 +366,7 @@ class TestNearSurfaceBBValidation:
 
         ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
 
-        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+        result = _validate_near_surface_bb(ds, peak_height=100, top_height=500)
 
         assert result is False
 
@@ -445,7 +379,7 @@ class TestNearSurfaceBBValidation:
 
         ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
 
-        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+        result = _validate_near_surface_bb(ds, peak_height=100, top_height=500)
 
         assert result is True
 
@@ -457,7 +391,7 @@ class TestNearSurfaceBBValidation:
 
         ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
 
-        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=None)
+        result = _validate_near_surface_bb(ds, peak_height=100, top_height=None)
 
         assert result is False
 
@@ -469,100 +403,42 @@ class TestNearSurfaceBBValidation:
 
         ds = make_test_dataset(dbz_values, heights)
 
-        result = _validate_near_surface_bb(ds, bottom_height=100, top_height=500)
+        result = _validate_near_surface_bb(ds, peak_height=100, top_height=500)
 
         # Without data to validate, we don't reject
         assert result is True
 
-    def test_bb_at_second_lowest_level_validated(self):
-        """BB validation applies when bottom is at second-lowest level too."""
-        heights = [100, 300, 500, 700]
-        dbz_values = [20.0, 25.0, 30.0, 25.0]
-        # Bottom at 300 (second lowest), low zcount
-        zcount_values = [600, 400, 650, 550]
+    def test_count_check_only_applies_to_lowest_two_levels(self):
+        """A low count at a peak on the third level does not reject it."""
+        values = [15, 20, 35, 25, 20, 18, 16, 14, 12, 10, 8, 6]
+        counts = [1000, 1000, 100] + [1000] * 9
+        ds = make_test_dataset(values, freezing_level_m=500, zcount_values=counts)
 
-        ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
+        result = detect_bright_band(ds)
 
-        # Bottom at 300 (second lowest = 100 + 200)
-        result = _validate_near_surface_bb(ds, bottom_height=300, top_height=700)
-
-        assert result is False
-
-    def test_bb_above_lowest_two_levels_not_validated_here(self):
-        """This function only validates; caller decides when to call it.
-
-        When BB bottom is above lowest 2 levels, the caller (_validate_bright_band)
-        doesn't call this function, so this function isn't responsible for that check.
-        """
-        heights = [100, 300, 500, 700, 900]
-        dbz_values = [15.0, 20.0, 30.0, 25.0, 20.0]
-        # Would fail if validated, but caller won't call us for h=500
-        zcount_values = [600, 700, 100, 100, 550]
-
-        ds = make_test_dataset(dbz_values, heights, zcount_values=zcount_values)
-
-        # If called directly, it validates based on heights given
-        # (even though 500 is not near-surface, the validation still applies)
-        result = _validate_near_surface_bb(ds, bottom_height=500, top_height=900)
-
-        # Zcount at bottom (500) = 100 < 500, so fails
-        assert result is False
+        assert result.detected, result.rejection_reason
+        assert result.peak_height == 500
 
 
 class TestBBRejectionReason:
     """Tests for BB rejection reason tracking."""
 
-    def test_evaporation_has_explicit_rejection_reason(self):
-        result = BrightBandResult(
-            detected=False, rejection_reason=BBRejectionReason.EVAPORATION
-        )
-        assert result.rejection_reason.value == "evaporation"
-
-    def test_detected_bb_has_not_rejected_reason(self):
-        """Successfully detected BB has NOT_REJECTED reason."""
-        # Create a profile with clear BB signature
-        heights = list(range(100, 2500, 200))
-        dbz_values = [
-            10,
-            12,
-            15,
-            18,
-            22,
-            26,
-            30,
-            35,
-            28,
-            22,
-            18,
-            15,
-        ]
-        ds = make_test_dataset(dbz_values, heights, freezing_level_m=1500)
-
-        result = detect_bright_band(ds, layer_top=2300)
-
-        assert result.detected
-        assert result.rejection_reason == BBRejectionReason.NOT_REJECTED
-
-    def test_layer_too_low_reason(self):
-        """BB rejected due to low layer has correct reason."""
-        dbz_values = [20, 25, 30, 25, 20]
-        heights = [100, 300, 500, 700, 900]
-        ds = make_test_dataset(dbz_values, heights, freezing_level_m=500)
-
-        result = detect_bright_band(ds, layer_top=900)
-
-        assert result.detected is False
-        assert result.rejection_reason == BBRejectionReason.LAYER_TOO_LOW
-
-    def test_freezing_level_invalid_reason(self):
-        """BB rejected due to invalid freezing level has correct reason."""
-        dbz_values = [20, 25, 30, 35, 30, 25, 20, 15, 10]
-        ds = make_test_dataset(dbz_values, freezing_level_m=0)
-
-        result = detect_bright_band(ds)
-
-        assert result.detected is False
-        assert result.rejection_reason == BBRejectionReason.FREEZING_LEVEL_INVALID
+    @pytest.mark.parametrize(
+        ("freezing_level", "layer_top", "reason"),
+        [
+            (0, None, BBRejectionReason.FREEZING_LEVEL_INVALID),
+            # Freezing level below the antenna
+            (-200, None, BBRejectionReason.FREEZING_LEVEL_INVALID),
+            # Perl requires a layer top above 1300 m
+            (1500, 1300, BBRejectionReason.LAYER_TOO_LOW),
+        ],
+    )
+    def test_search_gates(self, freezing_level, layer_top, reason):
+        ds = make_test_dataset(BB_VALUES, freezing_level_m=freezing_level)
+        result = detect_bright_band(ds, layer_top=layer_top)
+        assert not result.detected
+        assert result.rejection_reason == reason
+        assert result.freezing_level_m == freezing_level
 
     def test_no_candidates_reason(self):
         """BB rejected due to no candidates has correct reason."""
@@ -651,15 +527,16 @@ class TestApplyPostBBClutterCorrection:
     """Tests for post-BB ground clutter correction."""
 
     def test_no_correction_when_not_needed(self):
-        """No changes when no correction scenario applies."""
+        """No band and a freezing level above 1000 m: nothing is capped."""
         heights = [100, 300, 500, 700, 900]
-        dbz_values = [20.0, 22.0, 24.0, 26.0, 28.0]
-        ds = make_test_dataset(dbz_values, heights, freezing_level_m=2000)
+        # Would be capped by any correction scenario
+        dbz_values = [30.0, 25.0, 20.0, 20.0, 20.0]
+        ds = make_test_dataset(dbz_values, heights, freezing_level_m=1200)
 
         bb_result = BrightBandResult(
             detected=False,
             rejection_reason=BBRejectionReason.NO_CANDIDATES,
-            freezing_level_m=2000,
+            freezing_level_m=1200,
         )
 
         ds_out, bb_out = apply_post_bb_clutter_correction(ds, bb_result)
@@ -708,31 +585,11 @@ class TestApplyPostBBClutterCorrection:
 
         assert bb_out.clutter_correction_applied is True
 
-        # Correction should apply from BB bottom (500) down
-        corrected = ds_out["corrected_dbz"].values
-        # At 300m: 30 > 25+1=26, corrected to 26
-        assert corrected[1] <= corrected[2] + POST_BB_CLUTTER_THRESHOLD_DB
-        # At 100m: 35 > 26+1=27, corrected
-        assert corrected[0] <= corrected[1] + POST_BB_CLUTTER_THRESHOLD_DB
-
-    def test_correction_does_not_increase_values(self):
-        """Correction only decreases values, never increases."""
-        heights = [100, 300, 500, 700]
-        # Values already decrease smoothly - no correction needed
-        dbz_values = [20.0, 21.0, 22.0, 23.0]
-        ds = make_test_dataset(dbz_values, heights, freezing_level_m=500)
-
-        bb_result = BrightBandResult(
-            detected=False,
-            rejection_reason=BBRejectionReason.NEAR_SURFACE_ZCOUNT,
-            freezing_level_m=500,
+        # Below the BB bottom (500 m), each level is capped at the one above
+        # plus 1 dB: 30 -> 26, then 35 -> 27.
+        np.testing.assert_allclose(
+            ds_out["corrected_dbz"].values, [27, 26, 25, 28, 25, 20]
         )
-
-        ds_out, bb_out = apply_post_bb_clutter_correction(ds, bb_result)
-
-        # Values should be unchanged (original was already within threshold)
-        corrected = ds_out["corrected_dbz"].values
-        np.testing.assert_allclose(corrected, dbz_values)
 
     def test_bb_result_fields_preserved(self):
         """All BrightBandResult fields are preserved after correction."""
@@ -817,8 +674,8 @@ class TestRestoreBBSpike:
         heights = [100, 300, 500, 700, 900, 1100, 1300]
         # Original values with BB peak at 700m
         lin_dbz = [20.0, 22.0, 25.0, 35.0, 28.0, 22.0, 18.0]
-        # Smoothed values - peak has been reduced
-        corrected_dbz = [20.0, 22.0, 25.0, 30.0, 28.0, 22.0, 18.0]
+        # Processed values differ at every level
+        corrected_dbz = list(np.subtract(lin_dbz, 3.0))
 
         ds = self._make_smoothed_dataset(lin_dbz, corrected_dbz, heights)
 
@@ -831,22 +688,16 @@ class TestRestoreBBSpike:
 
         ds_out = restore_bb_spike(ds, bb_result)
 
-        # Values around peak (700 ± 400m) should be restored to lin_dbz
-        # Heights in restoration range: 300, 500, 700, 900, 1100
-        for h in [300, 500, 700, 900, 1100]:
-            original = lin_dbz[heights.index(h)]
-            restored = float(ds_out["corrected_dbz"].sel(height=h).values)
-            assert restored == original, f"Height {h} not restored"
-
-        # Heights outside restoration range unchanged
-        assert ds_out["corrected_dbz"].sel(height=100).values == corrected_dbz[0]
-        assert ds_out["corrected_dbz"].sel(height=1300).values == corrected_dbz[6]
+        # 700 ± 400 m restored to lin_dbz; 100 and 1300 m unchanged
+        np.testing.assert_allclose(
+            ds_out["corrected_dbz"].values, [17, 22, 25, 35, 28, 22, 15]
+        )
 
     def test_handles_bb_near_boundary(self):
         """Restoration works when BB peak is near profile boundary."""
         heights = [100, 300, 500, 700, 900]
         lin_dbz = [35.0, 30.0, 25.0, 20.0, 15.0]  # Peak at lowest level
-        corrected_dbz = [32.0, 30.0, 25.0, 20.0, 15.0]  # Peak smoothed
+        corrected_dbz = [32.0, 27.0, 22.0, 17.0, 12.0]
 
         ds = self._make_smoothed_dataset(lin_dbz, corrected_dbz, heights)
 
@@ -857,28 +708,8 @@ class TestRestoreBBSpike:
 
         ds_out = restore_bb_spike(ds, bb_result)
 
-        # Only heights within range and >= lowest should be restored
-        # Peak=100, so offsets give: -300, -100, 100, 300, 500
-        # Only 100, 300, 500 are valid
-        assert ds_out["corrected_dbz"].sel(height=100).values == lin_dbz[0]
-        assert ds_out["corrected_dbz"].sel(height=300).values == lin_dbz[1]
-        assert ds_out["corrected_dbz"].sel(height=500).values == lin_dbz[2]
-
-    def test_no_change_when_values_already_equal(self):
-        """No modification when corrected_dbz already equals lin_dbz."""
-        heights = [100, 300, 500, 700, 900]
-        values = [20.0, 25.0, 30.0, 25.0, 20.0]
-        ds = self._make_smoothed_dataset(values, values.copy(), heights)
-
-        bb_result = BrightBandResult(
-            detected=True,
-            peak_height=500,
-        )
-
-        ds_out = restore_bb_spike(ds, bb_result)
-
-        # Values unchanged (were already equal)
-        np.testing.assert_allclose(ds_out["corrected_dbz"].values, values)
+        # Offsets reach -300 to 500 m; only 100, 300 and 500 m exist.
+        np.testing.assert_allclose(ds_out["corrected_dbz"].values, [35, 30, 25, 17, 12])
 
     def test_does_not_modify_original_dataset(self):
         """Original dataset is not modified."""
@@ -895,11 +726,6 @@ class TestRestoreBBSpike:
 
         # Original dataset unchanged
         np.testing.assert_allclose(ds["corrected_dbz"].values, original_corrected)
-
-    def test_restoration_offsets_match_constant(self):
-        """Verify restoration uses the configured offsets."""
-        # The default offsets are (-400, -200, 0, 200, 400)
-        assert BB_SPIKE_RESTORATION_OFFSETS == (-400, -200, 0, 200, 400)
 
 
 @pytest.mark.parametrize(
@@ -919,7 +745,12 @@ def test_actual_near_surface_bright_band_detection(values, peak, bottom, top):
     assert bb.detected
     assert (bb.peak_height, bb.bottom_height, bb.top_height) == (peak, bottom, top)
     if peak == 300:
-        assert bb.refined_peak_height == pytest.approx(372.797134498126)
+        # Perl's bbhuippu weights heights by the smoothed reflectivity,
+        # before spike restoration: 20, 22.5 and 25 dBZ here.
+        expected = np.average(
+            [100, 300, 500], weights=10 ** (np.array([20, 22.5, 25]) / 10)
+        )
+        assert bb.refined_peak_height == pytest.approx(expected)
     else:
         assert bb.refined_peak_height == 100
 
@@ -954,24 +785,24 @@ def test_validation_uses_upward_positive_outer_gradient(difference, rejected):
     assert (_validate_bright_band(bb, gradient, ds, 100) is not None) == rejected
 
 
-def test_four_hundred_metre_band_requires_outer_gradient_check():
+@pytest.mark.parametrize(("bottom", "rejected"), [(500, True), (300, False)])
+def test_four_hundred_metre_band_requires_outer_gradient_check(bottom, rejected):
+    """The 400 m band fails the outer-gradient check; a 600 m band skips it."""
     ds = make_test_dataset([20] * 8)
     gradient = xr.DataArray(
-        [0, 3, 0, 0, 3, 0, 0, 0],
+        [3, 3, 0, 0, 3, 0, 0, 0],
         coords={"height": ds.height},
         dims="height",
     )
     bb = BrightBandResult(
         detected=True,
         peak_height=700,
-        bottom_height=500,
+        bottom_height=bottom,
         top_height=900,
         amplitude_above=8,
     )
-    assert (
-        _validate_bright_band(bb, gradient, ds, 100)
-        == BBRejectionReason.VALIDATION_FAILED
-    )
+    reason = _validate_bright_band(bb, gradient, ds, 100)
+    assert (reason == BBRejectionReason.VALIDATION_FAILED) == rejected
 
 
 def test_candidate_must_be_within_five_hundred_metres_of_freezing_level():

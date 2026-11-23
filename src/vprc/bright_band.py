@@ -340,7 +340,7 @@ def _validate_bright_band(
 
 def _validate_near_surface_bb(
     ds: xr.Dataset,
-    bottom_height: int,
+    peak_height: int,
     top_height: int | None,
 ) -> bool:
     """Validate bright band when it appears at near-surface levels.
@@ -356,7 +356,7 @@ def _validate_near_surface_bb(
 
     Args:
         ds: Dataset with 'zcount' variable
-        bottom_height: Discrete BB peak height (historical argument name)
+        peak_height: Discrete BB peak height (Perl $bbalku)
         top_height: BB top height
 
     Returns:
@@ -373,18 +373,17 @@ def _validate_near_surface_bb(
     heights = ds["height"].values
     zcount = ds["zcount"]
 
-    # The retained argument name predates correcting bbalku to mean peak.
-    if bottom_height not in heights or top_height not in heights:
+    if peak_height not in heights or top_height not in heights:
         return False
 
-    zcount_bottom = float(zcount.sel(height=bottom_height).values)
+    zcount_peak = float(zcount.sel(height=peak_height).values)
     zcount_top = float(zcount.sel(height=top_height).values)
 
     # Check minimum sample count at both levels
-    if not np.isfinite(zcount_bottom) or zcount_bottom < NEAR_SURFACE_BB_MIN_ZCOUNT:
+    if not np.isfinite(zcount_peak) or zcount_peak < NEAR_SURFACE_BB_MIN_ZCOUNT:
         logger.debug(
             "Near-surface BB rejected: Zcount at peak (%s) < %d",
-            zcount_bottom,
+            zcount_peak,
             NEAR_SURFACE_BB_MIN_ZCOUNT,
         )
         return False
@@ -398,8 +397,8 @@ def _validate_near_surface_bb(
         return False
 
     # Check ratio of sample counts
-    if zcount_bottom > 0:
-        ratio = zcount_top / zcount_bottom
+    if zcount_peak > 0:
+        ratio = zcount_top / zcount_peak
         if ratio < NEAR_SURFACE_BB_MIN_ZCOUNT_RATIO:
             logger.debug(
                 "Near-surface BB rejected: Zcount ratio (%.2f) < %.2f",
@@ -410,9 +409,9 @@ def _validate_near_surface_bb(
 
     logger.debug(
         "Near-surface BB validated: Zcount peak=%d, top=%d, ratio=%.2f",
-        zcount_bottom,
+        zcount_peak,
         zcount_top,
-        zcount_top / zcount_bottom if zcount_bottom > 0 else 0,
+        zcount_top / zcount_peak if zcount_peak > 0 else 0,
     )
     return True
 

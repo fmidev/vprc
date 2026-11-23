@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 import xarray as xr
+from pyproj import CRS
 
 from vprc import average_corrections, process_vvp
 from vprc.composite import (
@@ -12,6 +13,7 @@ from vprc.composite import (
     compute_radar_distances,
     create_empty_composite,
     create_radar_correction,
+    interpolate_correction_to_grid,
     inverse_distance_weight,
 )
 from vprc.vpr_correction import VPRCorrectionResult
@@ -28,6 +30,13 @@ RADAR_COORDS = {
     "KOR": (60.128469, 21.643379),
     "VIH": (60.5561915, 24.49558603),
 }
+# The same radars in EPSG:3067 (m)
+KAN_XY = (263_085.0, 6_861_311.0)
+VIH_XY = (362_684.0, 6_715_970.0)
+
+
+def _point_grid(x: float, y: float) -> CompositeGrid:
+    return CompositeGrid(x=np.array([x]), y=np.array([y]), crs=CRS.from_epsg(3067))
 
 
 class TestCompositeGrid:
@@ -154,51 +163,56 @@ class TestInverseDistanceWeight:
         assert weights[0] == weights[1] == weights[2]
         assert np.isfinite(weights).all()
 
+    def test_weight_tapers_to_zero_at_max_distance(self):
+        weights = inverse_distance_weight(np.array([249_000.0, 250_000.0]), 1.0)
+        assert weights[0] > 0
+        assert weights[1] == 0
+
 
 class TestComputeRadarDistances:
     """Tests for radar distance calculation."""
 
-    def test_distances_are_positive(self):
-        """All computed distances are positive."""
-        grid = CompositeGrid.from_bounds(
-            200_000, 300_000, 6_700_000, 6_800_000, resolution_m=10_000
-        )
-
-        # Create mock radar correction
-        mock_corr = _create_mock_correction()
-        radars = [
-            RadarCorrection(
-                radar_code="KAN",
-                latitude=RADAR_COORDS["KAN"][0],
-                longitude=RADAR_COORDS["KAN"][1],
-                correction=mock_corr,
-                quality_weight=1.0,
-            )
-        ]
-
-        distances = compute_radar_distances(grid, radars)
-
-        assert distances.shape == (1, len(grid.y), len(grid.x))
-        assert (distances >= 0).all()
-
-    def test_multiple_radars_give_correct_shape(self):
-        """Output shape matches (n_radars, ny, nx)."""
-        grid = CompositeGrid.from_bounds(
-            200_000, 250_000, 6_700_000, 6_750_000, resolution_m=10_000
-        )
-
+    def test_distances_in_grid_crs(self):
+        """Distances from each radar to a grid point at Vihti."""
         mock_corr = _create_mock_correction()
         radars = [
             RadarCorrection("KAN", *RADAR_COORDS["KAN"], mock_corr, 1.0),
-            RadarCorrection("KOR", *RADAR_COORDS["KOR"], mock_corr, 1.0),
             RadarCorrection("VIH", *RADAR_COORDS["VIH"], mock_corr, 1.0),
         ]
 
-        distances = compute_radar_distances(grid, radars)
+        distances = compute_radar_distances(_point_grid(*VIH_XY), radars)
 
-        assert distances.shape[0] == 3
-        assert distances.shape[1] == len(grid.y)
-        assert distances.shape[2] == len(grid.x)
+        assert distances.shape == (2, 1, 1)
+        # Geodesic Kankaanpää-Vihti distance: 176 187 m
+        assert distances[0, 0, 0] == pytest.approx(176_190, rel=1e-3)
+        assert distances[1, 0, 0] < 1
+
+
+class TestInterpolateCorrectionToGrid:
+    """Range profiles are looked up by distance at the requested height."""
+
+    def test_interpolates_range_profile_at_cappi_height(self):
+        correction = _create_range_dependent_correction()
+        distances = np.array([[25_000.0, 100_500.0]])
+
+        np.testing.assert_allclose(
+            interpolate_correction_to_grid(correction, distances), [[2.5, 10.05]]
+        )
+        np.testing.assert_allclose(
+            interpolate_correction_to_grid(correction, distances, cappi_height_m=1000),
+            [[102.5, 110.05]],
+        )
+
+    def test_falls_back_to_instantaneous_correction(self):
+        correction = _create_range_dependent_correction()
+        correction.corrections = correction.corrections.drop_vars(
+            "cappi_blended_correction_db"
+        )
+        distances = np.array([[25_000.0]])
+
+        np.testing.assert_allclose(
+            interpolate_correction_to_grid(correction, distances), [[52.5]]
+        )
 
 
 class TestCompositeCorrections:
@@ -225,30 +239,22 @@ class TestCompositeCorrections:
         valid_values = result["correction_db"].values[valid_mask]
         assert np.allclose(valid_values, 2.5, atol=0.1)
 
-    def test_multiple_radars_blend_at_overlap(self):
-        """Overlapping coverage uses weighted blend."""
-        # Grid roughly between KAN and VIH
-        grid = CompositeGrid.from_bounds(
-            250_000, 350_000, 6_700_000, 6_800_000, resolution_m=10_000
-        )
-
-        corr_kan = _create_mock_correction(constant_db=2.0)
-        corr_vih = _create_mock_correction(constant_db=4.0)
-
+    def test_nearer_radar_dominates_blend(self):
+        """10 km from Kankaanpää (2 dB), about 180 km from Vihti (4 dB)."""
         radars = [
-            RadarCorrection("KAN", *RADAR_COORDS["KAN"], corr_kan, 1.0),
-            RadarCorrection("VIH", *RADAR_COORDS["VIH"], corr_vih, 1.0),
+            RadarCorrection(
+                "KAN", *RADAR_COORDS["KAN"], _create_mock_correction(2.0), 1.0
+            ),
+            RadarCorrection(
+                "VIH", *RADAR_COORDS["VIH"], _create_mock_correction(4.0), 1.0
+            ),
         ]
+        grid = _point_grid(KAN_XY[0] + 10_000, KAN_XY[1])
 
         result = composite_corrections(radars, grid, max_range_km=300)
 
-        # In overlap area, correction should be between 2.0 and 4.0
-        valid = result["correction_db"].values
-        valid = valid[~np.isnan(valid)]
-
-        assert len(valid) > 0
-        assert valid.min() >= 2.0 - 0.1
-        assert valid.max() <= 4.0 + 0.1
+        assert int(result["n_radars"].item()) == 2
+        assert result["correction_db"].item() == pytest.approx(2.0, abs=0.02)
 
     def test_n_radars_counts_contributors(self):
         """n_radars tracks number of contributing radars."""
@@ -346,24 +352,6 @@ class TestEmptyComposite:
         assert result.attrs["radar_codes"] == ["KAN", "VIH"]
         assert "crs_epsg" in result.attrs
 
-    def test_create_empty_composite_has_cog_compatible_structure(self):
-        """Empty composite has required structure for COG export."""
-        grid = CompositeGrid.for_finland(resolution_m=50_000)
-
-        result = create_empty_composite(grid)
-
-        # Required variables exist
-        assert "correction_db" in result
-        assert "weight_sum" in result
-        assert "n_radars" in result
-
-        # Required coordinates exist
-        assert "x" in result.coords
-        assert "y" in result.coords
-
-        # CRS info present
-        assert result.attrs.get("crs_epsg") is not None
-
     def test_all_radars_zero_quality_produces_nan_composite(self):
         """When all radars have zero quality, result is all NaN."""
         grid = CompositeGrid.from_bounds(
@@ -395,20 +383,18 @@ class TestWithRealData:
     @pytest.fixture
     def processed_radars(self):
         """Process the three test radars."""
-        results = {}
-        for code, filepath in [("KAN", KAN_FILE), ("KOR", KOR_FILE), ("VIH", VIH_FILE)]:
-            try:
-                result = process_vvp(filepath, freezing_level_m=3000)
-                if result.vpr_correction is not None:
-                    results[code] = result
-            except FileNotFoundError:
-                pass  # Skip if file doesn't exist
-
-        return results
+        return {
+            code: process_vvp(filepath, freezing_level_m=3000)
+            for code, filepath in [
+                ("KAN", KAN_FILE),
+                ("KOR", KOR_FILE),
+                ("VIH", VIH_FILE),
+            ]
+        }
 
     def test_can_process_all_three_radars(self, processed_radars):
-        """All three test radars can be processed."""
-        assert set(processed_radars) == {"KAN", "KOR", "VIH"}
+        """All three test radars produce a correction."""
+        assert all(r.vpr_correction is not None for r in processed_radars.values())
 
     def test_identical_profiles_preserve_composite_after_averaging(self):
         correction = process_vvp(KAN_FILE, freezing_level_m=3000).vpr_correction
@@ -437,8 +423,7 @@ class TestWithRealData:
             if result.vpr_correction.quality_weight > 0
         }
 
-        if len(usable_radars) < 1:
-            pytest.skip("Need at least 1 radar with positive quality weight")
+        assert usable_radars
 
         radars = []
         for code, result in usable_radars.items():
@@ -462,34 +447,6 @@ class TestWithRealData:
         valid = valid[~np.isnan(valid)]
         assert valid.min() > -20  # Not unreasonably negative
         assert valid.max() < 30  # Not unreasonably positive
-
-    def test_composite_with_mock_quality_weights(self, processed_radars):
-        """Composite can be created using mock quality weights."""
-        if len(processed_radars) < 2:
-            pytest.skip("Need at least 2 radars for multi-radar composite test")
-
-        radars = []
-        for code, result in processed_radars.items():
-            lat, lon = RADAR_COORDS[code]
-            # Use mock quality weight of 1.0 for all radars
-            radar_corr = RadarCorrection(
-                radar_code=code,
-                latitude=lat,
-                longitude=lon,
-                correction=result.vpr_correction,
-                quality_weight=1.0,  # Force non-zero weight
-            )
-            radars.append(radar_corr)
-
-        grid = CompositeGrid.from_bounds(
-            200_000, 400_000, 6_650_000, 6_900_000, resolution_m=10_000
-        )
-
-        result = composite_corrections(radars, grid)
-
-        # Should have some valid composite values
-        valid_count = (~np.isnan(result["correction_db"].values)).sum()
-        assert valid_count > 0
 
 
 def _create_mock_correction(constant_db: float = 2.0) -> VPRCorrectionResult:
@@ -573,65 +530,8 @@ def _create_climatology_only_correction(
 class TestClimatologyOnlyComposite:
     """Tests for composite with climatology-only radars."""
 
-    def test_climatology_only_contributes_to_composite(self):
-        """Climatology-only radar corrections contribute to composite."""
-        radar = RadarCorrection(
-            radar_code="KAN",
-            latitude=61.81,
-            longitude=22.50,
-            correction=_create_climatology_only_correction(2.0),
-            quality_weight=0.2,
-        )
-
-        grid = CompositeGrid.from_bounds(
-            200_000, 350_000, 6_750_000, 6_900_000, resolution_m=5_000
-        )
-
-        result = composite_corrections([radar], grid)
-
-        # Should have valid composite values near the radar
-        valid_count = (~np.isnan(result["correction_db"].values)).sum()
-        assert valid_count > 0
-
-    def test_climatology_only_blends_with_observed(self):
-        """Climatology-only correction blends with observed corrections."""
-        # Observed radar with higher quality
-        observed = RadarCorrection(
-            radar_code="KAN",
-            latitude=61.81,
-            longitude=22.50,
-            correction=_create_mock_correction(3.0),
-            quality_weight=1.0,
-        )
-
-        # Climatology-only radar nearby
-        clim_only = RadarCorrection(
-            radar_code="IKA",
-            latitude=61.77,
-            longitude=23.08,
-            correction=_create_climatology_only_correction(1.0),
-            quality_weight=0.2,
-        )
-
-        grid = CompositeGrid.from_bounds(
-            250_000, 350_000, 6_820_000, 6_870_000, resolution_m=5_000
-        )
-
-        result = composite_corrections([observed, clim_only], grid)
-
-        # Should have blended values between the two
-        valid = result["correction_db"].values[
-            ~np.isnan(result["correction_db"].values)
-        ]
-        assert len(valid) > 0
-
-        # Near the observed radar, values should be closer to 3.0
-        # Overall average should be between 1.0 and 3.0
-        assert valid.mean() > 1.0
-        assert valid.mean() < 3.0
-
-    def test_climatology_only_lower_weight_than_observed(self):
-        """Climatology-only corrections have lower influence than observed."""
+    def test_quality_weight_scales_blend_at_equal_distance(self):
+        """Climatology-only radars contribute with their lower quality."""
         # Two radars at same location with different sources
         observed = RadarCorrection(
             radar_code="KAN",
@@ -660,43 +560,25 @@ class TestClimatologyOnlyComposite:
             ~np.isnan(result["correction_db"].values)
         ]
 
-        # Blended value should be closer to observed (4.0) than clim (0.0)
-        # With quality weights 1.0 and 0.2, weighted average at same distance
-        # would be (1.0 * 4.0 + 0.2 * 0.0) / (1.0 + 0.2) = 3.33
-        assert valid.mean() > 2.5, f"Expected >2.5, got {valid.mean()}"
+        # Weighted average at the same distance: (1.0 * 4.0 + 0.2 * 0.0) / 1.2
+        assert valid.size > 0
+        np.testing.assert_allclose(valid, 4.0 / 1.2)
 
-    def test_all_climatology_only_composite(self):
-        """Composite with all climatology-only radars works."""
-        radars = [
-            RadarCorrection(
-                radar_code="KAN",
-                latitude=61.81,
-                longitude=22.50,
-                correction=_create_climatology_only_correction(2.0),
-                quality_weight=0.2,
-            ),
-            RadarCorrection(
-                radar_code="VIH",
-                latitude=63.10,
-                longitude=21.70,
-                correction=_create_climatology_only_correction(2.5),
-                quality_weight=0.2,
-            ),
-        ]
 
-        grid = CompositeGrid.from_bounds(
-            200_000, 400_000, 6_750_000, 7_000_000, resolution_m=10_000
-        )
+def _create_range_dependent_correction() -> VPRCorrectionResult:
+    """Blended correction 0.1 dB/km at 500 m and 100 dB higher at 1000 m.
 
-        result = composite_corrections(radars, grid)
-
-        # Should have valid composite values
-        valid_count = (~np.isnan(result["correction_db"].values)).sum()
-        assert valid_count > 0
-
-        # Values should be in the expected range
-        valid = result["correction_db"].values[
-            ~np.isnan(result["correction_db"].values)
-        ]
-        assert valid.min() >= 1.5
-        assert valid.max() <= 3.0
+    The instantaneous correction is the blended one plus 50 dB.
+    """
+    range_km = np.arange(1, 251)
+    blended = np.stack([0.1 * range_km, 100 + 0.1 * range_km], axis=1)
+    ds = xr.Dataset(
+        {
+            "cappi_correction_db": (["range_km", "cappi_height"], blended + 50),
+            "cappi_blended_correction_db": (["range_km", "cappi_height"], blended),
+        },
+        coords={"range_km": range_km, "cappi_height": [500, 1000]},
+    )
+    return VPRCorrectionResult(
+        corrections=ds, z_ground_dbz=35.0, quality_weight=1.0, usable=True
+    )

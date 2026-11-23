@@ -196,3 +196,8 @@ def test_clim_weight_reaches_correction_blend(clim_weight):
         corrections["cappi_blended_correction_db"], expected, atol=1e-9
     )
     assert "clim_weight" not in result.dataset.attrs
+
+
+def test_vpr_correction_can_be_disabled():
+    result = process_vvp(KAN_FILE, compute_vpr=False)
+    assert result.vpr_correction is None

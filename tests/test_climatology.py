@@ -102,18 +102,24 @@ class TestClimatologicalProfile:
         )
 
     def test_mds_floor(self):
-        """Profile values should never go below MDS (-45 dBZ)."""
-        # Very negative FL -> low base, should hit MDS
+        """Values decaying below MDS are clamped to it."""
         ds = generate_climatological_profile(
-            freezing_level_m=-3000,
-            lowest_level_m=100,
-            max_height_m=5000,
+            freezing_level_m=-5000, lowest_level_m=100, max_height_m=5000
         )
-        # base = 10 + (-3.0) * 10 = -20 dBZ
-        # After decay, should hit MDS
+        # Base 10 - 50 = -40 dBZ, decaying 0.66 dB per 200 m
+        assert float(ds.clim_dbz.sel(height=1500)) == pytest.approx(-44.62)
+        assert float(ds.clim_dbz.sel(height=1700)) == MDS
+        assert float(ds.clim_dbz[-1]) == MDS
 
-        # All values should be >= MDS
-        assert (ds["clim_dbz"].values >= MDS).all()
+    def test_melting_layer_boundaries_are_inclusive(self):
+        """Perl compares heights with <=, so grid levels on a boundary
+        belong to the lower band."""
+        ds = generate_climatological_profile(2100, lowest_level_m=100)
+        base = float(ds.clim_dbz.sel(height=100))
+        np.testing.assert_allclose(
+            ds.clim_dbz.sel(height=[1700, 1900, 2100, 2300]).values - base,
+            [0.0, 3.5, 7.0, 3.5],
+        )
 
     def test_profile_shape(self):
         """Profile should have correct dimensions and coordinates."""
