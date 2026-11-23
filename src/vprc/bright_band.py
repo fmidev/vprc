@@ -289,7 +289,6 @@ def _find_bb_boundaries(
 
 def _validate_bright_band(
     result: BrightBandResult,
-    gradient: xr.DataArray,
     ds: xr.Dataset,
     lowest_height: int,
 ) -> BBRejectionReason | None:
@@ -300,8 +299,8 @@ def _validate_bright_band(
 
     Args:
         result: Preliminary BB detection result
-        gradient: Vertical gradient for additional checks
-        ds: Dataset with 'zcount' variable for sample count validation
+        ds: Dataset with 'lin_dbz' and 'zcount' for the outer gradient and
+            sample count checks
         lowest_height: Lowest height level in the profile (for near-surface check)
 
     Returns:
@@ -319,7 +318,7 @@ def _validate_bright_band(
 
     # Outer checks use the original, ZCnt-qualified [3] gradient, unlike
     # candidate matching's [4] gradient gated by the corrected echo mask.
-    outer_gradient = -compute_gradient(ds) * STEP if "zcount" in ds else gradient
+    outer_gradient = -compute_gradient(ds) * STEP
     if result.top_height in outer_gradient["height"].values:
         grad_above = float(outer_gradient.sel(height=result.top_height).values)
         if not np.isfinite(grad_above):
@@ -369,11 +368,6 @@ def _validate_near_surface_bb(
     """
     if top_height is None:
         return False
-
-    if "zcount" not in ds:
-        # No sample count data, can't validate
-        logger.debug("Near-surface BB validation skipped: no zcount data")
-        return True
 
     heights = ds["height"].values
     zcount = ds["zcount"]
@@ -492,7 +486,8 @@ def detect_bright_band(
     in the dataset attributes, the search is constrained around it.
 
     Args:
-        ds: xarray Dataset with 'corrected_dbz', indexed by 'height'.
+        ds: xarray Dataset with 'corrected_dbz', raw 'lin_dbz' and
+            reflectivity sample counts 'zcount', indexed by 'height'.
             Should have 'freezing_level_m' in attrs (can be None).
         layer_top: Upper limit of search (e.g., top of lowest layer).
             If None, uses top of profile.
@@ -503,6 +498,11 @@ def detect_bright_band(
     Returns:
         BrightBandResult with detection status and parameters
 
+    Raises:
+        ValueError: If 'lin_dbz' or 'zcount' is missing. The validation
+            checks cannot run without them, and accepting the band
+            unverified could turn near-surface clutter into a melting layer.
+
     Example:
         >>> ds = read_vvp("profile.txt")
         >>> ds = apply_clutter_correction(ds)
@@ -511,6 +511,9 @@ def detect_bright_band(
         >>> if bb.detected:
         ...     print(f"BB peak at {bb.peak_height}m")
     """
+    missing = [name for name in ("lin_dbz", "zcount") if name not in ds]
+    if missing:
+        raise ValueError(f"Bright band detection requires {', '.join(missing)}")
     freezing_level = ds.attrs.get("freezing_level_m", None)
     heights = ds["height"].values
     dbz = ds["corrected_dbz"]
@@ -602,7 +605,7 @@ def detect_bright_band(
 
     # Validate (pass dataset and lowest height for near-surface checks)
     lowest_height = int(heights[0])
-    rejection_reason = _validate_bright_band(result, gradient, ds, lowest_height)
+    rejection_reason = _validate_bright_band(result, ds, lowest_height)
     if rejection_reason is not None:
         result.detected = False
         result.rejection_reason = rejection_reason

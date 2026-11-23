@@ -41,7 +41,8 @@ def make_test_dataset(
         dbz_values: Reflectivity values per height level
         heights: Height coordinates (auto-generated if None)
         freezing_level_m: Freezing level for attrs
-        zcount_values: Sample counts per height level (optional)
+        zcount_values: Reflectivity sample counts per height level
+            (default 1000, well above every count threshold)
     """
     if heights is None:
         heights = list(range(100, 100 + STEP * len(dbz_values), STEP))
@@ -51,8 +52,9 @@ def make_test_dataset(
         "lin_dbz": ("height", dbz_values),
     }
 
-    if zcount_values is not None:
-        data_vars["zcount"] = ("height", zcount_values)
+    if zcount_values is None:
+        zcount_values = [1000] * len(dbz_values)
+    data_vars["zcount"] = ("height", zcount_values)
 
     ds = xr.Dataset(
         data_vars,
@@ -394,19 +396,6 @@ class TestNearSurfaceBBValidation:
         result = _validate_near_surface_bb(ds, peak_height=100, top_height=None)
 
         assert result is False
-
-    def test_missing_zcount_data_passes(self):
-        """BB passes validation if no zcount data available (graceful fallback)."""
-        heights = [100, 300, 500, 700]
-        dbz_values = [25.0, 30.0, 25.0, 20.0]
-        # No zcount_values -> no 'zcount' in dataset
-
-        ds = make_test_dataset(dbz_values, heights)
-
-        result = _validate_near_surface_bb(ds, peak_height=100, top_height=500)
-
-        # Without data to validate, we don't reject
-        assert result is True
 
     def test_count_check_only_applies_to_lowest_two_levels(self):
         """A low count at a peak on the third level does not reject it."""
@@ -769,12 +758,10 @@ def test_near_surface_count_validation_uses_peak_not_bottom():
 
 @pytest.mark.parametrize("difference,rejected", [(6, False), (-6, True)])
 def test_validation_uses_upward_positive_outer_gradient(difference, rejected):
-    ds = make_test_dataset([20] * 8)
-    gradient = xr.DataArray(
-        [0, 0, 0, 0, difference, 0, 0, 0],
-        coords={"height": ds.height},
-        dims="height",
-    )
+    """Reflectivity rising above the top by more than half the upper
+    amplitude rejects the band; falling does not."""
+    # Z(900) - Z(1100) = difference; no other step changes.
+    ds = make_test_dataset([20] * 5 + [20 - difference] * 3)
     bb = BrightBandResult(
         detected=True,
         peak_height=700,
@@ -782,18 +769,14 @@ def test_validation_uses_upward_positive_outer_gradient(difference, rejected):
         top_height=900,
         amplitude_above=8,
     )
-    assert (_validate_bright_band(bb, gradient, ds, 100) is not None) == rejected
+    assert (_validate_bright_band(bb, ds, 100) is not None) == rejected
 
 
 @pytest.mark.parametrize(("bottom", "rejected"), [(500, True), (300, False)])
 def test_four_hundred_metre_band_requires_outer_gradient_check(bottom, rejected):
     """The 400 m band fails the outer-gradient check; a 600 m band skips it."""
-    ds = make_test_dataset([20] * 8)
-    gradient = xr.DataArray(
-        [3, 3, 0, 0, 3, 0, 0, 0],
-        coords={"height": ds.height},
-        dims="height",
-    )
+    # 3 dB drops from 100, 300 and 900 m: steep on both sides of 300-900 m.
+    ds = make_test_dataset([30, 27, 24, 24, 24, 21, 21, 21])
     bb = BrightBandResult(
         detected=True,
         peak_height=700,
@@ -801,8 +784,17 @@ def test_four_hundred_metre_band_requires_outer_gradient_check(bottom, rejected)
         top_height=900,
         amplitude_above=8,
     )
-    reason = _validate_bright_band(bb, gradient, ds, 100)
+    reason = _validate_bright_band(bb, ds, 100)
     assert (reason == BBRejectionReason.VALIDATION_FAILED) == rejected
+
+
+@pytest.mark.parametrize("missing", ["zcount", "lin_dbz"])
+def test_detection_requires_raw_profile_and_sample_counts(missing):
+    """Validation cannot run without them; an unverified near-surface peak
+    would be accepted instead of corrected as clutter."""
+    ds = make_test_dataset(BB_VALUES, freezing_level_m=1500).drop_vars(missing)
+    with pytest.raises(ValueError, match=missing):
+        detect_bright_band(ds)
 
 
 def test_candidate_must_be_within_five_hundred_metres_of_freezing_level():
@@ -969,7 +961,6 @@ def test_near_surface_count_check_precedes_outer_gradient_check():
     # Reflectivity rises 6 dB above the top, more than half the 8 dB amplitude.
     values = [30, 26, 22, 28, 28, 28, 28, 28]
     ds = make_test_dataset(values, zcount_values=[400] + [1000] * 7)
-    gradient = compute_dbz_gradient_per_step(ds)
     bb = BrightBandResult(
         detected=True,
         peak_height=100,
@@ -977,8 +968,8 @@ def test_near_surface_count_check_precedes_outer_gradient_check():
         top_height=500,
         amplitude_above=8,
     )
-    reason = _validate_bright_band(bb, gradient, ds, 100)
+    reason = _validate_bright_band(bb, ds, 100)
     assert reason == BBRejectionReason.NEAR_SURFACE_ZCOUNT
     ds["zcount"][0] = 1000
-    reason = _validate_bright_band(bb, gradient, ds, 100)
+    reason = _validate_bright_band(bb, ds, 100)
     assert reason == BBRejectionReason.VALIDATION_FAILED
