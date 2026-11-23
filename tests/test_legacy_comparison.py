@@ -301,6 +301,7 @@ def test_levels_absent_from_input_match_legacy_profile(stem, radar_code):
     result, expected, footer = _process_like_legacy(stem, radar_code)
     assert result.dataset.attrs["missing_levels_m"]
     _assert_profile_matches_legacy(result, expected, footer, stem)
+    _assert_cappi_corrections_match_legacy(result, stem)
 
 
 @pytest.mark.parametrize(
@@ -318,6 +319,7 @@ def test_layers_reaching_ten_kilometres_match_legacy_profile(stem):
     result, expected, footer = _process_like_legacy(stem, "VIM")
     assert int(result.dataset.height.max()) == 9902
     _assert_profile_matches_legacy(result, expected, footer, stem)
+    _assert_cappi_corrections_match_legacy(result, stem)
 
 
 # Kankaanpää 2025-08-24 11 UTC with one change each; references from running

@@ -18,6 +18,7 @@ tests/
     ├── 202511071400_VIH.VVP_40.profile  # Legacy profile output
     ├── 202611112000_KES.VVP_40.txt      # VVP lacking 500/1300/1700 m ASL
     ├── 202611112000_KES.VVP_40.profile  # Legacy profile output
+    ├── 202611112000_KES.VVP_40.cor      # Legacy correction output
     ├── 202512051200_KAN.VVP_40.*  # Clear air, freezing level 643 m
     ├── 202605052000_UTA.VVP_40.*  # Near-surface BB rejected by ZCnt
     ├── 202604250300_KAN.VVP_40.*  # Absent level inside rain above the lowest levels
@@ -92,14 +93,19 @@ Test data files in `tests/data/`:
 - `202508241100_KAN.VVP_40.txt` – Kankaanpää radar, 2025-08-24 11:00 UTC
 - `202511071400_VIH.VVP_40.txt` – Vihti radar, 2025-11-07 14:00 UTC
 - `202611112000_KES.VVP_40.txt` – Kesälahti radar, 2026-11-11 20:00 UTC; the
-  file lacks the 500, 1300 and 1700 m ASL levels
+  file lacks the 500, 1300 and 1700 m ASL levels. Its `.profile` and `.cor`
+  come from the unmodified Perl scripts without a HIRLAM freezing level.
 - `variant_KAN_*.VVP_40.txt` – the Kankaanpää input with one change each:
   ZCnt 20 at 500 m ASL (`level2_low_zcnt`) or the 300 m ASL row removed
   (`no_lowest_level`). Their `.profile` and `.cor` references were produced by
   running the unmodified `allprof_prodx2.pl` and `pystycappi.pl` on them
   without a HIRLAM freezing level.
 - `202208171100_VIM.VVP_40.txt` … `202208171245_VIM.VVP_40.txt` – Vimpeli
-  radar, seven profiles at 15 min intervals, used for temporal averaging
+  radar, seven profiles at 15 min intervals, used for profile, correction and
+  temporal averaging comparisons. Their `.cor` files and the 12:45 `.corave`
+  were regenerated in November 2026 with the unmodified Perl scripts without a
+  HIRLAM freezing level; earlier copies had a 0 dBZ ground reference, which
+  shifted every instantaneous correction by about 28 dB.
 - `202308281000_{KAN,KOR,VIH}.VVP_40.txt` – simultaneous Kankaanpää, Korppoo
   and Vihti profiles, used for compositing and the composite script; they have
   no legacy references
